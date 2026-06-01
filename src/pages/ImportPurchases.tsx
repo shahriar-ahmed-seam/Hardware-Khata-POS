@@ -1,0 +1,166 @@
+import { useState } from 'react';
+import { Download, Upload, FileText, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { Card } from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
+import { Badge } from '@/components/ui/Badge';
+
+const HEADER = [
+  'ref_no',
+  'date',
+  'supplier_phone',
+  'supplier_name',
+  'branch',
+  'sku',
+  'quantity',
+  'unit',
+  'unit_cost',
+  'line_discount_pct',
+  'line_discount_flat',
+  'order_discount_type',
+  'order_discount_value',
+  'tax_pct',
+  'shipping',
+  'other',
+  'payment_method',
+  'paid_amount',
+  'reference',
+  'user',
+  'notes',
+];
+
+const SAMPLE = [
+  'PO-2026-0500',
+  '2026-05-26 11:42',
+  '02-9889600',
+  'BSRM Steels Ltd',
+  'Mirpur Branch',
+  'BM-RBR-12',
+  '4500',
+  'kg',
+  '92',
+  '0',
+  '0',
+  'flat',
+  '0',
+  '0',
+  '11000',
+  '0',
+  'Bank',
+  '425000',
+  'TRX BSRM 25/5',
+  'Seam',
+  '',
+];
+
+export default function ImportPurchases() {
+  const [stage, setStage] = useState<'idle' | 'review' | 'done'>('idle');
+  const [fileName, setFileName] = useState('');
+  const [stats, setStats] = useState({ rows: 0, purchases: 0, errors: 0 });
+
+  const downloadTemplate = () => {
+    const csv = HEADER.join(',') + '\n' + SAMPLE.join(',') + '\n';
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'purchases_template.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setFileName(f.name);
+    setTimeout(() => {
+      setStats({ rows: 56, purchases: 12, errors: 0 });
+      setStage('review');
+    }, 200);
+  };
+
+  return (
+    <div>
+      <PageHeader
+        title="Import Purchases"
+        subtitle="Bulk-import GRNs via CSV"
+        actions={
+          <Button variant="outline" onClick={downloadTemplate}>
+            <Download className="size-4" /> Download template
+          </Button>
+        }
+      />
+
+      <div className="p-6 max-w-3xl space-y-4">
+        <Card className="p-6 text-sm space-y-3">
+          <div className="font-semibold">CSV format (one row per line item)</div>
+          <code className="block bg-secondary px-3 py-2 rounded font-mono text-[11px] overflow-x-auto whitespace-nowrap">
+            {HEADER.join(', ')}
+          </code>
+          <ul className="text-xs text-muted-foreground space-y-1 list-disc pl-5">
+            <li>One row per item. Same <code>ref_no</code> groups rows into one purchase.</li>
+            <li><code>date</code>: <code>YYYY-MM-DD HH:mm</code></li>
+            <li><code>supplier_phone</code> joins to existing supplier; if not found, created with <code>supplier_name</code>.</li>
+            <li><code>sku</code> must match an existing product.</li>
+            <li><code>order_discount_type</code> ∈ <code>flat</code> | <code>percent</code>.</li>
+            <li><code>payment_method</code> ∈ Cash / bKash / Nagad / Card / Bank / Cheque. Repeat rows with different methods to record split payments.</li>
+            <li>Round-trips with the export: same headers and ordering.</li>
+          </ul>
+        </Card>
+
+        <Card className="p-6">
+          {stage === 'idle' && (
+            <label className="block cursor-pointer">
+              <input type="file" accept=".csv,.tsv" className="hidden" onChange={handleFile} />
+              <div className="rounded-xl border-2 border-dashed border-border p-10 text-center hover:border-primary transition">
+                <Upload className="size-10 mx-auto opacity-50" />
+                <div className="mt-3 text-sm font-medium">Click to choose a CSV file</div>
+              </div>
+            </label>
+          )}
+
+          {stage === 'review' && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3 p-3 rounded-lg border border-border bg-secondary/40">
+                <FileText className="size-5 text-primary" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium truncate">{fileName}</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {stats.rows} rows · {stats.purchases} purchases detected · {stats.errors} errors
+                  </div>
+                </div>
+                <Badge variant={stats.errors > 0 ? 'warning' : 'success'}>
+                  {stats.errors > 0 ? (
+                    <>
+                      <AlertTriangle className="size-3" /> Needs review
+                    </>
+                  ) : (
+                    'Ready'
+                  )}
+                </Badge>
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                <Button variant="outline" onClick={() => setStage('idle')}>
+                  Cancel
+                </Button>
+                <Button onClick={() => setStage('done')} disabled={stats.purchases === 0}>
+                  Import {stats.purchases} purchase{stats.purchases === 1 ? '' : 's'}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {stage === 'done' && (
+            <div className="text-center py-8">
+              <CheckCircle2 className="size-12 mx-auto text-success" />
+              <div className="mt-3 text-lg font-semibold">Purchases imported</div>
+              <Button className="mt-5" onClick={() => setStage('idle')}>
+                Import another
+              </Button>
+            </div>
+          )}
+        </Card>
+      </div>
+    </div>
+  );
+}

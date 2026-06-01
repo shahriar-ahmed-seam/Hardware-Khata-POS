@@ -1,0 +1,23 @@
+node_modules
+dist
+dist-electron
+release
+build/*.ico
+*.log
+.DS_Store
+.env
+.env.local
+
+# build / tooling artifacts
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# generated transpile output of vite.config.ts (source of truth is the .ts)
+vite.config.js
+vite.config.d.ts
+
+# local SQLite database (created at runtime in userData; never commit data)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#4f46e5"/>
+      <stop offset="50%" stop-color="#7c3aed"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+    <linearGradient id="markGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#fde68a"/>
+    </linearGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="3"/>
+      <feOffset dx="0" dy="2" result="offsetblur"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.35"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Rounded square base -->
+  <rect x="0" y="0" width="256" height="256" rx="56" ry="56" fill="url(#bgGrad)"/>
+
+  <!-- Subtle inner highlight -->
+  <rect x="6" y="6" width="244" height="244" rx="50" ry="50" fill="none"
+        stroke="rgba(255,255,255,0.15)" stroke-width="2"/>
+
+  <!-- Mark: stylized hammer over receipt lines (POS + hardware) -->
+  <g filter="url(#softShadow)">
+    <!-- Receipt rectangle behind -->
+    <rect x="64" y="60" width="100" height="136" rx="10" ry="10"
+          fill="rgba(255,255,255,0.18)" stroke="rgba(255,255,255,0.45)" stroke-width="2"/>
+    <!-- Receipt lines -->
+    <rect x="78" y="80"  width="60" height="6" rx="3" fill="rgba(255,255,255,0.55)"/>
+    <rect x="78" y="96"  width="72" height="6" rx="3" fill="rgba(255,255,255,0.45)"/>
+    <rect x="78" y="112" width="48" height="6" rx="3" fill="rgba(255,255,255,0.45)"/>
+    <rect x="78" y="140" width="72" height="8" rx="4" fill="rgba(255,255,255,0.7)"/>
+
+    <!-- Hammer (tilted) -->
+    <g transform="translate(174,76) rotate(28)">
+      <!-- handle -->
+      <rect x="-6" y="0" width="12" height="110" rx="4" fill="url(#markGrad)"/>
+      <!-- head -->
+      <rect x="-30" y="-22" width="60" height="32" rx="6" fill="url(#markGrad)"/>
+      <rect x="22"  y="-18" width="14" height="24" rx="3" fill="#fbbf24"/>
+    </g>
+  </g>
+</svg>
