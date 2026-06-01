@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Truck } from 'lucide-react';
 import { useSales, type Shipment, nextShipmentNo, type ShipmentStatus } from '@/stores/sales';
-import { customers } from '@/mocks/data';
+import { useCustomers } from '@/stores/contacts';
 
 const STATUSES: ShipmentStatus[] = ['pending', 'in-transit', 'delivered', 'failed'];
 
@@ -17,6 +17,7 @@ interface Props {
 export function CreateShipmentModal({ open, onClose, saleId }: Props) {
   const sales = useSales((s) => s.sales);
   const addShipment = useSales((s) => s.addShipment);
+  const customers = useCustomers((s) => s.items);
   const sale = sales.find((s) => s.id === saleId);
   const customer = sale ? customers.find((c) => c.id === sale.customerId) : undefined;
 

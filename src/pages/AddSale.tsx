@@ -40,6 +40,7 @@ export default function AddSale() {
   const initialStatus = (searchParams.get('status') as SaleStatus) || 'final';
   const sales = useSales((s) => s.sales);
   const addSale = useSales((s) => s.addSale);
+  const deleteSale = useSales((s) => s.deleteSale);
 
   // Create-form wiring (now wired to the real backend): under Electron the
   // product/customer pickers read live backend data and the Business Location
@@ -162,6 +163,21 @@ export default function AddSale() {
       alert('Add at least one item');
       return;
     }
+
+    // EDIT-MODE INTEGRITY (backend): there is no `sales.update` channel. A final
+    // sale has already moved stock/cash, so it can NEVER be edited in place by
+    // creating a new record — that would double-count stock and revenue. Block
+    // it and direct the user to Void + re-create. Drafts/quotations carry no
+    // stock/cash side effects, so we "edit" them by creating the new record and
+    // purging the original (a safe convert), keeping exactly one row.
+    if (backend && editing && editing.status === 'final') {
+      alert(
+        'A finalized sale cannot be edited (it has already affected stock and cash). ' +
+          'Void it from the sale detail, then create a new sale.',
+      );
+      return;
+    }
+
     const rec: SaleRecord = {
       id: editing?.id ?? 'sl_' + Date.now(),
       invoiceNo: editing?.invoiceNo ?? nextInvoiceNo(newStatus),
@@ -189,6 +205,12 @@ export default function AddSale() {
       notes: notes || undefined,
       validUntil: newStatus === 'quotation' ? validUntil : undefined,
     };
+    // Under the backend, editing/converting an existing draft or quotation must
+    // not leave the original behind. Create the new record, then delete the
+    // source draft/quotation so there is exactly one resulting sale.
+    if (backend && editing && (editing.status === 'draft' || editing.status === 'quotation')) {
+      deleteSale(editing.id);
+    }
     addSale(rec);
     if (newStatus === 'final') nav('/sales');
     else if (newStatus === 'draft') nav('/sales/drafts');

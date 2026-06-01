@@ -118,12 +118,13 @@ export default function SalesRepPage() {
     return list;
   }, [sales, returns, agents, range, branch, q]);
 
-  // Map backend rows. The backend tracks real commission but not the payout
-  // (paid/pending) split yet, so we keep the mocked 60/40 split — DEFERRED.
+  // Map backend rows. The backend tracks real commission earned but has NO
+  // payout records yet, so we must NOT fabricate a paid/pending split. The
+  // honest representation: nothing is recorded as paid, so the full commission
+  // earned is shown as pending until a real payout ledger exists.
   const backendRows: AgentRow[] | null = useMemo(() => {
     if (!backend || !beRows) return null;
     let list = beRows.map((r) => {
-      const paid = r.commissionEarned * 0.6;
       return {
         id: r.id,
         name: r.name,
@@ -134,8 +135,8 @@ export default function SalesRepPage() {
         returns: r.returns,
         netSales: r.netSales,
         commissionEarned: r.commissionEarned,
-        paid,
-        pending: r.commissionEarned - paid,
+        paid: 0,
+        pending: r.commissionEarned,
       };
     });
     list.sort((a, b) => b.netSales - a.netSales);
@@ -265,8 +266,8 @@ export default function SalesRepPage() {
 
             <Card className="p-3 bg-secondary/30 text-[12px] text-muted-foreground">
               Commission is calculated as <span className="font-mono">net sales × commission %</span>.
-              Returns within the period reduce net sales. Paid vs pending split is mocked here —
-              backend will track payout entries per agent.
+              Returns within the period reduce net sales. Until a payout ledger exists, all earned
+              commission is shown as pending (nothing is recorded as paid).
             </Card>
           </>
         )}

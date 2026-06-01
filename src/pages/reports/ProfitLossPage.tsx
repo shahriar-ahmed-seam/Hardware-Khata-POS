@@ -188,24 +188,45 @@ export default function ProfitLossPage() {
         }
       : { ...mockPnl, stockAdjustment: 0 };
 
+  // Under the backend the figures are COGS-based and exact, so the block rows
+  // (and therefore the block totals) must contain ONLY real values. The
+  // opening/closing stock snapshots are deferred (nightly valuation job), so we
+  // omit those rows entirely when backed rather than show mock placeholders that
+  // would inflate the displayed "Money in/out" totals. We instead surface the
+  // real signed stock-adjustment value the backend already returns.
   const moneyIn: PnLBlock = {
     title: 'Money in',
-    rows: [
-      { label: 'Total sales (excl. tax & disc.)', amount: pnl.totalSalesExclTax },
-      { label: 'Sell shipping recovered', amount: pnl.totalSellShipping },
-      { label: 'Other charges', amount: pnl.totalSellOther },
-      { label: 'Purchase returns', amount: pnl.totalPurchaseReturn },
-      { label: 'Closing stock (by sell price)', amount: pnl.closingStockBySale, hint: 'Snapshot' },
-    ],
+    rows: usingBackend
+      ? [
+          { label: 'Total sales (excl. tax & disc.)', amount: pnl.totalSalesExclTax },
+          { label: 'Sell shipping recovered', amount: pnl.totalSellShipping },
+          { label: 'Other charges', amount: pnl.totalSellOther },
+          { label: 'Purchase returns', amount: pnl.totalPurchaseReturn },
+        ]
+      : [
+          { label: 'Total sales (excl. tax & disc.)', amount: pnl.totalSalesExclTax },
+          { label: 'Sell shipping recovered', amount: pnl.totalSellShipping },
+          { label: 'Other charges', amount: pnl.totalSellOther },
+          { label: 'Purchase returns', amount: pnl.totalPurchaseReturn },
+          { label: 'Closing stock (by sell price)', amount: pnl.closingStockBySale, hint: 'Snapshot' },
+        ],
   };
   const moneyOut: PnLBlock = {
     title: 'Money out',
-    rows: [
-      { label: 'Cost of goods sold (COGS)', amount: pnl.totalCOGS },
-      { label: 'Sell returns', amount: pnl.totalSellReturn },
-      { label: 'Expenses', amount: pnl.totalExpense },
-      { label: 'Opening stock (by purchase)', amount: pnl.openingStockByPurchase, hint: 'Snapshot' },
-    ],
+    rows: usingBackend
+      ? [
+          { label: 'Cost of goods sold (COGS)', amount: pnl.totalCOGS },
+          { label: 'Sell returns', amount: pnl.totalSellReturn },
+          { label: 'Expenses', amount: pnl.totalExpense },
+          // Signed: a stock loss (negative adjustment) increases money-out.
+          { label: 'Stock adjustments (loss)', amount: -('stockAdjustment' in pnl ? pnl.stockAdjustment : 0) },
+        ]
+      : [
+          { label: 'Cost of goods sold (COGS)', amount: pnl.totalCOGS },
+          { label: 'Sell returns', amount: pnl.totalSellReturn },
+          { label: 'Expenses', amount: pnl.totalExpense },
+          { label: 'Opening stock (by purchase)', amount: pnl.openingStockByPurchase, hint: 'Snapshot' },
+        ],
   };
 
   return (
@@ -269,7 +290,9 @@ export default function ProfitLossPage() {
           </div>
           <div className="text-[12px] text-muted-foreground mt-2">
             Cost of goods sold uses the unit cost recorded at sale time (not the current cost).
-            Stock snapshots are nightly aggregates — backend will replace these with real values.
+            {usingBackend
+              ? ' Opening/closing stock-valuation snapshots are not included yet (nightly job pending).'
+              : ' Stock snapshots are nightly aggregates — backend will replace these with real values.'}
           </div>
         </Card>
 

@@ -18,7 +18,7 @@ import { Drawer } from '@/components/ui/Drawer';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { useSales, type SaleRecord } from '@/stores/sales';
-import { customers } from '@/mocks/data';
+import { useCustomers } from '@/stores/contacts';
 import { cn, formatBDT } from '@/lib/utils';
 import { AddPaymentModal } from './AddPaymentModal';
 
@@ -34,6 +34,7 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
   const sales = useSales((s) => s.sales);
   const voidSale = useSales((s) => s.voidSale);
   const deleteSale = useSales((s) => s.deleteSale);
+  const customers = useCustomers((s) => s.items);
   const sale = sales.find((s) => s.id === saleId) ?? null;
   const [payOpen, setPayOpen] = useState(false);
 

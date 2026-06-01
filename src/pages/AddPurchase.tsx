@@ -220,6 +220,18 @@ export default function AddPurchase() {
 
   const saveUnpaid = async () => {
     if (!isValid) return;
+    // EDIT-MODE INTEGRITY (backend): there is no `purchases.update` channel, and
+    // a saved purchase may already have moved stock (status 'received') and cash.
+    // Re-creating it would duplicate the record and double-count stock/cash, so
+    // editing an existing backend purchase in place is blocked — the user should
+    // Cancel it (which reverses stock + cash) and add a new one.
+    if (backend && editing) {
+      alert(
+        'A saved purchase cannot be edited in place (it may have already affected stock and cash). ' +
+          'Cancel it from the purchase detail, then add a new purchase.',
+      );
+      return;
+    }
     if (lowMarginLines.length > 0) {
       if (!confirm(
         `${lowMarginLines.length} item(s) will have margin under 10%. Save anyway?`,
@@ -233,6 +245,15 @@ export default function AddPurchase() {
 
   const saveAndPay = async () => {
     if (!isValid) return;
+    // EDIT-MODE INTEGRITY (backend): same rule as saveUnpaid — never re-create an
+    // existing purchase, it would duplicate stock-in and cash-out.
+    if (backend && editing) {
+      alert(
+        'A saved purchase cannot be edited in place (it may have already affected stock and cash). ' +
+          'Cancel it from the purchase detail, then add a new purchase.',
+      );
+      return;
+    }
     // Save & Pay (now wired to the persisted purchase): under a backend,
     // addPurchase() awaits api('purchases.create') (which returns the new backend
     // id) and rehydrates, resolving to that real id. We then look the rehydrated
