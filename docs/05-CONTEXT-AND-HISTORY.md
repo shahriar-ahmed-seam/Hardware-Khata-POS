@@ -62,8 +62,16 @@ is "Seam" (the admin user is `u_admin`, name often shown as "Seam").
    (mock fallback kept); a full-shop-day E2E (`backend/verify/e2e.ts`) drives the API facade
    from a clean first-run DB and reconciles every cross-module number. Verification 465 → 533.
 
-9. **You are here.** Next is **packaging** (electron-builder Windows installer, native rebuild
-   at package time), then any optional/deferred polish.
+9. **Rigorous whole-app audit + closing the deferrals.** A foolproof-pass audit caught a
+   real money bug (PayBillModal double-counted supplier payments under the backend) and 15
+   smaller mock leaks; all fixed. Then the three documented deferrals were closed:
+   AddSale/AddPurchase create-forms now use real master data; Warranties + Price Groups got
+   backend CRUD (v2 migration); Shipments got a real table + service + channels (v3
+   migration, touching no stock/cash). Verification 533 → 577 → **611**.
+
+10. **You are here.** The app is feature-complete and mock-free under Electron. The repo is
+    now on GitHub (`shahriar-ahmed-seam/Hardware-Khata-POS`). Next is **packaging**
+    (electron-builder Windows installer, native rebuild at package time), then optional polish.
 
 ## 3. The decisions that matter (and why)
 
@@ -87,7 +95,7 @@ is "Seam" (the admin user is `u_admin`, name often shown as "Seam").
 - **Permission enforcement at the IPC boundary.** The session lives in main-process memory
   (renderer can't spoof it per call); `electron/permissions.ts` maps WRITE channels →
   required permission ids; reads are open. This keeps the security layer entirely outside the
-  proven backend, so the 465-check harness is unaffected.
+  proven backend, so the verify harness is unaffected.
 
 - **`bcryptjs` (pure JS) over native `bcrypt`.** A second native module would mean a second
   per-ABI rebuild — exactly the footgun we already manage with `better-sqlite3`. For a local
@@ -103,27 +111,24 @@ is "Seam" (the admin user is `u_admin`, name often shown as "Seam").
 ## 4. What's DONE vs what's LEFT (honest snapshot)
 
 **Done:** frontend (all modules), backend data layer, Electron bridge, all 9 data slices
-wired, cleanup pass, auth + IPC permissions, first-run wizard, POS checkout, final E2E.
-**533 verification checks pass**; 120 channels registered; `npm run build` clean; both
-native ABIs work.
+wired, cleanup pass, auth + IPC permissions, first-run wizard, POS checkout, final E2E,
+whole-app foolproof audit, and the three closed deferrals (AddSale/AddPurchase real master
+data, Warranties + Price Groups CRUD, Shipments table/service/channels).
+**611 verification checks pass**; 132 channels registered; `npm run build` clean; both
+native ABIs work; the repo is on GitHub.
 
 **Left (in priority order):**
-1. **POS checkout wiring** — the hero screen still uses mock products/customers and a local
-   invoice counter; `handleConfirmPayment` doesn't call `sales.create`. This is the next and
-   most important task. Full step list in `03-WHATS-LEFT.md`.
-2. **Packaging** — electron-builder Windows installer; rebuild `better-sqlite3` for the
+1. **Packaging** — electron-builder Windows installer; rebuild `better-sqlite3` for the
    bundled Electron at package time (the #1 packaging risk); icon `.svg`→`.ico`; splash waits
    for DB-ready; confirm first-run on a clean `userData/pos.db`.
-3. **Final end-to-end test** — click every screen against the real DB; confirm a full POS
-   sale flows into Sales/Dashboard/Reports/Cash; test edge cases + permission denials.
+2. **Manual GUI smoke test** — click every screen against the real DB; confirm a full POS
+   sale flows into Sales/Dashboard/Reports/Cash; test edge cases + permission denials
+   (`docs/06-E2E-AND-SMOKE-TEST.md`).
 
-**Smaller follow-ups:** AddSale/AddPurchase create-forms (still mock master data),
-Shipments (no backend table), transfer cancel/reversal (no handler), Warranties/PriceGroups
-management (mock), return detail lines (header-only). See `03-WHATS-LEFT.md`.
-
-**Deferred / external:** SMS gateway, cloud sync (`sync_outbox` exists), thermal/ESC-POS
-printing, nightly stock-valuation snapshots, recurring-expense job, per-user DB prefs,
-real barcode/QR rendering, multi-branch context, offline PIN-reset code.
+**Deferred / external (post-MVP):** SMS gateway, cloud sync (`sync_outbox` exists),
+thermal/ESC-POS printing, nightly stock-valuation snapshots, recurring-expense job, per-user
+DB prefs, real barcode/QR rendering, multi-branch context, transfer cancel/reversal handler,
+offline PIN-reset code.
 
 ## 5. The repo at a glance
 
@@ -137,8 +142,8 @@ src/
   lib/         api.ts (renderer client), utils.ts (formatBDT, etc.), i18n
   mocks/       data.ts — the synthetic seed used as the !hasBackend() fallback
 backend/
-  db/ core/ services/ seed/ verify/   + api.ts (buildApi, 120 channels)
-docs/          00–05 (this set)
+  db/ core/ services/ seed/ verify/   + api.ts (buildApi, 132 channels)
+docs/          00–06 (this set)
 TASKS.md       running checklist (frontend 1–15 + backend phases)
 BACKEND_NOTES.md   the spec accumulated during frontend design (the "why")
 ```
@@ -163,7 +168,7 @@ BACKEND_NOTES.md   the spec accumulated during frontend design (the "why")
 ```bash
 npm run backend:typecheck
 npx tsc --noEmit -p tsconfig.json
-npm run backend:verify:all      # expect 533+ (your new tests raise it)
+npm run backend:verify:all      # expect 611+ (your new tests raise it)
 npm run build
 npm run rebuild:electron        # leave it dev-ready
 ```

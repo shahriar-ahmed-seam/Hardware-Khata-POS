@@ -6,7 +6,7 @@ Status legend: 🔴 not started · 🟡 partial · 🟢 done
 
 - **Frontend**: all 15 task-modules built.
 - **Backend data layer**: schema, calculation core, services, synthetic data — proven.
-- **Electron bridge**: bundler-safe schema, `buildApi()` facade (120 channels), DB
+- **Electron bridge**: bundler-safe schema, `buildApi()` facade (132 channels), DB
   lifecycle + generic IPC + preload + renderer `api()` client, native ABI scripts.
 - **All 9 data slices wired** to the real backend with a `hasBackend()` mock fallback:
   Products+Stock, Purchases, Sales, Contacts, Cash Register, Expenses, Dashboard, Reports,
@@ -16,7 +16,7 @@ Status legend: 🔴 not started · 🟡 partial · 🟢 done
   main-process memory, WRITE-channel permission enforcement at the IPC boundary.
 - **First-run wizard**: writes a real shop via the run-once `setup.complete` channel and
   establishes the owner session; a returning user after restart sees Login, not the wizard.
-- **Verification**: **533 checks** pass (`npm run backend:verify:all`).
+- **Verification**: **611 checks** pass (`npm run backend:verify:all`).
 
 > Per-slice detail (what changed, deferrals) for the wiring + auth + setup work has been
 > consolidated; see `05-CONTEXT-AND-HISTORY.md` for the full blow-by-blow and every deferral.
@@ -36,7 +36,7 @@ Status legend: 🔴 not started · 🟡 partial · 🟢 done
 - F6/F7 "Save as Draft/Quotation" persist via `sales.create` with `status` + no payments →
   appear in Sales → Drafts/Quotations. Park/Hold/Suspend stay client-side (multi-cart UX).
 - Permission-guarded (cashier has `sales.create`); totals cross-check toasts on >0.01 drift;
-  warns if cash is taken with no open shift. **Backend checks still pass (now 533 with E2E).**
+  warns if cash is taken with no open shift. **Backend checks still pass (now 611 with E2E + closed deferrals).**
 - _Deferred_: multi-unit `unitFactor` left at 1 (cart doesn't model packs yet); convert-
   quotation-to-sale / edit-draft are Sales-module concerns; receipt amount-in-words uses the
   frontend helper.
@@ -55,7 +55,7 @@ cash sale (due 0, stock down, drawer up, in sales.list) → credit sale + custom
 partial payment → sell return (restock + refund) → expense create+void (drawer) → stock
 transfer (source/dest/conserved) → damage adjustment → close shift (variance 0) → the
 money-conservation finale (dashboard==raw, P/L identity, reports.stock = Σ stock×cost two
-ways, no negative stock, FK clean). **68 E2E checks; grand total now 533**, all green. The
+ways, no negative stock, FK clean). **68 E2E checks; grand total now 611**, all green. The
 E2E found **no bugs** — every identity reconciled on the first clean run.
 
 A manual GUI smoke-test checklist for the owner lives in `docs/06-E2E-AND-SMOKE-TEST.md`

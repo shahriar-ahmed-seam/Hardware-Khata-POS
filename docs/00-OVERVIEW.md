@@ -60,13 +60,13 @@ STORE WIRING      ████████████████████ 1
 AUTH + PERMISSIONS████████████████████ 100%  (bcrypt + IPC-boundary enforcement)
 FIRST-RUN WIZARD  ████████████████████ 100%  (writes a real shop, run-once)
 POS CHECKOUT      ████████████████████ 100%  (persists via sales.create; mock fallback kept)
-FINAL E2E TEST    ████████████████████ 100%  (533 checks incl. full-shop-day E2E)
+FINAL E2E TEST    ████████████████████ 100%  (611 checks incl. full-shop-day E2E)
 PACKAGING         ░░░░░░░░░░░░░░░░░░░░░   0%  (installer not built yet — NEXT)
 ```
 
 - **Frontend**: all modules built and visually complete.
 - **Backend data layer**: full data layer built and proven in isolation, then grown as
-  each slice was wired — **533 automated verification checks pass** (accounting identities,
+  each slice was wired — **611 automated verification checks pass** (accounting identities,
   stock invariants, ledgers, cash, reports, auth, settings, determinism, persistence).
 - **Store wiring**: every data-bearing Zustand store (products/stock, purchases, sales,
   contacts, cash, expenses, dashboard, reports, settings, branches, users) now reads/writes
@@ -100,7 +100,7 @@ npm install
 # DEV (auto-rebuilds better-sqlite3 for Electron, then launches Vite + Electron)
 npm run dev
 
-# BACKEND VERIFICATION (auto-rebuilds for Node, runs 533 checks)
+# BACKEND VERIFICATION (auto-rebuilds for Node, runs 611 checks)
 npm run backend:verify:all
 
 # PRODUCTION BUILD (renderer + main + preload bundles)

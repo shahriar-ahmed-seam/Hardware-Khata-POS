@@ -17,7 +17,7 @@ without breaking what works. For the full story of how the project got here, rea
 
 ```bash
 npm install
-npm run backend:verify:all   # must print 533 checks passed (rebuilds for Node ABI)
+npm run backend:verify:all   # must print 611 checks passed (rebuilds for Node ABI)
 npx tsc --noEmit -p tsconfig.json   # frontend typecheck — must be clean
 npm run build                # renderer + main + preload must build clean
 npm run rebuild:electron     # leave better-sqlite3 on the Electron ABI for `npm run dev`
@@ -117,7 +117,7 @@ npm run build                # production bundles
 npm run backend:typecheck    # tsc on backend only
 npm run backend:verify       # 56 identity checks (rebuilds Node ABI)
 npm run backend:scenarios    # scenario tests
-npm run backend:verify:all   # everything (533 checks)
+npm run backend:verify:all   # everything (611 checks)
 npm run rebuild:electron     # switch better-sqlite3 → Electron ABI (run last each session)
 npm run rebuild:node         # switch better-sqlite3 → Node ABI
 ```

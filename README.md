@@ -23,7 +23,7 @@ Plus: `TASKS.md` (running checklist), `BACKEND_NOTES.md` (accumulated backend sp
 ```bash
 npm install
 npm run dev                  # launches the app (auto-rebuilds native deps for Electron)
-npm run backend:verify:all   # runs 533 backend verification checks
+npm run backend:verify:all   # runs 611 backend verification checks
 npm run build                # production bundles (renderer + main + preload)
 ```
 
@@ -37,13 +37,16 @@ npm run build                # production bundles (renderer + main + preload)
 | Area | Status |
 |------|--------|
 | Frontend (15 modules) | ✅ Built |
-| Backend data layer | ✅ Built + 533 verification checks passing |
+| Backend data layer | ✅ Built + 611 verification checks passing |
 | Electron ↔ backend bridge | ✅ Wired & proven on both native ABIs |
 | Store-by-store wiring (9 data slices) | ✅ Done — every module on the real backend |
 | Auth (bcrypt) + IPC permission enforcement | ✅ Done |
 | First-run wizard (writes a real shop) | ✅ Done |
 | POS checkout (hero screen) | ✅ Done — persists via `sales.create`, mock fallback kept |
-| Final end-to-end test | ✅ Done — 533 checks incl. full-shop-day E2E (`backend:verify:all`) |
+| AddSale / AddPurchase create-forms | ✅ Done — real products/customers/suppliers/branches |
+| Warranties + Price Groups management | ✅ Done — backend CRUD (v2 migration) |
+| Shipments | ✅ Done — own table + service + channels (v3 migration; no stock/cash impact) |
+| Final end-to-end test | ✅ Done — 611 checks incl. full-shop-day E2E (`backend:verify:all`) |
 | Packaging (installer) | 🔴 Next — final phase |
 
 ## Stack

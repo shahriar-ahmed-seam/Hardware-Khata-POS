@@ -47,7 +47,7 @@ verify/
   scenarios.ts    targeted exact-value operation tests (incl. auth, settings, setup, stockops)
   api.ts          checks exercising the buildApi() facade (the IPC surface)
   all.ts          scenarios + determinism + persistent-file smoke + identities
-api.ts            buildApi(): flat { channel -> handler(db, payload) } — 120 channels
+api.ts            buildApi(): flat { channel -> handler(db, payload) } — 132 channels
 README.md         architecture deep-dive
 ```
 
@@ -109,7 +109,7 @@ and the seeder agree:
 
 ## API facade (`backend/api.ts`)
 
-`buildApi()` returns `{ channel: (db, payload) => result }`. **120 channels** grouped:
+`buildApi()` returns `{ channel: (db, payload) => result }`. **132 channels** grouped:
 reads (`*.list`, `*.get`, `search.global`), writes (`sales.create`, `purchases.create`,
 `*.void`, `cash.openShift`, catalog/contacts/settings CRUD, ...), aggregations
 (`dashboard.*`, `reports.*`), and auth helpers (`auth.authenticate`, `auth.verifyPin`,
@@ -170,7 +170,7 @@ Symptom of wrong ABI: `ERR_DLOPEN_FAILED`. Fix: run the matching rebuild script.
 
 ## Verification — what's proven
 
-Run `npm run backend:verify:all` → **533 checks** (grew from 122 as slices were wired):
+Run `npm run backend:verify:all` → **611 checks** (grew from 122 as slices were wired):
 - **68 E2E** (e2e.ts) — a full shop day through the `buildApi()` facade from a clean
   first-run DB, reconciling every cross-module number (see `docs/06-E2E-AND-SMOKE-TEST.md`).
 - **56 identities** (run.ts) on a 365-day dataset: per-sale total/due/subtotal/profit/cogs;
@@ -180,10 +180,12 @@ Run `npm run backend:verify:all` → **533 checks** (grew from 122 as slices wer
   transfers, adjustments, cash drawer, drafts, void, catalog CRUD, purchase cancel/delete,
   sale delete, contacts CRUD + supplier-pay, expense void/delete/edit drawer reversal,
   settings CRUD, auth (hash/verify/legacy-upgrade), setup (run-once).
-- **API checks** (api.ts): the buildApi() facade end-to-end incl. write-then-read, per slice
-  (api-catalog/purchases/sales/contacts/cash/expenses/dashboard-extra/reports-extra/
-  settings/auth/setup/stockops).
-- **+ combined** (all.ts): determinism (same seed→same data) + persistent-file smoke.
+- **193 API checks** (api.ts) across **132 registered channels**: the buildApi() facade
+  end-to-end incl. write-then-read, per slice (api-catalog/purchases/sales/contacts/cash/
+  expenses/dashboard-extra/reports-extra/settings/auth/setup/stockops/warranties/
+  price-groups/shipments).
+- **+ combined** (all.ts, 294 checks): scenarios + identities + determinism (same
+  seed→same data) + persistent-file smoke.
 
 A failing identity check is a real correctness bug. Add a check for every new invariant.
 
