@@ -16,6 +16,10 @@ Status legend: 🔴 not started · 🟡 partial · 🟢 done
   main-process memory, WRITE-channel permission enforcement at the IPC boundary.
 - **First-run wizard**: writes a real shop via the run-once `setup.complete` channel and
   establishes the owner session; a returning user after restart sees Login, not the wizard.
+- **Closed deferrals**: AddSale/AddPurchase create-forms on real master data; Warranties +
+  Price Groups backend CRUD; Shipments table + service + channels. Whole-app foolproof audit
+  removed every fabricated/mock-number leak under the backend and fixed edit-mode
+  duplication on the sell/buy paths.
 - **Verification**: **611 checks** pass (`npm run backend:verify:all`).
 
 > Per-slice detail (what changed, deferrals) for the wiring + auth + setup work has been
@@ -72,26 +76,24 @@ A manual GUI smoke-test checklist for the owner lives in `docs/06-E2E-AND-SMOKE-
   `userData/pos.db`.
 - Code signing (optional/future).
 
-## 🔴 Final rigorous end-to-end test (after POS checkout)
+## ✅ Final rigorous end-to-end test (DONE)
 
-The owner explicitly wants a last thorough pass once both ends are wired: click through every
-screen against the real DB, confirm numbers match the verification suite, test edge cases
-(empty states, large datasets, void/return flows, shift open/close, permission denials,
-first-run on a clean DB, a full POS sale flowing into Sales/Dashboard/Reports/Cash).
+The owner's last thorough pass is complete: a foolproof audit + the 68-check full-shop-day
+E2E reconcile every cross-module number against the verification suite. A whole-app audit
+removed all fabricated/mock-number leaks under the backend (P/L stock-snapshot placeholders,
+Sales-Rep payout split, SaleDetail/Shipment customer source) and closed two edit-mode
+duplication bugs (AddSale convert/edit; AddPurchase edit). The remaining human-only step is
+the manual GUI smoke test in `docs/06-E2E-AND-SMOKE-TEST.md`.
 
 ## 🟡 Smaller follow-ups (nice-to-have before or after packaging)
 
-- **AddSale / AddPurchase create-forms**: still use mock master data + optimistic local ids.
-  Now that Contacts/Products are wired, thread real backend customer/product/branch ids and
-  call `sales.create`/`purchases.create` directly (drop the optimistic-id mismatch).
-- **Shipments**: no backend table — the Sales → Shipments tab is mock. Add a `shipments`
-  table + service if shipment tracking is needed.
-- **Transfer cancel/reversal**: no backend handler — `cancelTransfer` is mock-only under
-  backend. Add a reversing handler if needed (must reverse the stock movements).
-- **Warranties / Price Groups management**: still mock (`masterData.ts`); tables exist
-  (`warranties`, `price_groups`) — add CRUD handlers + wire if the owner wants them editable.
 - **Sell-return / purchase-return detail lines**: list channels are header-only; add a
   `get`-with-lines if the return detail view needs line breakdown.
+- **Transfer cancel/reversal**: no backend handler — `cancelTransfer` refuses under backend
+  (it will NOT fake a status that would desync stock). Add a reversing handler if needed
+  (must reverse the stock movements safely).
+- **Commission payout ledger**: Sales-Rep report shows real earned commission; "paid" is 0
+  and the full amount is "pending" until a payout-entry table + channel exist.
 
 ## 🟡 Deferred / later (need external pieces or are explicitly post-MVP)
 

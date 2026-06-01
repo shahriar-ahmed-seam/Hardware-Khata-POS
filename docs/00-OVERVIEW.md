@@ -113,11 +113,23 @@ npm run build
 > script. ALWAYS finish a session with `npm run rebuild:electron` so `npm run dev` works.
 > See `02-BACKEND.md` → "Native module ABI".
 
-## Seed modes (POS_SEED env)
+## Seed modes (POS_SEED env) — why you see data
 
-- `demo` — full synthetic year (dev default; dashboards/reports populated).
-- `clean` — master/reference data only (packaged default; first-run wizard takes over).
+The data on screen (KPIs, widgets, products, dues, customers) is **real data read from the
+SQLite DB through the backend channels** — NOT the `mocks/data.ts` fallback. The mock fallback
+runs ONLY in a plain browser (`!hasBackend()`); inside Electron it never runs. What differs by
+mode is how the DB was first populated:
+
+- `demo` — **dev default** (`npm run dev`): seeds a full synthetic year via `simulate()`,
+  writing ~3,000 sales + purchases/returns/expenses/shifts through the REAL services. So the
+  numbers you see in dev are real DB rows flowing through the real pipeline — just generated,
+  not typed by a human. This is the proof the wiring works end to end.
+- `clean` — **packaged default** (`app.isPackaged`): seeds master/reference data only
+  (branches, admin user, product catalog, categories/brands/units) with ZERO transactions.
+  The first-run wizard takes over and your real shop starts from an empty ledger.
 - `none` — truly empty.
+
+To preview the clean first-run in dev, delete `userData/pos.db` and run with `POS_SEED=clean`.
 
 ## Workspace path
 

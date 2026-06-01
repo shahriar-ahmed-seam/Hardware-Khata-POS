@@ -44,7 +44,7 @@ These bridge backend snake_case rows ↔ the camelCase types the components alre
 | Store | Mode | Backend channels |
 |-------|------|------------------|
 | `products.ts` (+ productsUI) | TanStack Query hooks | `products.*` |
-| `masterData.ts` (categories/brands/units/warranties/priceGroups) | mock + catalog hooks | `categories.*`, `brands.*`, `units.*` (warranties/priceGroups still mock) |
+| `masterData.ts` (categories/brands/units/warranties/priceGroups) | backend-aware (catalog hooks + CRUD) | `categories.*`, `brands.*`, `units.*`, `warranties.*`, `priceGroups.*` |
 | `sales.ts` | backend-aware (`hydrate`) | `sales.*`, `sellReturns.*` |
 | `purchases.ts` | backend-aware (`hydrate`) | `purchases.*`, `purchaseReturns.*` |
 | `stock.ts` (+ stockUI) | backend-aware (`hydrate`) | `transfers.*`, `adjustments.*` |
@@ -56,14 +56,15 @@ These bridge backend snake_case rows ↔ the camelCase types the components alre
 | `branches.ts` | backend-aware (`hydrate`, persist) | `branches.*` |
 | `users.ts` | backend-aware (`hydrate`, persist) | `users.*`, `roles.*`, `agents.*` |
 | `auth.ts` | backend-aware (session in main) | `session.*`, `auth.*`, `setup.*` |
-| `activity.ts` | mock (read via dashboard.activityFeed in reports) | `dashboard.activityFeed` |
+| `activity.ts` | reads backend `dashboard.activityFeed`; local store only as browser-dev fallback | `dashboard.activityFeed` |
 | `sms.ts` | mock (deferred — no backend) | n/a |
 | `theme.ts`, `ui.ts`, `i18n.ts`, `toast.ts`, `confirm.ts` | pure UI — keep local | n/a |
 
-## Pages by module (`src/pages/`) — ALL WIRED except POS checkout
+## Pages by module (`src/pages/`) — ALL WIRED
 
 **Dashboard** — `Dashboard.tsx` wrapped in `<DashboardDataProvider>`; KPIs/widgets read
-backend data via `useDashboardData()`, fall back to mock.
+backend data via `useDashboardData()` (real DB through the `dashboard.*` channels). Falls
+back to mock ONLY in plain browser dev (`!hasBackend()`); under Electron it is always the DB.
 
 - **POS / Checkout** — `POS.tsx` + `components/pos/*`. ✅ **WIRED.** Product/customer pickers
   read live backend data (`useProducts`, `useCustomersQuery`); payment confirm persists via
@@ -71,15 +72,19 @@ backend data via `useDashboardData()`, fall back to mock.
   Draft/Quotation via `status`. Park/Hold stay client-side. Mock fallback preserved.
 
 **Sales** — `Sales.tsx`, `AddSale.tsx`, `Drafts.tsx`, `Quotations.tsx`, `SellReturns.tsx`,
-`Shipments.tsx`. List/detail/void/delete/payment/return wired. AddSale create-form +
-Shipments are deferred (mock — no shipments backend table).
+`Shipments.tsx`. List/detail/void/delete/payment/return wired. AddSale create-form reads
+real master data and persists via `sales.create`. Editing/converting a draft or quotation
+deletes the source so no duplicate remains; editing a FINAL sale is blocked (Void + recreate)
+to protect stock/cash integrity. Shipments has its own backend table + channels.
 
-**Purchases** — `Purchases.tsx`, `AddPurchase.tsx`, `PurchaseReturns.tsx`. Wired except the
-AddPurchase create-form (deferred, mock master data).
+**Purchases** — `Purchases.tsx`, `AddPurchase.tsx`, `PurchaseReturns.tsx`. Wired. AddPurchase
+create-form reads real products/suppliers/branches and persists via `purchases.create`;
+editing a saved purchase is blocked (Cancel + re-add) to protect stock/cash integrity (there
+is no `purchases.update` channel).
 
 **Products** — `Products.tsx` (+drawer), `ProductEdit.tsx` (full page), `Categories.tsx`,
-`Brands.tsx`, `Units.tsx` — all wired. `Warranties.tsx`, `PriceGroups.tsx` still mock
-(no backend tables wired yet). Bulk/import tools still mock-side.
+`Brands.tsx`, `Units.tsx`, `Warranties.tsx`, `PriceGroups.tsx` — all wired to real backend
+CRUD. Bulk price update + barcode print read real catalog (display/print only).
 
 **Stock** — `Stock.tsx`, `StockAlerts.tsx`, `StockTransfers.tsx`, `AddStockTransfer.tsx`,
 `StockAdjustments.tsx`, `AddStockAdjustment.tsx` — wired (transfer-cancel deferred).
