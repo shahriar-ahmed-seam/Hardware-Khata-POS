@@ -1,0 +1,27 @@
+{
+  "appId": "com.hardwareshop.pos",
+  "productName": "HardwareKhataPOS",
+  "directories": {
+    "output": "release"
+  },
+  "files": [
+    "dist/**/*",
+    "dist-electron/**/*",
+    "node_modules/better-sqlite3/**/*"
+  ],
+  "asarUnpack": [
+    "node_modules/better-sqlite3/**/*"
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "portable",
+        "arch": ["x64"]
+      },
+      {
+        "target": "zip",
+        "arch": ["x64"]
+      }
+    ]
+  }
+}
