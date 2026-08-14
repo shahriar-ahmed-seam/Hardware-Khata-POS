@@ -3005,3 +3005,18 @@ Object.assign(BN, {
   'You can also download the installer by hand.':
     'চাইলে ইনস্টলারটি নিজে ডাউনলোড করতে পারেন।',
 });
+
+// ---------------------------------------------------------------------------
+// APPEND-ONLY BLOCK — product photo / shop logo now stored with the shop data
+// instead of as a window-scoped `blob:` handle that died on restart.
+// ---------------------------------------------------------------------------
+Object.assign(BN, {
+  'Saving picture…': 'ছবি সংরক্ষণ হচ্ছে…',
+  'PNG or JPG · saved with your data': 'পিএনজি বা জেপিজি · আপনার তথ্যের সঙ্গে জমা থাকে',
+  'Could not use that picture': 'ছবিটি ব্যবহার করা যায়নি',
+  'Please choose a picture file (PNG or JPG).':
+    'একটি ছবির ফাইল বেছে নিন (পিএনজি বা জেপিজি)।',
+  'That file could not be read as a picture.': 'ফাইলটি ছবি হিসেবে পড়া যায়নি।',
+  'That picture appears to be empty.': 'ছবিটি খালি বলে মনে হচ্ছে।',
+  'This computer could not process the picture.': 'এই কম্পিউটার ছবিটি প্রস্তুত করতে পারেনি।',
+});

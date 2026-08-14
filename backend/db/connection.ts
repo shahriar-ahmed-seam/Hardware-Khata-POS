@@ -61,12 +61,16 @@ export function openDatabase(filePath: string, opts: { readonly?: boolean } = {}
  *       document cannot be a DELETE (sale_lines/purchase_lines reference
  *       products(id) with no ON DELETE clause), so it is archived instead.
  *       Additive and nullable — every existing product stays active (NULL).
+ *  v6 — clear dead `blob:` image URLs from products.image_url and the
+ *       business_info / brands logo_url columns. Those were
+ *       `URL.createObjectURL()` handles, valid only inside the window that made
+ *       them, so they were already unusable. See `clearEphemeralImageUrls`.
  */
 export function migrate(db: DB): void {
   db.exec(SCHEMA_SQL);
   db.exec(FTS_SQL);
 
-  const CURRENT_VERSION = 5;
+  const CURRENT_VERSION = 6;
   const row = db
     .prepare('SELECT MAX(version) AS v FROM schema_migrations')
     .get() as { v: number | null };
@@ -103,12 +107,56 @@ export function migrate(db: DB): void {
     );
   }
 
-  if (applied < CURRENT_VERSION) {
+  if (applied < 5) {
     addProductArchiveColumn(db);
     db.prepare('INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (?, ?)').run(
       5,
       'products.archived_at (retire a product that has documents)',
     );
+  }
+
+  if (applied < CURRENT_VERSION) {
+    clearEphemeralImageUrls(db);
+    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (?, ?)').run(
+      6,
+      'clear dead blob: image URLs (product photos + shop logo)',
+    );
+  }
+}
+
+/**
+ * v6 — remove image references that were never storable.
+ *
+ * An earlier build saved product photos and the shop logo as
+ * `URL.createObjectURL(file)`. That `blob:` URL belongs to the window that
+ * created it, so every one of them was already dead: photos disappeared on the
+ * next app start, and the shop logo printed as a broken image on receipts.
+ *
+ * The values cannot be recovered — the picture was never copied anywhere — so the
+ * only honest thing is to clear them. A NULL renders the category placeholder,
+ * which is a truthful "no picture", whereas leaving the string renders a broken
+ * image and hides the fact that the photo needs re-adding.
+ *
+ * Only `blob:` values are touched. Real data URLs written by the fixed build, and
+ * any ordinary path or http URL, are left exactly as they are.
+ */
+export function clearEphemeralImageUrls(db: DB): void {
+  try {
+    db.exec("UPDATE products SET image_url = NULL WHERE image_url LIKE 'blob:%'");
+  } catch {
+    // Column missing on an unexpected schema — nothing to clean.
+  }
+  try {
+    // The shop logo. This one also printed broken on every receipt.
+    db.exec("UPDATE business_info SET logo_url = NULL WHERE logo_url LIKE 'blob:%'");
+  } catch {
+    // Same.
+  }
+  try {
+    // Brands carry a logo column too, so clean it for consistency.
+    db.exec("UPDATE brands SET logo_url = NULL WHERE logo_url LIKE 'blob:%'");
+  } catch {
+    // Column absent on an unexpected schema revision.
   }
 }
 

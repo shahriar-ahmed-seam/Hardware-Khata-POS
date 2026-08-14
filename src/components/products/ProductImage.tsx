@@ -1,4 +1,5 @@
 import { useCategories } from '@/hooks/useCatalog';
+import { usableImage } from '@/lib/imageFile';
 import { cn } from '@/lib/utils';
 
 interface Props {
@@ -28,10 +29,15 @@ export function ProductImage({
 }: Props) {
   const categoriesQuery = useCategories();
   const r = rounded === 'xl' ? 'rounded-xl' : rounded === 'lg' ? 'rounded-lg' : 'rounded-md';
-  if (url) {
+  // Builds before the image fix stored `blob:` URLs, which are dead after a
+  // restart. Treat those as "no image" so the category placeholder shows instead
+  // of a broken-image icon. The v6 migration clears them from the database too;
+  // this is the belt to that braces.
+  const src = usableImage(url);
+  if (src) {
     return (
       <img
-        src={url}
+        src={src}
         alt=""
         style={{ width: size, height: size }}
         className={cn(`${r} object-cover bg-secondary border border-border`, className)}

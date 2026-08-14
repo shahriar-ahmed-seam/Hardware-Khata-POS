@@ -37,6 +37,26 @@ export interface ProductInput {
   userId?: string;
 }
 
+/**
+ * Refuse to store an image reference that cannot outlive the window that made it.
+ *
+ * `URL.createObjectURL()` returns a `blob:` URL scoped to one document. An
+ * earlier build wrote those straight into `products.image_url`, so every product
+ * photo was dead after the next restart and the column filled with unusable
+ * strings. The renderer now stores the image bytes instead (a data URL), and this
+ * guard makes the old mistake impossible to repeat from any caller.
+ *
+ * Throws rather than silently nulling: a caller passing a `blob:` URL is a bug,
+ * and swallowing it would hide the photo loss all over again.
+ */
+function assertStorableImage(url: string | undefined | null): void {
+  if (typeof url === 'string' && url.startsWith('blob:')) {
+    throw new Error(
+      'Cannot store this picture: it is a temporary browser reference that would be lost on restart.',
+    );
+  }
+}
+
 function syncProductFts(db: DB, productId: string) {
   db.prepare('DELETE FROM fts_products WHERE product_id = ?').run(productId);
   const p = db.prepare('SELECT name, sku, barcode FROM products WHERE id = ?').get(productId) as
@@ -54,6 +74,7 @@ function syncProductFts(db: DB, productId: string) {
 
 export function createProduct(db: DB, input: ProductInput) {
   return tx(db, () => {
+    assertStorableImage(input.imageUrl);
     const id = input.id ?? newId('p');
     const now = new Date().toISOString();
     
@@ -146,6 +167,7 @@ export function createProduct(db: DB, input: ProductInput) {
 
 export function updateProduct(db: DB, id: string, patch: Partial<ProductInput>) {
   return tx(db, () => {
+    if ('imageUrl' in patch) assertStorableImage(patch.imageUrl);
     const existing = db.prepare('SELECT id FROM products WHERE id = ?').get(id);
     if (!existing) throw new Error('Product not found');
     const now = new Date().toISOString();

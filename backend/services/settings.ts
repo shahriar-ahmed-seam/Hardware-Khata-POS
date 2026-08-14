@@ -62,6 +62,14 @@ export interface BusinessInfoPatch {
 
 export function updateBusinessInfo(db: DB, patch: BusinessInfoPatch) {
   return tx(db, () => {
+    // A `blob:` URL is scoped to one browser window, so storing it means the logo
+    // is dead on the next restart AND prints broken on every receipt. That is
+    // exactly what an earlier build did; refuse it loudly instead of repeating it.
+    if (typeof patch.logoUrl === 'string' && patch.logoUrl.startsWith('blob:')) {
+      throw new Error(
+        'Cannot store this logo: it is a temporary browser reference that would be lost on restart.',
+      );
+    }
     const existing = db.prepare('SELECT id FROM business_info WHERE id = 1').get();
     if (!existing) throw new Error('Business info not initialised');
     const now = new Date().toISOString();

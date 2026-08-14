@@ -4,7 +4,7 @@
  * numbers for one operation. Complements run.ts (which validates the big
  * simulated dataset's identities). Run independently or imported.
  */
-import { openDatabase, migrate, type DB } from '../db/connection.ts';
+import { openDatabase, migrate, clearEphemeralImageUrls, type DB } from '../db/connection.ts';
 import { seedMaster } from '../seed/master.ts';
 import { Suite } from './assert.ts';
 import { round2 } from '../core/money.ts';
@@ -478,6 +478,91 @@ export function runScenarios(s: Suite) {
       )
       .get(qid) as { n: number };
     s.eq('each correction leaves an adjustment movement', recounts.n, 2);
+    // ---- product pictures must be STORABLE, not window-scoped handles ----
+    // An earlier build saved `URL.createObjectURL(file)` into image_url. Those
+    // `blob:` URLs die with the window, so every photo vanished on restart. The
+    // renderer now stores the image bytes; these checks pin the backend guard so
+    // the mistake cannot come back through any caller.
+    s.section('catalog-images');
+    let blobCreate = '';
+    try {
+      createProduct(db, {
+        sku: 'TEST-BLOB-IMG',
+        name: 'Blob Image Product',
+        imageUrl: 'blob:file:///abcd-1234',
+      });
+    } catch (e) {
+      blobCreate = e instanceof Error ? e.message : String(e);
+    }
+    s.ok('createProduct refuses a blob: image', blobCreate.includes('temporary browser reference'));
+    s.eq(
+      'the refused product was not created',
+      (
+        db.prepare("SELECT COUNT(*) c FROM products WHERE sku = 'TEST-BLOB-IMG'").get() as {
+          c: number;
+        }
+      ).c,
+      0,
+    );
+
+    const imgProd = createProduct(db, {
+      sku: 'TEST-IMG-OK',
+      name: 'Pictured Product',
+      cost: 5,
+      price: 9,
+    });
+    let blobUpdate = '';
+    try {
+      updateProduct(db, imgProd.id, { imageUrl: 'blob:file:///dead-beef' });
+    } catch (e) {
+      blobUpdate = e instanceof Error ? e.message : String(e);
+    }
+    s.ok('updateProduct refuses a blob: image', blobUpdate.includes('temporary browser reference'));
+
+    // A real (data URL) picture round-trips and is stored verbatim.
+    const dataUrl =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==';
+    updateProduct(db, imgProd.id, { imageUrl: dataUrl });
+    s.eq(
+      'a data-URL picture is stored as given',
+      (
+        db.prepare('SELECT image_url FROM products WHERE id = ?').get(imgProd.id) as {
+          image_url: string;
+        }
+      ).image_url,
+      dataUrl,
+    );
+    // The whole point: the picture lives in the DATABASE, so a snapshot carries
+    // it. Nothing else has to be backed up for a photo to survive.
+    s.ok(
+      'the picture is inside the database, so every backup includes it',
+      (
+        db
+          .prepare("SELECT COUNT(*) c FROM products WHERE image_url LIKE 'data:image/%'")
+          .get() as { c: number }
+      ).c >= 1,
+    );
+    deleteProduct(db, imgProd.id, { force: true });
+
+    // Blob URLs already sitting in an upgraded database are cleared by the v6
+    // migration, so a broken image is never rendered.
+    db.prepare("UPDATE products SET image_url = 'blob:file:///legacy' WHERE id = 'p19'").run();
+    clearEphemeralImageUrls(db);
+    s.ok(
+      'the v6 migration clears a legacy blob: product image',
+      (db.prepare("SELECT image_url FROM products WHERE id = 'p19'").get() as {
+        image_url: string | null;
+      }).image_url === null,
+    );
+
+    let blobLogo = '';
+    try {
+      updateBusinessInfo(db, { logoUrl: 'blob:file:///logo-gone' });
+    } catch (e) {
+      blobLogo = e instanceof Error ? e.message : String(e);
+    }
+    s.ok('the shop logo also refuses a blob: URL', blobLogo.includes('temporary browser reference'));
+
     s.section('catalog');
 
     // a clean product (no stock, no history) deletes successfully

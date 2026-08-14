@@ -16,7 +16,15 @@ const CURRENT_USER = 'u_admin';
 export interface BusinessInfo {
   name: string;
   tagline?: string;
-  logoUrl?: string; // local URL.createObjectURL preview; backend stores real upload path
+  /**
+   * The logo IMAGE ITSELF, as a data URL (see src/lib/imageFile.ts).
+   *
+   * This used to hold `URL.createObjectURL(file)`, which is valid only for the
+   * window that created it — so the logo died on every restart and printed as a
+   * broken image on receipts. Storing the bytes means it survives restarts and
+   * reinstalls and is carried by every database backup.
+   */
+  logoUrl?: string;
   address?: string;
   phonePrimary?: string;
   phoneAlt?: string;

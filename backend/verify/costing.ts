@@ -59,9 +59,10 @@ export function runCosting(s: Suite) {
       version: number;
     }[]
   ).map((r) => r.version);
-  s.eq('every migration up to the head is recorded', versions.join(','), '1,2,3,4,5');
+  s.eq('every migration up to the head is recorded', versions.join(','), '1,2,3,4,5,6');
   s.ok('cost-history migration (v4) is recorded', versions.includes(4));
   s.ok('products.archived_at exists (v5)', cols.has('archived_at'));
+  s.ok('blob-image cleanup migration (v6) is recorded', versions.includes(6));
 
   // --------------------------------------------------- a brand-new product
   s.section('costing-new-product');

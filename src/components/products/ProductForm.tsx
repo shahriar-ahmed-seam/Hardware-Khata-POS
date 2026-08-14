@@ -16,6 +16,8 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { ProductImage } from './ProductImage';
 import type { Product } from '@/types/domain';
 import { useCategories, useBrands, useUnits } from '@/hooks/useCatalog';
+import { fileToStoredImage, usableImage } from '@/lib/imageFile';
+import { toast } from '@/stores/toast';
 import { cn } from '@/lib/utils';
 import { NumberField } from '@/components/ui/NumberField';
 
@@ -54,7 +56,11 @@ const EMPTY: Product = {
 export function ProductForm({ initial, onSave, onDelete, asDrawer, onCancel }: Props) {
   const nav = useNavigate();
   const [p, setP] = useState<Product>(initial ?? EMPTY);
-  const [imgPreview, setImgPreview] = useState<string | undefined>(initial?.image);
+  // `usableImage` drops the dead `blob:` values written by builds before the
+  // image fix, so an old product shows its category placeholder instead of a
+  // broken-image icon.
+  const [imgPreview, setImgPreview] = useState<string | undefined>(usableImage(initial?.image));
+  const [imgBusy, setImgBusy] = useState(false);
 
   // Dropdown options come from the backend so editing a product always writes
   // REAL category/brand/unit ids.
@@ -88,12 +94,38 @@ export function ProductForm({ initial, onSave, onDelete, asDrawer, onCancel }: P
     set('barcode', digits + check);
   };
 
-  const handleImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+  /**
+   * Store the picture ITSELF, not a handle to it.
+   *
+   * This used to be `URL.createObjectURL(f)`, whose `blob:` URL is only valid
+   * for the current window — so the photo was dead on the next app start and the
+   * database filled up with unusable strings. `fileToStoredImage` shrinks the
+   * picture and returns the bytes as a data URL, which survives a restart, a
+   * reinstall and a move to another PC, and is carried by every backup because
+   * backups are snapshots of the database.
+   */
+  const handleImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
+    // Clear the input so picking the SAME file again still fires a change event
+    // (otherwise a failed attempt cannot be retried).
+    e.target.value = '';
     if (!f) return;
-    const url = URL.createObjectURL(f);
-    setImgPreview(url);
-    set('image', url);
+    setImgBusy(true);
+    try {
+      // 256 px is deliberate, not stingy. The biggest a product photo is ever
+      // drawn is the POS grid tile (~170 px wide), and `products.list` returns
+      // EVERY column for EVERY product — so each stored byte is shipped over IPC
+      // on every catalogue read. A 256 px JPEG lands around 10–20 KB, which keeps
+      // both the database and that read cheap on the shop's slow PC.
+      const stored = await fileToStoredImage(f, { maxEdge: 256, quality: 0.78, maxBytes: 150_000 });
+      setImgPreview(stored);
+      set('image', stored);
+    } catch (err) {
+      // The helper's messages are written for the shopkeeper — show them as-is.
+      toast.error(err instanceof Error ? err.message : 'Could not use that picture');
+    } finally {
+      setImgBusy(false);
+    }
   };
 
   const submit = () => {
@@ -161,7 +193,12 @@ export function ProductForm({ initial, onSave, onDelete, asDrawer, onCancel }: P
             <div className="lg:col-span-1 space-y-4">
               <Section title="Image" subtitle="Optional · 1 photo">
                 <label className="block cursor-pointer">
-                  <input type="file" accept="image/*" className="hidden" onChange={handleImage} />
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => void handleImage(e)}
+                  />
                   <div className="aspect-square w-full rounded-xl border-2 border-dashed border-border hover:border-primary/60 grid place-items-center bg-secondary/30 transition relative overflow-hidden">
                     {imgPreview ? (
                       <img src={imgPreview} alt="" className="absolute inset-0 size-full object-cover" />
@@ -169,7 +206,14 @@ export function ProductForm({ initial, onSave, onDelete, asDrawer, onCancel }: P
                       <div className="text-center text-muted-foreground">
                         <ImageIcon className="size-10 mx-auto mb-2 opacity-50" />
                         <div className="text-sm">Click to upload</div>
-                        <div className="text-[11px] mt-0.5">PNG, JPG up to 1MB</div>
+                        {/* The photo is shrunk and stored inside the shop
+                            database, so it is kept with every backup. */}
+                        <div className="text-[11px] mt-0.5">PNG or JPG · saved with your data</div>
+                      </div>
+                    )}
+                    {imgBusy && (
+                      <div className="absolute inset-0 grid place-items-center bg-background/70 text-xs font-medium">
+                        Saving picture…
                       </div>
                     )}
                   </div>

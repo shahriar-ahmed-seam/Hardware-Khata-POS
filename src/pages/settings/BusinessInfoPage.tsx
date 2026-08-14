@@ -8,6 +8,7 @@ import { SettingsHeader } from '@/components/settings/SettingsHeader';
 import { useSettings } from '@/stores/settings';
 import { useBranches } from '@/stores/branches';
 import { toast } from '@/stores/toast';
+import { fileToStoredImage, usableImage } from '@/lib/imageFile';
 import { cn } from '@/lib/utils';
 
 const TIMEZONES = [
@@ -30,7 +31,8 @@ export default function BusinessInfoPage() {
   const hydrateBranches = useBranches((s) => s.hydrate);
 
   const [draft, setDraft] = useState(business);
-  const [logoPreview, setLogoPreview] = useState(business.logoUrl);
+  const [logoPreview, setLogoPreview] = useState(usableImage(business.logoUrl));
+  const [logoBusy, setLogoBusy] = useState(false);
 
   // Hydrate from backend on mount (branches first so the default-branch picker
   // and the id<->name bridge in the store have data to resolve against).
@@ -41,18 +43,35 @@ export default function BusinessInfoPage() {
   // Keep the local draft in sync once the async hydrate replaces `business`.
   useEffect(() => {
     setDraft(business);
-    setLogoPreview(business.logoUrl);
+    setLogoPreview(usableImage(business.logoUrl));
   }, [business]);
 
   const set = <K extends keyof typeof draft>(k: K, v: (typeof draft)[K]) =>
     setDraft((d) => ({ ...d, [k]: v }));
 
-  const onLogo = (e: React.ChangeEvent<HTMLInputElement>) => {
+  /**
+   * Store the logo bytes, not a `blob:` handle to them.
+   *
+   * The old version saved `URL.createObjectURL(f)`, which is only valid for the
+   * current window — so the logo vanished on the next restart AND printed as a
+   * broken image on every receipt (Receipt.tsx renders this value). Transparency
+   * is preserved, because a shop logo is usually a transparent PNG and would
+   * otherwise gain a black box.
+   */
+  const onLogo = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
+    e.target.value = ''; // let the same file be re-picked after a failure
     if (!f) return;
-    const url = URL.createObjectURL(f);
-    setLogoPreview(url);
-    set('logoUrl', url);
+    setLogoBusy(true);
+    try {
+      const stored = await fileToStoredImage(f, { maxEdge: 320, preserveAlpha: true });
+      setLogoPreview(stored);
+      set('logoUrl', stored);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not use that picture');
+    } finally {
+      setLogoBusy(false);
+    }
   };
 
   const removeLogo = () => {
@@ -226,7 +245,12 @@ export default function BusinessInfoPage() {
           <Card className="p-4">
             <div className="text-sm font-semibold mb-2">Logo</div>
             <label className="block cursor-pointer">
-              <input type="file" accept="image/*" className="hidden" onChange={onLogo} />
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => void onLogo(e)}
+              />
               <div
                 className={cn(
                   'aspect-square w-full rounded-xl border-2 border-dashed border-border hover:border-primary/60 grid place-items-center bg-secondary/30 transition relative overflow-hidden',
@@ -238,7 +262,14 @@ export default function BusinessInfoPage() {
                   <div className="text-center text-muted-foreground">
                     <ImageIcon className="size-10 mx-auto mb-2 opacity-50" />
                     <div className="text-sm">Click to upload</div>
-                    <div className="text-[11px] mt-0.5">PNG / SVG up to 1MB</div>
+                    {/* SVG is not offered: the logo is re-encoded to a bitmap so
+                        it can be stored with the shop data and printed. */}
+                    <div className="text-[11px] mt-0.5">PNG or JPG · saved with your data</div>
+                  </div>
+                )}
+                {logoBusy && (
+                  <div className="absolute inset-0 grid place-items-center bg-background/70 text-xs font-medium">
+                    Saving picture…
                   </div>
                 )}
               </div>
