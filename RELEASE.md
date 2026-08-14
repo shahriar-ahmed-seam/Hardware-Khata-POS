@@ -1,7 +1,7 @@
 # Hardware Khata POS — Releasing & Updating
 
-**Current version: 0.2.0** · Windows x64 · NSIS installer, per-user (no admin needed)
-Installer: `release/HardwareKhataPOS-Setup-0.2.0.exe` (~82 MB)
+**Current version: 0.3.0** · Windows x64 · NSIS installer, per-user (no admin needed)
+Installer: `release/HardwareKhataPOS-Setup-0.3.0.exe` (~82 MB)
 
 ---
 
@@ -78,6 +78,40 @@ upgrading and uninstalling never touch it.
   Point the folder at OneDrive/Drive/Dropbox and the copy leaves the shop.
 - **Pendrive copy:** the dashboard has a *Backup to Pendrive* button, plus a card
   in Settings → Backup. That is the copy that survives a stolen or dead PC.
+
+---
+
+## 2b. What's in 0.3.0
+
+**Product photos and the shop logo no longer disappear.** They were being saved
+as `URL.createObjectURL(file)` — a `blob:` handle into the *current window's*
+memory — and that string went straight into the database. So a photo died on the
+next app start, not just on reinstall, and the shop logo printed broken on every
+receipt.
+
+Pictures are now shrunk and stored **inside the shop database**, which is exactly
+what makes them safe: backups are whole-database snapshots, so every photo is
+already carried by the snapshot, pendrive and cloud copies. Nothing extra to sync,
+no separate folder, no paths to go stale when the database moves to another PC.
+
+- Product photos are capped at 256 px, the logo at 320 px (~10–20 KB each). That
+  is not stinginess: `products.list` returns every column for every product, so
+  each stored byte travels over IPC on every catalogue read. 256 px is still
+  bigger than the ~170 px POS tile, which is the largest a photo is ever drawn.
+- The logo keeps transparency; product photos re-encode to JPEG.
+- Writing a `blob:` URL is now **refused** by the backend, so this cannot come
+  back through any caller.
+- **Schema v6** clears the dead `blob:` values already in an upgraded database.
+  They are unrecoverable — the picture was never copied anywhere — so affected
+  products fall back to the category placeholder. **Any photo added before 0.3.0
+  must be re-added once.** It will then stay for good.
+
+Also in 0.3.0: **More & Settings moved to a gear in the top bar** and opens as
+boxes (Reports · All Expenses · Expense Categories · Data & Import · Settings),
+so the sidebar only holds what is used during a sale. **POS cart numbers are
+positional** — tabs always read Cart 1…N instead of climbing forever. And the
+Updates screen no longer reports "nothing published yet" as a red error blaming
+the internet.
 
 ---
 
