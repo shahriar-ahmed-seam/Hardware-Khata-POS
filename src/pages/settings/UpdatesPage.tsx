@@ -167,16 +167,30 @@ export default function UpdatesPage() {
             </div>
           )}
 
-          {/* Failure — always offer the manual way out */}
-          {state.phase === 'error' && (
+          {/* NOT A FAILURE: nothing has been released yet. Shown calmly, because
+              telling the owner to check their internet would send them chasing a
+              problem that does not exist. */}
+          {state.phase === 'error' && state.errorKind === 'no-releases' && (
+            <div className="rounded-md border border-border bg-muted/40 p-4 space-y-2">
+              <div className="font-semibold text-sm">No update has been published yet</div>
+              <div className="text-xs text-muted-foreground">
+                Your app reached the update server and it has nothing newer to offer. This is
+                normal right after a fresh install — you already have the newest build.
+              </div>
+            </div>
+          )}
+
+          {/* A real failure — always offer the manual way out */}
+          {state.phase === 'error' && state.errorKind !== 'no-releases' && (
             <div className="rounded-md border border-destructive/30 bg-destructive/5 p-4 space-y-2">
               <div className="font-semibold text-sm">Could not check for updates</div>
               <div className="text-xs text-muted-foreground break-words" data-no-i18n>
                 {state.error}
               </div>
               <div className="text-xs text-muted-foreground">
-                This is usually just the internet being down. You can also download the installer
-                by hand.
+                {state.errorKind === 'network'
+                  ? 'The computer could not reach the internet. Try again once it is back.'
+                  : 'You can also download the installer by hand.'}
               </div>
               <Button variant="outline" size="sm" onClick={() => void openReleases()}>
                 <ExternalLink className="size-4" /> Open downloads page

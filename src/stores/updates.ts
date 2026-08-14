@@ -24,6 +24,12 @@ export type UpdatePhase =
   /** Running from `npm run dev`, or otherwise not an installed build. */
   | 'unsupported';
 
+/**
+ * `no-releases` is NOT a fault — it means the update server was reached and had
+ * nothing newer. Kept distinct so the UI does not blame the internet for it.
+ */
+export type UpdateErrorKind = 'no-releases' | 'network' | 'other';
+
 export interface UpdateState {
   phase: UpdatePhase;
   currentVersion: string;
@@ -35,6 +41,7 @@ export interface UpdateState {
   transferred?: number;
   total?: number;
   error?: string;
+  errorKind?: UpdateErrorKind;
   lastCheckedAt?: string;
   autoCheck: boolean;
 }
@@ -87,9 +94,19 @@ export const useUpdates = create<Store>((set, get) => ({
     try {
       const next = await api<UpdateState>('update.check', {});
       set({ state: next });
-      if (next.phase === 'up-to-date') toast.success('You are on the latest version');
-      else if (next.phase === 'available') toast.info(`Version ${next.newVersion} is available`);
-      else if (next.phase === 'error') toast.error('Could not check for updates', { description: next.error });
+      if (next.phase === 'up-to-date') {
+        toast.success('You are on the latest version');
+      } else if (next.phase === 'available') {
+        toast.info(`Version ${next.newVersion} is available`);
+      } else if (next.phase === 'error') {
+        // "Nothing published yet" reached the server and got a straight answer,
+        // so it is not an error the owner has to do anything about.
+        if (next.errorKind === 'no-releases') {
+          toast.info('No update has been published yet');
+        } else {
+          toast.error('Could not check for updates', { description: next.error });
+        }
+      }
     } catch (e) {
       toast.error(msg(e, 'Could not check for updates'));
     } finally {

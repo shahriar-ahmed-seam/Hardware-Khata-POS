@@ -29,11 +29,8 @@ import {
   ChevronLeft,
   ChevronRight,
   BarChart3,
-  Settings,
   Hammer,
   Store,
-  MoreHorizontal,
-  Upload,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUI } from '@/stores/ui';
@@ -49,8 +46,9 @@ type Entry = { kind: 'item'; item: Item } | { kind: 'group'; group: Group };
  *  - The seven per-module "Import …" rows collapsed into one "Data & Import"
  *    hub (`/import`) instead of repeating the same idea in six groups.
  *  - "Variations" removed — it only ever rendered a Placeholder page.
- *  - Expenses, Reports, SMS and Settings merged into a single "More & Settings"
- *    tab so the top level stays short and scannable.
+ *  - Expenses, Reports, Data & Import and Settings moved OUT of the sidebar
+ *    entirely, to the gear menu in the titlebar (MoreMenu.tsx), so this list
+ *    only holds what is reached during a sale.
  *  - No fabricated counters (the old hard-coded "4" stock-alert badge is gone).
  */
 const nav: Entry[] = [
@@ -140,25 +138,15 @@ const nav: Entry[] = [
       ],
     },
   },
-  {
-    // The four low-frequency destinations, merged into one tab.
-    kind: 'group',
-    group: {
-      label: 'More & Settings',
-      icon: MoreHorizontal,
-      items: [
-        { label: 'Reports', to: '/reports', icon: TrendingUp },
-        { label: 'All Expenses', to: '/expenses', icon: Wallet },
-        { label: 'Expense Categories', to: '/expenses/categories', icon: ListTree },
-        // SMS was removed from the nav: it had no backend at all (gateway,
-        // credit balance and send history were local placeholder state), so
-        // every number it showed was invented. The pages still exist on disk if
-        // it is ever wired to a real BD gateway.
-        { label: 'Data & Import', to: '/import', icon: Upload },
-        { label: 'Settings', to: '/settings', icon: Settings },
-      ],
-    },
-  },
+  // "More & Settings" (Reports · All Expenses · Expense Categories ·
+  // Data & Import · Settings) is NOT here any more. It moved to the gear in the
+  // titlebar — see components/layout/MoreMenu.tsx. None of those five is used
+  // during a sale, so they were spending permanent sidebar room and pushing the
+  // everyday destinations further from the top.
+  //
+  // SMS is gone entirely: it had no backend at all (gateway, credit balance and
+  // send history were local placeholder state), so every number it showed was
+  // invented. The pages still exist on disk if a real BD gateway is ever wired up.
 ];
 
 export function Sidebar() {

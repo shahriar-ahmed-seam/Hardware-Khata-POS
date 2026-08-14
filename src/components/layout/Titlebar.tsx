@@ -26,6 +26,7 @@ import { useBranches } from '@/stores/branches';
 import { toast } from '@/stores/toast';
 import { cn } from '@/lib/utils';
 import { GlobalSearch } from './GlobalSearch';
+import { MoreMenu } from './MoreMenu';
 import { useNavigate } from 'react-router-dom';
 
 export function Titlebar() {
@@ -163,6 +164,12 @@ export function Titlebar() {
       </div>
 
       <div className="titlebar-no-drag flex items-center gap-0.5 shrink-0">
+        {/* Reports / Expenses / Import / Settings. Moved out of the sidebar so the
+            main nav only holds what is used during a sale. */}
+        <MoreMenu />
+
+        <div className="w-px h-5 bg-border mx-1" />
+
         {/* Density toggle — least essential control, so it is the first to go */}
         <IconBtn
           className="hidden lg:grid"

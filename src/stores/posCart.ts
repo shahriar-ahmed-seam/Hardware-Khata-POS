@@ -28,13 +28,16 @@ import type { ParkedCart, PriceGroup } from '@/components/pos/types';
 
 let cartCounter = 0;
 
-/** Build an empty cart. Labels come from a monotonic counter, never from
- *  `carts.length + 1` — closing the middle tab of three used to produce a second
- *  "Cart 3". */
-export function makeCart(no: number, defaults: { taxPct: number }): ParkedCart {
+/**
+ * Build an empty cart. The LABEL is not set here — `renumber()` owns labels.
+ *
+ * The `id` still comes from a monotonic counter, and must: it is a React key and
+ * the handle every mutation matches on, so it can never be reused.
+ */
+export function makeCart(defaults: { taxPct: number }): ParkedCart {
   return {
     id: `cart_${Date.now()}_${(cartCounter += 1)}`,
-    label: `Cart ${no}`,
+    label: '',
     lines: [],
     customerId: 'cu1',
     priceGroup: 'retail',
@@ -44,6 +47,30 @@ export function makeCart(no: number, defaults: { taxPct: number }): ParkedCart {
     shippingCharge: 0,
     otherCharge: 0,
   };
+}
+
+/**
+ * Label every open cart by its POSITION: Cart 1 … Cart N.
+ *
+ * WHY NOT A MONOTONIC COUNTER (which is what this used to do)
+ * A never-reused counter meant the numbers only ever climbed: open a few carts,
+ * close them, and the next one was "Cart 14" with a single cart on screen. The
+ * cashier calls out "cart three" across the counter, so the number has to mean
+ * "the third tab", not "the fourteenth cart since this PC was set up".
+ *
+ * The original reason for the counter was that `carts.length + 1` produced a
+ * DUPLICATE "Cart 3" when you closed the middle of three tabs. Renumbering the
+ * whole row on every add/close fixes that properly: labels are always exactly
+ * 1..N, with no gaps and no repeats.
+ *
+ * Returns the same object identity for carts whose label is already correct, so
+ * React does not re-render untouched tabs.
+ */
+function renumber(carts: ParkedCart[]): ParkedCart[] {
+  return carts.map((c, i) => {
+    const label = `Cart ${i + 1}`;
+    return c.label === label ? c : { ...c, label };
+  });
 }
 
 /** Resolves the current catalogue price of a product for a given price group. */
@@ -67,8 +94,6 @@ interface State {
   carts: ParkedCart[];
   activeId: string;
   held: ParkedCart[];
-  /** Next cart number for labelling. Monotonic; never reused. */
-  nextCartNo: number;
   /**
    * True when this state came off disk and has not been checked against the
    * live catalogue yet. Set by the rehydrate hook, cleared by `revalidate`.
@@ -106,7 +131,6 @@ export const usePOSCart = create<State>()(
       carts: [],
       activeId: '',
       held: [],
-      nextCartNo: 1,
       needsRevalidation: false,
 
       ensureInitialized: (d) => {
@@ -115,13 +139,17 @@ export const usePOSCart = create<State>()(
           // Storage could hold an activeId that no longer matches a cart (an
           // interrupted write, or a hand-edited store). Without this the POS
           // page's `carts.find(...)!` would be undefined and crash on render.
-          if (!s.carts.some((c) => c.id === s.activeId)) {
-            set({ activeId: s.carts[0].id });
-          }
+          const patch: Partial<State> = {};
+          if (!s.carts.some((c) => c.id === s.activeId)) patch.activeId = s.carts[0].id;
+          // Also re-label: a store written by an older build carries the old
+          // runaway numbers ("Cart 14" on its own).
+          const renumbered = renumber(s.carts);
+          if (renumbered.some((c, i) => c !== s.carts[i])) patch.carts = renumbered;
+          if (Object.keys(patch).length > 0) set(patch);
           return;
         }
-        const first = makeCart(s.nextCartNo, d);
-        set({ carts: [first], activeId: first.id, nextCartNo: s.nextCartNo + 1 });
+        const first = makeCart(d);
+        set({ carts: renumber([first]), activeId: first.id });
       },
 
       setActiveId: (activeId) => set({ activeId }),
@@ -131,8 +159,8 @@ export const usePOSCart = create<State>()(
 
       addCart: (d) =>
         set((s) => {
-          const c = makeCart(s.nextCartNo, d);
-          return { carts: [...s.carts, c], activeId: c.id, nextCartNo: s.nextCartNo + 1 };
+          const c = makeCart(d);
+          return { carts: renumber([...s.carts, c]), activeId: c.id };
         }),
 
       closeCart: (id, d) =>
@@ -140,11 +168,13 @@ export const usePOSCart = create<State>()(
           const next = s.carts.filter((c) => c.id !== id);
           if (next.length === 0) {
             // Never leave the screen with zero carts.
-            const fresh = makeCart(s.nextCartNo, d);
-            return { carts: [fresh], activeId: fresh.id, nextCartNo: s.nextCartNo + 1 };
+            const fresh = makeCart(d);
+            return { carts: renumber([fresh]), activeId: fresh.id };
           }
+          // Renumber so the remaining tabs read 1..N — closing "Cart 1" of three
+          // must leave "Cart 1, Cart 2", not "Cart 2, Cart 3".
           return {
-            carts: next,
+            carts: renumber(next),
             activeId: id === s.activeId ? next[0].id : s.activeId,
           };
         }),
@@ -158,7 +188,7 @@ export const usePOSCart = create<State>()(
         set((s) => {
           const current = s.carts.find((c) => c.id === s.activeId);
           if (!current) return {};
-          const fresh = makeCart(0, d);
+          const fresh = makeCart(d);
           return {
             carts: s.carts.map((c) =>
               c.id === s.activeId ? { ...fresh, id: current.id, label: current.label } : c,
@@ -170,7 +200,7 @@ export const usePOSCart = create<State>()(
         set((s) => {
           const current = s.carts.find((c) => c.id === s.activeId);
           if (!current || current.lines.length === 0) return {};
-          const fresh = makeCart(0, d);
+          const fresh = makeCart(d);
           return {
             held: [...s.held, current],
             carts: s.carts.map((c) =>
@@ -250,13 +280,23 @@ export const usePOSCart = create<State>()(
     }),
     {
       name: 'pos-carts',
-      version: 1,
+      // v2: cart labels are positional (Cart 1..N) instead of coming from a
+      // monotonic `nextCartNo`, which is dropped. The migration relabels whatever
+      // is on disk so an upgraded install does not keep showing "Cart 14".
+      version: 2,
+      migrate: (persisted, version) => {
+        const s = (persisted ?? {}) as Partial<State> & { nextCartNo?: number };
+        if (version < 2) {
+          const { nextCartNo: _dropped, ...rest } = s;
+          return { ...rest, carts: renumber(rest.carts ?? []) } as State;
+        }
+        return s as State;
+      },
       // Only the durable sale state. Nothing derived, nothing transient.
       partialize: (s) => ({
         carts: s.carts,
         activeId: s.activeId,
         held: s.held,
-        nextCartNo: s.nextCartNo,
       }),
       onRehydrateStorage: () => (state) => {
         // Anything restored from disk predates the current catalogue read, so

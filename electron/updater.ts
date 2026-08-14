@@ -76,6 +76,16 @@ export type UpdatePhase =
   | 'error'
   | 'unsupported';
 
+/**
+ * WHY a failure needs a kind, not just a message.
+ *
+ * "No published versions on GitHub" is not a fault: it is the honest answer
+ * whenever the newest build has not been released yet, and telling the owner to
+ * check their internet in that case sends them chasing a problem that does not
+ * exist. The UI needs to tell those two cases apart.
+ */
+export type UpdateErrorKind = 'no-releases' | 'network' | 'other';
+
 export interface UpdateState {
   phase: UpdatePhase;
   currentVersion: string;
@@ -89,9 +99,28 @@ export interface UpdateState {
   transferred?: number;
   total?: number;
   error?: string;
+  errorKind?: UpdateErrorKind;
   /** When the last successful check finished. */
   lastCheckedAt?: string;
   autoCheck: boolean;
+}
+
+/** Classify an updater failure so the UI can explain it truthfully. */
+function classify(message: string): UpdateErrorKind {
+  const m = message.toLowerCase();
+  if (m.includes('no published versions')) return 'no-releases';
+  if (
+    m.includes('enotfound') ||
+    m.includes('econnrefused') ||
+    m.includes('etimedout') ||
+    m.includes('econnreset') ||
+    m.includes('getaddrinfo') ||
+    m.includes('net::') ||
+    m.includes('socket')
+  ) {
+    return 'network';
+  }
+  return 'other';
 }
 
 let state: UpdateState = {
@@ -179,13 +208,11 @@ function wire(): void {
     publish({ phase: 'downloaded', newVersion: info.version, percent: 100 }),
   );
 
-  autoUpdater.on('error', (err: Error) =>
-    publish({
-      phase: 'error',
-      // The raw error is often a stack or a bare status code; keep the message.
-      error: err?.message ? err.message : String(err),
-    }),
-  );
+  autoUpdater.on('error', (err: Error) => {
+    // The raw error is often a stack or a bare status code; keep the message.
+    const message = err?.message ? err.message : String(err);
+    publish({ phase: 'error', error: message, errorKind: classify(message) });
+  });
 }
 
 /**
@@ -211,7 +238,7 @@ export async function checkForUpdates(opts: { silent?: boolean } = {}): Promise<
       console.warn('[update] background check failed:', message);
       publish({ phase: 'idle' });
     } else {
-      publish({ phase: 'error', error: message });
+      publish({ phase: 'error', error: message, errorKind: classify(message) });
     }
   }
   return updateState();
@@ -228,7 +255,8 @@ export async function downloadUpdate(): Promise<UpdateState> {
     publish({ phase: 'downloading', percent: 0, error: undefined });
     await autoUpdater.downloadUpdate();
   } catch (e) {
-    publish({ phase: 'error', error: e instanceof Error ? e.message : String(e) });
+    const message = e instanceof Error ? e.message : String(e);
+    publish({ phase: 'error', error: message, errorKind: classify(message) });
   }
   return updateState();
 }

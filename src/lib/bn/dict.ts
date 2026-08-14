@@ -2982,3 +2982,26 @@ Object.assign(BN, {
   'If the slow PC still struggles, the next biggest win is closing other programs — a browser with many tabs open will take memory this app needs.':
     'ধীর পিসিতে এখনো সমস্যা হলে সবচেয়ে বড় উপকার হবে অন্য প্রোগ্রাম বন্ধ করা — অনেক ট্যাব খোলা ব্রাউজার এই অ্যাপের দরকারি মেমোরি নিয়ে নেয়।',
 });
+
+// ---------------------------------------------------------------------------
+// APPEND-ONLY BLOCK — the titlebar "More & Settings" gear menu, and the honest
+// "nothing published yet" state on the Updates screen.
+// ---------------------------------------------------------------------------
+Object.assign(BN, {
+  // ---- gear menu tiles ----
+  'More & Settings': 'আরও ও সেটিংস',
+  'Sales, stock, profit and tax': 'বিক্রয়, স্টক, লাভ ও কর',
+  'What the shop has spent': 'দোকানের খরচ',
+  'Group your spending': 'খরচ ভাগ করে রাখুন',
+  'Bring in lists from Excel': 'এক্সেল থেকে তালিকা আনুন',
+  'Shop, users, printers, backup': 'দোকান, ব্যবহারকারী, প্রিন্টার, ব্যাকআপ',
+
+  // ---- updates: reached the server, nothing newer ----
+  'No update has been published yet': 'এখনো কোনো হালনাগাদ প্রকাশ করা হয়নি',
+  'Your app reached the update server and it has nothing newer to offer. This is normal right after a fresh install — you already have the newest build.':
+    'আপনার অ্যাপ হালনাগাদ সার্ভারে পৌঁছেছে, কিন্তু নতুন কিছু নেই। নতুন ইনস্টলের পরপর এটি স্বাভাবিক — আপনার কাছে সর্বশেষ সংস্করণই আছে।',
+  'The computer could not reach the internet. Try again once it is back.':
+    'কম্পিউটারটি ইন্টারনেটে পৌঁছাতে পারেনি। সংযোগ ফিরে এলে আবার চেষ্টা করুন।',
+  'You can also download the installer by hand.':
+    'চাইলে ইনস্টলারটি নিজে ডাউনলোড করতে পারেন।',
+});
