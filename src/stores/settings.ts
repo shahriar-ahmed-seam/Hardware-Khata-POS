@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { api, hasBackend } from '@/lib/api';
+import { api } from '@/lib/api';
 import { toast } from '@/stores/toast';
 import { useBranches } from '@/stores/branches';
 import {
@@ -36,11 +36,18 @@ export interface BusinessInfo {
   defaultBranch?: string; // by name; resolved against Branches store
 }
 
+/**
+ * Shape-only defaults. Every SHOP IDENTITY string is intentionally EMPTY: these
+ * values print on real receipts, so a placeholder here would ship as the
+ * customer's shop name/address/phone. The real identity comes from
+ * business.get (first-run wizard writes it). Keys are kept so callers and the
+ * settings form never see undefined.
+ */
 const DEFAULT_BUSINESS: BusinessInfo = {
-  name: 'Hardware POS',
-  tagline: 'Built for the shop floor',
-  address: 'Mirpur 10, Dhaka',
-  phonePrimary: '01XXX-XXXXXX',
+  name: '',
+  tagline: '',
+  address: '',
+  phonePrimary: '',
   email: '',
   currencySymbol: '৳',
   currencyPosition: 'before',
@@ -50,7 +57,7 @@ const DEFAULT_BUSINESS: BusinessInfo = {
   dateFormat: 'DD/MM/YYYY',
   fiscalYearStart: 7,
   defaultLanguage: 'en',
-  defaultBranch: 'Mirpur Branch',
+  defaultBranch: '',
 };
 
 // ---------- Tax Rates ----------
@@ -100,14 +107,16 @@ export interface ReceiptTemplate {
   showLogo: boolean;
   headerLines: string[]; // free text
   footerLines: string[]; // free text
+  /** Prints "Served by <name>" under the invoice meta. */
   showCashier: boolean;
   showCustomerPhone: boolean;
   showCustomerAddress: boolean;
   showLineDiscount: boolean;
   showLineTax: boolean;
   showPaymentRef: boolean;
+  /** The small date (left) + branch (right) strip along the very top. */
+  showDateAndBranch: boolean;
   showBarcode: boolean;
-  showQRCode: boolean;
   showAmountInWords: boolean;
 }
 
@@ -115,15 +124,17 @@ const DEFAULT_RECEIPT: ReceiptTemplate = {
   paperSize: '80mm',
   showLogo: true,
   headerLines: ['Thank you for your purchase'],
-  footerLines: ['Returns within 7 days with receipt', 'Software by Hardware POS'],
+  // No branded/placeholder line here — anything in footerLines PRINTS on the
+  // receipt, and an EMPTY list prints nothing (no text, no rule, no space).
+  footerLines: ['Returns within 7 days with receipt'],
   showCashier: true,
   showCustomerPhone: true,
   showCustomerAddress: true,
   showLineDiscount: true,
   showLineTax: false,
   showPaymentRef: true,
+  showDateAndBranch: true,
   showBarcode: true,
-  showQRCode: false,
   showAmountInWords: true,
 };
 
@@ -248,20 +259,14 @@ const DEFAULT_SHORTCUTS: ShortcutMap = {
 };
 
 // ---------- Backup & Sync ----------
-export interface BackupSettings {
-  autoBackup: 'off' | 'daily' | 'on-shift-close';
-  cloudProvider: 'none' | 'supabase' | 's3' | 'google-drive';
-  cloudConnected: boolean;
-  cloudAccount?: string;
-  lastLocalBackupAt?: string;
-  lastCloudSyncAt?: string;
-}
-
-const DEFAULT_BACKUP: BackupSettings = {
-  autoBackup: 'on-shift-close',
-  cloudProvider: 'none',
-  cloudConnected: false,
-};
+// NOTE: backup settings are NOT part of this store.
+//
+// They used to be, which meant two writers to the same `settings_kv` key: this
+// store wrote a UI-shaped blob while the backend backup service wrote (and
+// depended on) its own — so saving an appearance preference could silently wipe
+// the backup folder path. The backup configuration now lives ONLY in the backend
+// (`backend/services/backup.ts`), read and written through the `backup.*`
+// channels via `src/stores/backup.ts`.
 
 // ---------- Combined Store ----------
 interface State {
@@ -275,7 +280,6 @@ interface State {
   pos: POSPrefs;
   cashRegister: CashRegisterPrefs;
   shortcuts: ShortcutMap;
-  backup: BackupSettings;
 
   loading: boolean;
   hydrate: () => Promise<void>;
@@ -306,8 +310,6 @@ interface State {
   // Shortcuts
   setShortcuts: (patch: Partial<ShortcutMap>) => void;
   resetShortcuts: () => void;
-  // Backup
-  setBackup: (patch: Partial<BackupSettings>) => void;
 }
 
 export const useSettings = create<State>()(
@@ -321,10 +323,9 @@ export const useSettings = create<State>()(
        */
       const writePref = <K extends keyof State>(key: string, field: K, next: State[K]) => {
         set({ [field]: next } as Pick<State, K>);
-        if (hasBackend())
-          void api('settings.set', { key, value: next }).catch((e: unknown) => {
-            toast.error(e instanceof Error ? e.message : `Failed to save ${key}`);
-          });
+        void api('settings.set', { key, value: next }).catch((e: unknown) => {
+          toast.error(e instanceof Error ? e.message : `Failed to save ${key}`);
+        });
       };
 
       return {
@@ -338,7 +339,6 @@ export const useSettings = create<State>()(
         pos: { ...DEFAULT_POS },
         cashRegister: { ...DEFAULT_CASH },
         shortcuts: { ...DEFAULT_SHORTCUTS },
-        backup: { ...DEFAULT_BACKUP },
 
         loading: false,
 
@@ -347,11 +347,9 @@ export const useSettings = create<State>()(
          *  - business  ← business.get   (toBusinessInfo)
          *  - taxRates  ← taxRates.list  (toTaxRate)
          *  - prefs     ← settings.getAll keyed by name (fall back to DEFAULT_* per key)
-         * No-op without backend (keeps persisted/seed). Pref keys absent from KV
-         * keep their existing DEFAULT_* value.
+         * Pref keys absent from KV keep their existing DEFAULT_* value.
          */
         hydrate: async () => {
-          if (!hasBackend()) return;
           set({ loading: true });
           try {
             const [biz, taxes, kv] = await Promise.all([
@@ -386,7 +384,8 @@ export const useSettings = create<State>()(
               if (kv.pos != null) patch.pos = kv.pos as POSPrefs;
               if (kv.cashRegister != null) patch.cashRegister = kv.cashRegister as CashRegisterPrefs;
               if (kv.shortcuts != null) patch.shortcuts = kv.shortcuts as ShortcutMap;
-              if (kv.backup != null) patch.backup = kv.backup as BackupSettings;
+              // `kv.backup` is deliberately NOT hydrated here — it belongs to the
+              // backend backup service (see the note above BackupSettings).
             }
 
             set(patch);
@@ -399,86 +398,73 @@ export const useSettings = create<State>()(
         setBusiness: (patch) => {
           // Optimistic local merge so the page reflects the edit immediately.
           set((s) => ({ business: { ...s.business, ...patch } }));
-          if (hasBackend()) {
-            // Bridge defaultBranch (name) -> default_branch_id (id) best-effort.
-            const branches = useBranches.getState().items;
-            const defaultBranchId = patch.defaultBranch
-              ? branches.find((b) => b.name === patch.defaultBranch)?.id ?? null
-              : undefined;
-            const merged = get().business;
-            void api('business.update', {
-              name: merged.name,
-              tagline: merged.tagline,
-              logoUrl: merged.logoUrl,
-              address: merged.address,
-              phonePrimary: merged.phonePrimary,
-              phoneAlt: merged.phoneAlt,
-              email: merged.email,
-              website: merged.website,
-              vatTin: merged.vatTin,
-              binNo: merged.binNo,
-              tradeLicenseNo: merged.tradeLicenseNo,
-              currencySymbol: merged.currencySymbol,
-              currencyPosition: merged.currencyPosition,
-              decimalPlaces: merged.decimalPlaces,
-              thousandSeparator: merged.thousandSeparator,
-              timezone: merged.timezone,
-              dateFormat: merged.dateFormat,
-              fiscalYearStart: merged.fiscalYearStart,
-              defaultLanguage: merged.defaultLanguage,
-              ...(defaultBranchId !== undefined ? { defaultBranchId } : {}),
-              userId: CURRENT_USER,
-            })
-              .then(() => get().hydrate())
-              .catch((e: unknown) => {
-                toast.error(e instanceof Error ? e.message : 'Failed to save business info');
-                void get().hydrate();
-              });
-          }
+          // Bridge defaultBranch (name) -> default_branch_id (id) best-effort.
+          const branches = useBranches.getState().items;
+          const defaultBranchId = patch.defaultBranch
+            ? branches.find((b) => b.name === patch.defaultBranch)?.id ?? null
+            : undefined;
+          const merged = get().business;
+          void api('business.update', {
+            name: merged.name,
+            tagline: merged.tagline,
+            logoUrl: merged.logoUrl,
+            address: merged.address,
+            phonePrimary: merged.phonePrimary,
+            phoneAlt: merged.phoneAlt,
+            email: merged.email,
+            website: merged.website,
+            vatTin: merged.vatTin,
+            binNo: merged.binNo,
+            tradeLicenseNo: merged.tradeLicenseNo,
+            currencySymbol: merged.currencySymbol,
+            currencyPosition: merged.currencyPosition,
+            decimalPlaces: merged.decimalPlaces,
+            thousandSeparator: merged.thousandSeparator,
+            timezone: merged.timezone,
+            dateFormat: merged.dateFormat,
+            fiscalYearStart: merged.fiscalYearStart,
+            defaultLanguage: merged.defaultLanguage,
+            ...(defaultBranchId !== undefined ? { defaultBranchId } : {}),
+            userId: CURRENT_USER,
+          })
+            .then(() => get().hydrate())
+            .catch((e: unknown) => {
+              toast.error(e instanceof Error ? e.message : 'Failed to save business info');
+              void get().hydrate();
+            });
         },
 
         addTaxRate: (data) => {
+          // Optimistic shape only — the real id arrives after hydrate().
           const item: TaxRate = { id: 'tx_' + Date.now(), ...data };
-          if (hasBackend()) {
-            void api('taxRates.create', {
-              name: data.name,
-              percentage: data.percentage,
-              isDefault: data.isDefault,
-              scope: data.scope,
-            })
-              .then(() => get().hydrate())
-              .catch((e: unknown) => {
-                toast.error(e instanceof Error ? e.message : 'Failed to save tax rate');
-                void get().hydrate();
-              });
-            return item;
-          }
-          set((s) => ({ taxRates: [...s.taxRates, item] }));
+          void api('taxRates.create', {
+            name: data.name,
+            percentage: data.percentage,
+            isDefault: data.isDefault,
+            scope: data.scope,
+          })
+            .then(() => get().hydrate())
+            .catch((e: unknown) => {
+              toast.error(e instanceof Error ? e.message : 'Failed to save tax rate');
+              void get().hydrate();
+            });
           return item;
         },
         updateTaxRate: (id, patch) => {
-          if (hasBackend()) {
-            void api('taxRates.update', { id, patch })
-              .then(() => get().hydrate())
-              .catch((e: unknown) => {
-                toast.error(e instanceof Error ? e.message : 'Failed to update tax rate');
-                void get().hydrate();
-              });
-            return;
-          }
-          set((s) => ({ taxRates: s.taxRates.map((t) => (t.id === id ? { ...t, ...patch } : t)) }));
+          void api('taxRates.update', { id, patch })
+            .then(() => get().hydrate())
+            .catch((e: unknown) => {
+              toast.error(e instanceof Error ? e.message : 'Failed to update tax rate');
+              void get().hydrate();
+            });
         },
         removeTaxRate: (id) => {
-          if (hasBackend()) {
-            void api('taxRates.delete', { id })
-              .then(() => get().hydrate())
-              .catch((e: unknown) => {
-                toast.error(e instanceof Error ? e.message : 'Failed to delete tax rate');
-                void get().hydrate();
-              });
-            return;
-          }
-          set((s) => ({ taxRates: s.taxRates.filter((t) => t.id !== id) }));
+          void api('taxRates.delete', { id })
+            .then(() => get().hydrate())
+            .catch((e: unknown) => {
+              toast.error(e instanceof Error ? e.message : 'Failed to delete tax rate');
+              void get().hydrate();
+            });
         },
 
         // ----- Invoice schemes (KV write-through) -----
@@ -518,10 +504,15 @@ export const useSettings = create<State>()(
           writePref('cashRegister', 'cashRegister', { ...get().cashRegister, ...patch }),
         setShortcuts: (patch) => writePref('shortcuts', 'shortcuts', { ...get().shortcuts, ...patch }),
         resetShortcuts: () => writePref('shortcuts', 'shortcuts', { ...DEFAULT_SHORTCUTS }),
-        setBackup: (patch) => writePref('backup', 'backup', { ...get().backup, ...patch }),
       };
     },
-    { name: 'pos-settings' },
+    {
+      name: 'pos-settings',
+      // v2: drops any cached demo business identity (name/address/phone) from
+      // before the mock removal. No migrate on purpose — the DB is the source of
+      // truth and `hydrate()` refills this immediately.
+      version: 2,
+    },
   ),
 );
 

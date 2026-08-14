@@ -8,11 +8,7 @@ import {
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
-import {
-  products as ALL_PRODUCTS,
-  categories as ALL_CATEGORIES,
-  brands as ALL_BRANDS,
-} from '@/mocks/data';
+import { useCategories, useBrands } from '@/hooks/useCatalog';
 import { useReport, useBranchId } from '@/hooks/useReport';
 import { hasBackend } from '@/lib/api';
 import { formatBDT, formatNumber } from '@/lib/utils';
@@ -81,7 +77,7 @@ export default function StockReportPage() {
   // Backend wiring: `reports.stock` takes ONLY { branchId } (no range — it's a
   // live snapshot). Join category/brand/unit client-side via products.list.
   const branchId = useBranchId(branch);
-  const { data: beStock, loading, backend, error } = useReport<BackendStock>(
+  const { data: beStock, loading, error } = useReport<BackendStock>(
     'reports.stock',
     hasBackend() ? { branchId } : null,
     [branchId],
@@ -92,47 +88,17 @@ export default function StockReportPage() {
     [],
   );
 
-  const mockRows: StockRow[] = useMemo(() => {
-    let list = ALL_PRODUCTS.map((p) => {
-      const cat = ALL_CATEGORIES.find((c) => c.id === p.categoryId);
-      const brand = ALL_BRANDS.find((b) => b.id === p.brandId);
-      const state =
-        p.stock <= 0 ? 'out' : p.stock <= p.reorderLevel ? 'low' : 'in';
-      const valueAtCost = p.cost * p.stock;
-      const valueAtRetail = p.price * p.stock;
-      return {
-        id: p.id,
-        sku: p.sku,
-        name: p.name,
-        category: cat?.name ?? '—',
-        categoryEmoji: cat?.emoji,
-        brand: brand?.name ?? '—',
-        unit: p.unit,
-        stock: p.stock,
-        reorder: p.reorderLevel,
-        cost: p.cost,
-        price: p.price,
-        valueAtCost,
-        valueAtRetail,
-        state,
-        categoryId: p.categoryId ?? '',
-        brandId: p.brandId ?? '',
-      };
-    });
-    if (categoryId) list = list.filter((r) => r.categoryId === categoryId);
-    if (brandId) list = list.filter((r) => r.brandId === brandId);
-    if (stockState) list = list.filter((r) => r.state === stockState);
-    if (q) {
-      const t = q.toLowerCase();
-      list = list.filter((r) => `${r.name} ${r.sku}`.toLowerCase().includes(t));
-    }
-    return list;
-  }, [q, categoryId, brandId, stockState]);
+  // Real catalog for the filter dropdowns (backend-backed).
+  const categoriesQuery = useCategories();
+  const brandsQuery = useBrands();
+  const categories = categoriesQuery.data ?? [];
+  const brands = brandsQuery.data ?? [];
 
   // Map backend snapshot rows; join category/brand/unit client-side, derive the
   // same display fields, then apply the page's client filters.
+  // NOTE: no mock/sample fallback — an empty backend snapshot renders as empty.
   const backendRows: StockRow[] | null = useMemo(() => {
-    if (!backend || !beStock) return null;
+    if (!beStock) return null;
     const prodMeta = new Map<string, BackendProductRow>();
     for (const p of beProducts ?? []) prodMeta.set(p.id, p);
     let list = beStock.rows.map((r) => {
@@ -164,9 +130,9 @@ export default function StockReportPage() {
       list = list.filter((r) => `${r.name} ${r.sku}`.toLowerCase().includes(t));
     }
     return list;
-  }, [backend, beStock, beProducts, q, categoryId, brandId, stockState]);
+  }, [beStock, beProducts, q, categoryId, brandId, stockState]);
 
-  const rows: StockRow[] = backend && error ? [] : (backendRows ?? mockRows);
+  const rows: StockRow[] = backendRows ?? [];
 
   const totals = useMemo(
     () => ({
@@ -197,7 +163,7 @@ export default function StockReportPage() {
               className="h-7 rounded-md border border-input bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-ring/50"
             >
               <option value="">All categories</option>
-              {ALL_CATEGORIES.map((c) => (
+              {categories.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.emoji} {c.name}
                 </option>
@@ -209,7 +175,7 @@ export default function StockReportPage() {
               className="h-7 rounded-md border border-input bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-ring/50"
             >
               <option value="">All brands</option>
-              {ALL_BRANDS.map((b) => (
+              {brands.map((b) => (
                 <option key={b.id} value={b.id}>
                   {b.name}
                 </option>
@@ -265,7 +231,7 @@ export default function StockReportPage() {
           {rows.length === 0 && (
             <div className="px-4 py-12 text-center text-sm text-muted-foreground">
               <Boxes className="size-6 mx-auto mb-2 opacity-50" />
-              {backend && loading ? 'Loading…' : backend && error ? 'Couldn’t load — backend error. Check connection and retry.' : 'No products match.'}
+              {loading ? 'Loading…' : error ? 'Couldn’t load — backend error. Check connection and retry.' : 'No products match.'}
             </div>
           )}
           {rows.map((r) => (

@@ -4,6 +4,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
+import { Pagination } from '@/components/ui/Pagination';
 import { useSales, type ShipmentStatus } from '@/stores/sales';
 import { cn } from '@/lib/utils';
 
@@ -20,6 +21,11 @@ export default function Shipments() {
   const hydrate = useSales((s) => s.hydrate);
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState<'all' | ShipmentStatus>('all');
+
+  // Client-side paging: `shipments.list` is header-only and this list grows
+  // slowly, so every row is already in memory — we slice the filtered set.
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
 
   // Hydrate from the backend on mount so the shipments table populates the list
   // when this page is the entry point (mirrors Sales.tsx). No-op outside Electron.
@@ -38,6 +44,20 @@ export default function Shipments() {
     }
     return arr;
   }, [shipments, q, filter]);
+
+  // Any filter change resets to page 1 — staying on page 5 of a narrower result
+  // set would show an empty table.
+  useEffect(() => {
+    setPage(1);
+  }, [q, filter, pageSize]);
+
+  // Clamp so a shrinking list can never leave the user past the last page.
+  const pageCount = Math.max(1, Math.ceil(list.length / pageSize));
+  const current = Math.min(page, pageCount);
+  const pageRows = useMemo(
+    () => list.slice((current - 1) * pageSize, current * pageSize),
+    [list, current, pageSize],
+  );
 
   return (
     <div>
@@ -90,7 +110,7 @@ export default function Shipments() {
               </tr>
             </thead>
             <tbody>
-              {list.map((s) => (
+              {pageRows.map((s) => (
                 <tr key={s.id} className="border-t border-border hover:bg-secondary/40 group">
                   <td className="px-4 py-2.5 font-mono text-xs">{s.refNo}</td>
                   <td className="px-2 py-2.5 font-mono text-xs">{s.saleInvoiceNo}</td>
@@ -150,6 +170,14 @@ export default function Shipments() {
               )}
             </tbody>
           </table>
+          <Pagination
+            page={current}
+            pageSize={pageSize}
+            total={list.length}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+            label="shipments"
+          />
         </Card>
       </div>
     </div>

@@ -2,8 +2,53 @@ import { ipcMain } from 'electron';
 import { buildApi, API_CHANNELS } from '../backend/api.ts';
 import { CHANNEL_PERMISSIONS } from './permissions.ts';
 import { getDb } from './db.ts';
+import {
+  applyFolder,
+  applyPdfFolder,
+  backupFolderOptions,
+  backupToUsb,
+  chooseBackupFolder,
+  listUsbDrives,
+  onShiftClosed,
+  restoreFromSnapshot,
+  revealBackupFolder,
+} from './backup.ts';
+import {
+  listArchivedInvoices,
+  openPdf,
+  revealPdfFolder,
+  saveInvoicePdf,
+} from './invoicePdf.ts';
 
 const api = buildApi();
+
+/**
+ * Backup channels handled in THIS file rather than by buildApi(), because each
+ * needs a native dialog, Explorer, or an app relaunch. See electron/backup.ts.
+ */
+const ELECTRON_BACKUP_CHANNELS = new Set([
+  'backup.folderOptions',
+  'backup.chooseFolder',
+  'backup.setFolder',
+  'backup.setPdfFolder',
+  'backup.reveal',
+  'backup.revealPdfFolder',
+  'backup.restore',
+  // Removable media. Detecting whether a drive is a pendrive needs Windows
+  // (WMI via PowerShell), so it cannot live in buildApi() either.
+  'backup.usbDrives',
+  'backup.toUsb',
+]);
+
+/**
+ * Invoice → PDF. Also Electron-only: rendering the PDF needs Chromium's
+ * `printToPDF`, and opening a file needs the shell.
+ */
+const ELECTRON_INVOICE_CHANNELS = new Set([
+  'invoice.savePdf',
+  'invoice.listPdfs',
+  'invoice.openPdf',
+]);
 
 /**
  * SESSION + PERMISSION ENFORCEMENT (the IPC boundary)
@@ -124,6 +169,24 @@ export function registerIpc(): void {
       return handleSetupComplete(payload);
     }
 
+    // ---- 1c. Backup channels that CANNOT live in buildApi() ----
+    // These need a native dialog, Explorer, or an app relaunch, so they are not
+    // callable from the Node verify harness and therefore stay out of
+    // backend/api.ts. They ARE still permission-gated: each is listed in
+    // CHANNEL_PERMISSIONS under 'settings.backup', and we run the same gate
+    // explicitly here because this block short-circuits the generic lookup.
+    if (channel.startsWith('backup.') && ELECTRON_BACKUP_CHANNELS.has(channel)) {
+      const denied = permissionError(channel);
+      if (denied) return { ok: false, error: denied };
+      return handleElectronBackup(channel, payload);
+    }
+
+    if (channel.startsWith('invoice.') && ELECTRON_INVOICE_CHANNELS.has(channel)) {
+      const denied = permissionError(channel);
+      if (denied) return { ok: false, error: denied };
+      return handleElectronInvoice(channel, payload);
+    }
+
     // ---- 2. Generic backend channels (gated) ----
     const handler = api[channel];
     if (!handler) {
@@ -143,6 +206,13 @@ export function registerIpc(): void {
 
     try {
       const data = handler(getDb(), payload);
+
+      // Automatic backup trigger. A shift close is the end of the trading day,
+      // so it is the recommended moment to capture a snapshot. Done HERE rather
+      // than in the cash service so the backend stays free of scheduling/IO
+      // policy, and so it cannot fire inside the verify harness.
+      if (channel === 'cash.closeShift') onShiftClosed();
+
       return { ok: true, data };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -247,6 +317,102 @@ function handleSetupComplete(payload: unknown) {
     return { ok: true, data: { user: result.user, permissions: result.permissions ?? [] } };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: message };
+  }
+}
+
+// ---------- backup helpers (Electron-only channels) ----------
+
+/**
+ * Dispatch the backup channels that need Electron. Returns the same
+ * `{ ok, data } | { ok:false, error }` envelope as every other channel, so the
+ * renderer's `api()` client needs no special case.
+ *
+ * `chooseFolder` and `restore` open native dialogs, so they resolve
+ * asynchronously; `ipcMain.handle` forwards the promise transparently.
+ */
+async function handleElectronBackup(channel: string, payload: unknown) {
+  try {
+    switch (channel) {
+      case 'backup.folderOptions':
+        return { ok: true, data: backupFolderOptions() };
+
+      case 'backup.chooseFolder': {
+        const p = payload as { folder?: string; target?: 'backup' | 'pdf' } | undefined;
+        return { ok: true, data: await chooseBackupFolder(p?.folder, p?.target ?? 'backup') };
+      }
+
+      case 'backup.setFolder': {
+        const folder = (payload as { folder?: string } | undefined)?.folder;
+        if (!folder) return { ok: false, error: 'No folder given' };
+        return { ok: true, data: applyFolder(folder) };
+      }
+
+      case 'backup.setPdfFolder': {
+        const folder = (payload as { folder?: string } | undefined)?.folder;
+        if (!folder) return { ok: false, error: 'No folder given' };
+        return { ok: true, data: applyPdfFolder(folder) };
+      }
+
+      case 'backup.reveal':
+        return { ok: true, data: revealBackupFolder() };
+
+      case 'backup.revealPdfFolder':
+        return { ok: true, data: revealPdfFolder() };
+
+      case 'backup.restore': {
+        const file = (payload as { file?: string } | undefined)?.file;
+        return { ok: true, data: await restoreFromSnapshot({ file }) };
+      }
+
+      case 'backup.usbDrives':
+        return { ok: true, data: await listUsbDrives() };
+
+      case 'backup.toUsb': {
+        const drive = (payload as { drive?: string } | undefined)?.drive;
+        return { ok: true, data: await backupToUsb(drive) };
+      }
+
+      default:
+        return { ok: false, error: `Unknown API channel: ${channel}` };
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    // eslint-disable-next-line no-console
+    console.error(`[ipc] ${channel} failed:`, message);
+    return { ok: false, error: message };
+  }
+}
+
+/**
+ * Invoice → PDF channels. Rendering needs Chromium's `printToPDF` and opening a
+ * saved file needs the shell, so none of this can live in `buildApi()`.
+ */
+async function handleElectronInvoice(channel: string, payload: unknown) {
+  try {
+    switch (channel) {
+      case 'invoice.savePdf': {
+        const invoiceNo = (payload as { invoiceNo?: string } | undefined)?.invoiceNo;
+        return { ok: true, data: await saveInvoicePdf({ invoiceNo }) };
+      }
+
+      case 'invoice.listPdfs': {
+        const limit = (payload as { limit?: number } | undefined)?.limit;
+        return { ok: true, data: listArchivedInvoices(limit) };
+      }
+
+      case 'invoice.openPdf': {
+        const file = (payload as { file?: string } | undefined)?.file;
+        return { ok: true, data: openPdf(file ?? '') };
+      }
+
+      default:
+        return { ok: false, error: `Unknown API channel: ${channel}` };
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    // eslint-disable-next-line no-console
+    console.error(`[ipc] ${channel} failed:`, message);
     return { ok: false, error: message };
   }
 }

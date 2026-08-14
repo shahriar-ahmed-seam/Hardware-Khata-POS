@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Search,
@@ -22,7 +22,9 @@ import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { Drawer } from '@/components/ui/Drawer';
 import { ColumnsPanel } from '@/components/ui/ColumnsPanel';
+import { Pagination } from '@/components/ui/Pagination';
 import { SkeletonTable } from '@/components/ui/Skeleton';
+import { confirm } from '@/stores/confirm';
 import { useSuppliers } from '@/stores/contacts';
 import {
   ALL_SUPPLIER_COLUMNS,
@@ -30,24 +32,19 @@ import {
   useContactsUI,
   type SupplierColumn,
 } from '@/stores/contactsUI';
-import type { Supplier } from '@/mocks/data';
+import type { Supplier } from '@/types/domain';
 import { Avatar } from '@/components/contacts/Avatar';
 import { SupplierForm } from '@/components/contacts/SupplierForm';
 import { PaySupplierModal } from '@/components/contacts/PaySupplierModal';
-import { formatBDT, cn } from '@/lib/utils';
-import { hasBackend } from '@/lib/api';
+import { formatBDT, formatNumber, cn } from '@/lib/utils';
 
 export default function Suppliers() {
   const nav = useNavigate();
   const { items, add, update, remove } = useSuppliers();
   const loading = useSuppliers((s) => s.loading);
-  const hydrate = useSuppliers((s) => s.hydrate);
-  const backend = hasBackend();
-  // Mirror Purchases.tsx: hydrate from the backend on mount so the store is
-  // populated when this page is the entry point.
-  useEffect(() => {
-    void hydrate();
-  }, [hydrate]);
+  const total = useSuppliers((s) => s.total);
+  const query = useSuppliers((s) => s.query);
+  const loadPage = useSuppliers((s) => s.loadPage);
   const {
     supplierView,
     setSupplierView,
@@ -63,20 +60,40 @@ export default function Suppliers() {
   const [drawerId, setDrawerId] = useState<string | 'new' | null>(null);
   const [payFor, setPayFor] = useState<string | null>(null);
 
-  const filtered = useMemo(() => {
-    if (!q) return items;
-    const t = q.toLowerCase();
-    return items.filter((s) =>
-      `${s.name} ${s.phone} ${s.company ?? ''} ${s.contactPerson ?? ''}`.toLowerCase().includes(t),
-    );
-  }, [items, q]);
+  // Load ONE page on mount (replaces the old full-table hydrate). An initial ?q=
+  // is folded into the same call so mounting costs a single round-trip.
+  const initialQ = useRef(q);
+  useEffect(() => {
+    void loadPage({ page: 1, q: initialQ.current.trim() || undefined });
+  }, [loadPage]);
 
-  const totals = {
-    suppliers: items.length,
-    purchase: items.reduce((s, x) => s + x.totalPurchase, 0),
-    paid: items.reduce((s, x) => s + (x.totalPaid ?? 0), 0),
-    payable: items.reduce((s, x) => s + x.due, 0),
-  };
+  // Free-text search hits the DATABASE (name + company + phone), so it is
+  // debounced ~300ms. The first run is skipped — mount already loaded.
+  const searchMounted = useRef(false);
+  useEffect(() => {
+    if (!searchMounted.current) {
+      searchMounted.current = true;
+      return;
+    }
+    const handle = setTimeout(() => {
+      void loadPage({ q: q.trim() || undefined });
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [q, loadPage]);
+
+  // The server already applied the search, so this page's rows ARE the result.
+  const filtered = items;
+
+  // These sums cover the LOADED PAGE only — the rest was never fetched.
+  const totals = useMemo(
+    () => ({
+      suppliers: items.length,
+      purchase: items.reduce((s, x) => s + x.totalPurchase, 0),
+      paid: items.reduce((s, x) => s + (x.totalPaid ?? 0), 0),
+      payable: items.reduce((s, x) => s + x.due, 0),
+    }),
+    [items],
+  );
 
   const editing = drawerId === 'new' ? undefined : drawerId ? items.find((x) => x.id === drawerId) : undefined;
 
@@ -84,7 +101,7 @@ export default function Suppliers() {
     <div>
       <PageHeader
         title="Suppliers"
-        subtitle={`${totals.suppliers} suppliers · ${formatBDT(totals.payable)} payable`}
+        subtitle={`${formatNumber(total)} suppliers`}
         actions={
           <>
             <IconBtn title="Customize columns" onClick={() => setColsOpen(true)}>
@@ -105,11 +122,17 @@ export default function Suppliers() {
       />
 
       <div className="p-6 space-y-4">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <Stat label="Suppliers" value={String(totals.suppliers)} />
-          <Stat label="Total Purchase" value={formatBDT(totals.purchase)} />
-          <Stat label="Total Paid" value={formatBDT(totals.paid)} tone="success" />
-          <Stat label="Payable" value={formatBDT(totals.payable)} tone="destructive" />
+        {/* KPI strip — PAGE-SCOPED. Only the current page is in memory. */}
+        <div>
+          <div className="text-[11px] text-muted-foreground mb-1.5">
+            Totals for this page only. Use Reports for full-range figures.
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Stat label="Suppliers (this page)" value={String(totals.suppliers)} />
+            <Stat label="Total Purchase (this page)" value={formatBDT(totals.purchase)} />
+            <Stat label="Total Paid (this page)" value={formatBDT(totals.paid)} tone="success" />
+            <Stat label="Payable (this page)" value={formatBDT(totals.payable)} tone="destructive" />
+          </div>
         </div>
 
         <Card className="p-3">
@@ -124,7 +147,8 @@ export default function Suppliers() {
           </div>
         </Card>
 
-        {backend && loading && items.length === 0 ? (
+        {/* Skeleton while the backend list loads; empty state handles no rows. */}
+        {loading && items.length === 0 ? (
           <SkeletonTable count={8} />
         ) : supplierView === 'table' ? (
           <Card className="overflow-hidden">
@@ -194,8 +218,18 @@ export default function Suppliers() {
                 </tbody>
               </table>
             </div>
+            <Pagination
+              page={query.page}
+              pageSize={query.pageSize}
+              total={total}
+              onPageChange={(page) => void loadPage({ page })}
+              onPageSizeChange={(pageSize) => void loadPage({ pageSize })}
+              label="suppliers"
+              busy={loading}
+            />
           </Card>
         ) : (
+          <div className="space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
             {filtered.map((s) => (
               <Card
@@ -254,6 +288,23 @@ export default function Suppliers() {
                 </div>
               </Card>
             ))}
+            {filtered.length === 0 && (
+              <Card className="p-12 text-center text-muted-foreground md:col-span-2 xl:col-span-3">
+                No suppliers match.
+              </Card>
+            )}
+          </div>
+          <Card className="overflow-hidden">
+            <Pagination
+              page={query.page}
+              pageSize={query.pageSize}
+              total={total}
+              onPageChange={(page) => void loadPage({ page })}
+              onPageSizeChange={(pageSize) => void loadPage({ pageSize })}
+              label="suppliers"
+              busy={loading}
+            />
+          </Card>
           </div>
         )}
       </div>
@@ -288,8 +339,8 @@ export default function Suppliers() {
           onCancel={() => setDrawerId(null)}
           onDelete={
             editing
-              ? () => {
-                  if (confirm(`Delete "${editing.name}"?`)) {
+              ? async () => {
+                  if (await confirm({ title: `Delete "${editing.name}"?`, variant: 'destructive' })) {
                     remove(editing.id);
                     setDrawerId(null);
                   }

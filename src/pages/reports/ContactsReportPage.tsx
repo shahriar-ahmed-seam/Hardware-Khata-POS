@@ -4,15 +4,11 @@ import { Link } from 'react-router-dom';
 import {
   ReportToolbar,
   DEFAULT_RANGE,
-  isInRange,
   type DateRange,
 } from '@/components/reports/ReportToolbar';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
-import { useCustomers, useSuppliers } from '@/stores/contacts';
-import { useSales } from '@/stores/sales';
-import { usePurchases } from '@/stores/purchases';
 import { useReport } from '@/hooks/useReport';
 import { hasBackend } from '@/lib/api';
 import { formatBDT, formatNumber } from '@/lib/utils';
@@ -76,102 +72,29 @@ export default function ContactsReportPage() {
   const [branch, setBranch] = useState('');
   const [q, setQ] = useState('');
 
-  const customers = useCustomers((s) => s.items);
-  const suppliers = useSuppliers((s) => s.items);
-  const sales = useSales((s) => s.sales);
-  const purchases = usePurchases((s) => s.purchases);
-
   // Backend wiring: list rows already carry derived due/totalPurchase/totalPaid
   // and sale/purchase counts. NOTE: those derived totals are LIFETIME figures,
-  // so the date range does not slice the backed numbers (range still applies to
-  // the mock fallback) — acceptable for a contacts rollup report.
-  const { data: beCustomers, loading: loadingC, backend, error } = useReport<BackendCustomerRow[]>(
+  // so the date range does not slice these numbers — acceptable for a contacts
+  // rollup report.
+  const { data: beCustomers, loading: loadingC, error: errorC } = useReport<BackendCustomerRow[]>(
     'customers.list',
     hasBackend() ? {} : null,
     [],
   );
-  const { data: beSuppliers, loading: loadingS } = useReport<BackendSupplierRow[]>(
+  const { data: beSuppliers, loading: loadingS, error: errorS } = useReport<BackendSupplierRow[]>(
     'suppliers.list',
     hasBackend() ? {} : null,
     [],
   );
   const loading = mode === 'customers' ? loadingC : loadingS;
-
-  const mockCustomerRows = useMemo(() => {
-    const fSales = sales.filter(
-      (s) => s.status === 'final' && isInRange(s.date, range) && (!branch || s.branch === branch),
-    );
-    const map = new Map<string, { sales: number; paid: number; count: number }>();
-    fSales.forEach((s) => {
-      const existing = map.get(s.customerId) ?? { sales: 0, paid: 0, count: 0 };
-      existing.sales += s.total;
-      existing.paid += s.paid;
-      existing.count += 1;
-      map.set(s.customerId, existing);
-    });
-
-    let list = customers.map((c) => {
-      const m = map.get(c.id) ?? { sales: 0, paid: 0, count: 0 };
-      return {
-        id: c.id,
-        name: c.name,
-        phone: c.phone,
-        group: c.group,
-        creditLimit: c.creditLimit ?? 0,
-        sales: m.sales,
-        paid: m.paid,
-        count: m.count,
-        due: c.due,
-      };
-    });
-
-    if (q) {
-      const t = q.toLowerCase();
-      list = list.filter((r) => `${r.name} ${r.phone}`.toLowerCase().includes(t));
-    }
-    return list.sort((a, b) => b.sales - a.sales);
-  }, [customers, sales, range, branch, q]);
-
-  const mockSupplierRows = useMemo(() => {
-    const fPurchases = purchases.filter(
-      (p) => p.status !== 'cancelled' && isInRange(p.date, range) && (!branch || p.branch === branch),
-    );
-    const map = new Map<string, { spend: number; paid: number; count: number }>();
-    fPurchases.forEach((p) => {
-      const existing = map.get(p.supplierId) ?? { spend: 0, paid: 0, count: 0 };
-      existing.spend += p.total;
-      existing.paid += p.paid;
-      existing.count += 1;
-      map.set(p.supplierId, existing);
-    });
-
-    let list = suppliers.map((s) => {
-      const m = map.get(s.id) ?? { spend: 0, paid: 0, count: 0 };
-      return {
-        id: s.id,
-        name: s.name,
-        phone: s.phone,
-        company: s.company,
-        terms: s.paymentTerms,
-        spend: m.spend,
-        paid: m.paid,
-        count: m.count,
-        due: s.due,
-      };
-    });
-
-    if (q) {
-      const t = q.toLowerCase();
-      list = list.filter((r) =>
-        `${r.name} ${r.phone} ${r.company ?? ''}`.toLowerCase().includes(t),
-      );
-    }
-    return list.sort((a, b) => b.spend - a.spend);
-  }, [suppliers, purchases, range, branch, q]);
+  // Report the failure of the list actually being shown, so a failed fetch never
+  // reads as "no contacts".
+  const error = mode === 'customers' ? errorC : errorS;
 
   // Map backend customer rows (lifetime derived totals) → page row shape.
+  // NOTE: no mock/sample fallback — an empty backend list renders as empty.
   const backendCustomerRows: CustomerRow[] | null = useMemo(() => {
-    if (!backend || !beCustomers) return null;
+    if (!beCustomers) return null;
     let list = beCustomers.map((c) => ({
       id: c.id,
       name: c.name,
@@ -188,10 +111,10 @@ export default function ContactsReportPage() {
       list = list.filter((r) => `${r.name} ${r.phone}`.toLowerCase().includes(t));
     }
     return list.sort((a, b) => b.sales - a.sales);
-  }, [backend, beCustomers, q]);
+  }, [beCustomers, q]);
 
   const backendSupplierRows: SupplierRow[] | null = useMemo(() => {
-    if (!backend || !beSuppliers) return null;
+    if (!beSuppliers) return null;
     let list = beSuppliers.map((s) => ({
       id: s.id,
       name: s.name,
@@ -210,10 +133,10 @@ export default function ContactsReportPage() {
       );
     }
     return list.sort((a, b) => b.spend - a.spend);
-  }, [backend, beSuppliers, q]);
+  }, [beSuppliers, q]);
 
-  const customerRows: CustomerRow[] = backend && error ? [] : (backendCustomerRows ?? mockCustomerRows);
-  const supplierRows: SupplierRow[] = backend && error ? [] : (backendSupplierRows ?? mockSupplierRows);
+  const customerRows: CustomerRow[] = backendCustomerRows ?? [];
+  const supplierRows: SupplierRow[] = backendSupplierRows ?? [];
 
   const totals = useMemo(() => {
     if (mode === 'customers') {
@@ -303,7 +226,7 @@ export default function ContactsReportPage() {
             </div>
             {customerRows.length === 0 && (
               <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-                {backend && loading ? 'Loading…' : backend && error ? 'Couldn’t load — backend error. Check connection and retry.' : 'No customers match.'}
+                {loading ? 'Loading…' : error ? 'Couldn’t load — backend error. Check connection and retry.' : 'No customers match.'}
               </div>
             )}
             {customerRows.map((c) => (
@@ -355,7 +278,7 @@ export default function ContactsReportPage() {
             </div>
             {supplierRows.length === 0 && (
               <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-                {backend && loading ? 'Loading…' : backend && error ? 'Couldn’t load — backend error. Check connection and retry.' : 'No suppliers match.'}
+                {loading ? 'Loading…' : error ? 'Couldn’t load — backend error. Check connection and retry.' : 'No suppliers match.'}
               </div>
             )}
             {supplierRows.map((s) => (

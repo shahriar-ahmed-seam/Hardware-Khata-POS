@@ -8,23 +8,49 @@ import { NumberField } from '@/components/ui/NumberField';
 import { Drawer } from '@/components/ui/Drawer';
 import { Badge } from '@/components/ui/Badge';
 import { usePriceGroups, type PriceGroup } from '@/stores/masterData';
-import { useCustomers } from '@/stores/contacts';
+import { confirm } from '@/stores/confirm';
+import { toast } from '@/stores/toast';
+import { api } from '@/lib/api';
+import { toCustomer, type BackendCustomer } from '@/hooks/contactAdapter';
+import type { Customer } from '@/types/domain';
 import { formatBDT } from '@/lib/utils';
 
 export default function CustomerGroups() {
   const { items, add, update, remove } = usePriceGroups();
   const hydrate = usePriceGroups((s) => s.hydrate);
-  const customers = useCustomers((s) => s.items);
-  const hydrateCustomers = useCustomers((s) => s.hydrate);
   const [editing, setEditing] = useState<PriceGroup | 'new' | null>(null);
 
-  // Customer counts per group are read from the (backend-aware) customers store;
-  // hydrate both stores on mount so the groups + counts populate when this is the
-  // entry point.
+  /**
+   * WHOLE-LIST AGGREGATE — the per-group customer counts must cover EVERY
+   * customer. `useCustomers().items` is ONE PAGE (50), so counting over it would
+   * report "how many of the first 50 customers are Wholesale", not the group
+   * size. The counts therefore come from the UNPAGED `customers.list`.
+   */
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [loadingCounts, setLoadingCounts] = useState(true);
+
   useEffect(() => {
     void hydrate();
-    void hydrateCustomers();
-  }, [hydrate, hydrateCustomers]);
+  }, [hydrate]);
+
+  useEffect(() => {
+    let alive = true;
+    setLoadingCounts(true);
+    void api<BackendCustomer[]>('customers.list', {})
+      .then((rows) => {
+        if (!alive) return;
+        setCustomers(rows.map(toCustomer));
+        setLoadingCounts(false);
+      })
+      .catch(() => {
+        // Channel error or running outside Electron — no counts rather than
+        // page-scoped ones.
+        if (alive) setLoadingCounts(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const customerCount = (groupName: string) =>
     customers.filter((c) => c.group === (groupName as any)).length;
@@ -57,7 +83,8 @@ export default function CustomerGroups() {
                     </Badge>
                   )}
                   <span className="text-[11px] text-muted-foreground inline-flex items-center gap-1">
-                    <Users className="size-3" /> {customerCount(g.name)} customers
+                    <Users className="size-3" />{' '}
+                    {loadingCounts ? 'counting customers…' : `${customerCount(g.name)} customers`}
                   </span>
                 </div>
                 {g.notes && <div className="text-xs text-muted-foreground mt-0.5">{g.notes}</div>}
@@ -86,12 +113,13 @@ export default function CustomerGroups() {
                   <Edit2 className="size-3.5" />
                 </button>
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     if (g.isDefault) {
-                      alert('Cannot delete the default group.');
+                      toast.warning('Cannot delete the default group.');
                       return;
                     }
-                    if (confirm(`Delete "${g.name}"?`)) remove(g.id);
+                    if (await confirm({ title: `Delete "${g.name}"?`, variant: 'destructive' }))
+                      remove(g.id);
                   }}
                   disabled={g.isDefault}
                   className="size-8 grid place-items-center rounded hover:bg-destructive/10 hover:text-destructive disabled:opacity-30"

@@ -3,6 +3,8 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { initDb, closeDb } from './db.ts';
 import { registerIpc } from './ipc.ts';
+import { initBackupDefaults, startAutoBackup, stopAutoBackup } from './backup.ts';
+import { initInvoicePdfDefaults } from './invoicePdf.ts';
 
 const isDev = !app.isPackaged;
 
@@ -101,8 +103,11 @@ function createWindow() {
     y: state.y,
     width: state.width,
     height: state.height,
-    minWidth: 1100,
-    minHeight: 700,
+    // Lowered from 1100×700: the shell is now responsive (sidebar auto-collapses
+    // below lg and becomes an overlay below md, POS stacks its two panels), so
+    // the app stays usable on a small counter monitor or a resized window.
+    minWidth: 900,
+    minHeight: 600,
     show: false,
     frame: false,
     titleBarStyle: 'hidden',
@@ -175,6 +180,12 @@ app.whenReady().then(() => {
     const info = initDb();
     // eslint-disable-next-line no-console
     console.log(`[db] ready (firstRun=${info.firstRun}, seed=${info.mode})`);
+    // Backups need a folder before they can run. Resolve the default
+    // (Documents/HardwareKhataPOS/Backups) once, without overwriting a folder
+    // the owner has already chosen, then start the daily check.
+    initBackupDefaults();
+    initInvoicePdfDefaults();
+    startAutoBackup();
   } catch (e) {
     // eslint-disable-next-line no-console
     console.error('[db] init failed:', e);
@@ -185,6 +196,7 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  stopAutoBackup();
   closeDb();
   if (process.platform !== 'darwin') app.quit();
 });

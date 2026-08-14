@@ -5,12 +5,10 @@ import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { products as mockProducts } from '@/mocks/data';
 import { useProducts } from '@/hooks/useProducts';
-import { hasBackend } from '@/lib/api';
 import { formatBDT, cn } from '@/lib/utils';
 import { ProductImage } from '@/components/products/ProductImage';
-import type { Product } from '@/mocks/data';
+import type { Product } from '@/types/domain';
 
 type LabelSize = '50x30' | 'A4-grid';
 
@@ -32,9 +30,9 @@ export default function BarcodePrint() {
   const [showPrice, setShowPrice] = useState(true);
   const [showSKU, setShowSKU] = useState(true);
 
-  // Product source: real catalogue under backend (display/print only), mock otherwise.
+  // Product source: the real catalogue (display/print only).
   const productsQuery = useProducts();
-  const products = hasBackend() ? (productsQuery.data ?? []) : mockProducts;
+  const products = productsQuery.data ?? [];
 
   const list = useMemo(() => {
     const t = q.trim().toLowerCase();

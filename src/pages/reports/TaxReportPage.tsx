@@ -3,12 +3,9 @@ import { Percent, ArrowUpRight, ArrowDownRight, Calculator } from 'lucide-react'
 import {
   ReportToolbar,
   DEFAULT_RANGE,
-  isInRange,
   type DateRange,
 } from '@/components/reports/ReportToolbar';
 import { Card } from '@/components/ui/Card';
-import { useSales } from '@/stores/sales';
-import { usePurchases } from '@/stores/purchases';
 import { useReport, useBranchId } from '@/hooks/useReport';
 import { hasBackend } from '@/lib/api';
 import { formatBDT, formatNumber } from '@/lib/utils';
@@ -33,102 +30,21 @@ interface BackendTax {
 }
 
 export default function TaxReportPage() {
-  const sales = useSales((s) => s.sales);
-  const purchases = usePurchases((s) => s.purchases);
   const [range, setRange] = useState<DateRange>(DEFAULT_RANGE);
   const [branch, setBranch] = useState('');
   const [mode, setMode] = useState<Mode>('sales');
 
   // Backend wiring: pass DateRange + resolved branch id straight through.
   const branchId = useBranchId(branch);
-  const { data: beTax, loading, backend, error } = useReport<BackendTax>(
+  const { data: beTax, loading, error } = useReport<BackendTax>(
     'reports.tax',
     hasBackend() ? { range, branchId } : null,
     [range, branchId],
   );
 
-  const mockData = useMemo(() => {
-    const salesByRate = new Map<number, TaxRow>();
-    const purchaseByRate = new Map<number, TaxRow>();
-
-    for (const s of sales) {
-      if (s.status !== 'final') continue;
-      if (!isInRange(s.date, range)) continue;
-      if (branch && s.branch !== branch) continue;
-      const rate = Math.round(s.taxPct * 10) / 10;
-      const taxable = Math.max(0, s.subtotal - s.orderDiscount);
-      const e = salesByRate.get(rate) ?? {
-        rate,
-        invoices: 0,
-        taxableAmount: 0,
-        taxCollected: 0,
-      };
-      e.invoices += 1;
-      e.taxableAmount += taxable;
-      e.taxCollected += s.tax;
-      salesByRate.set(rate, e);
-    }
-
-    for (const p of purchases) {
-      if (p.status === 'cancelled') continue;
-      if (!isInRange(p.date, range)) continue;
-      if (branch && p.branch !== branch) continue;
-      const rate = Math.round(p.taxPct * 10) / 10;
-      const taxable = Math.max(0, p.subtotal - p.orderDiscount);
-      const e = purchaseByRate.get(rate) ?? {
-        rate,
-        invoices: 0,
-        taxableAmount: 0,
-        taxCollected: 0,
-      };
-      e.invoices += 1;
-      e.taxableAmount += taxable;
-      e.taxCollected += p.tax;
-      purchaseByRate.set(rate, e);
-    }
-
-    const salesRows = Array.from(salesByRate.values()).sort((a, b) => b.rate - a.rate);
-    const purchaseRows = Array.from(purchaseByRate.values()).sort((a, b) => b.rate - a.rate);
-    const salesTotal = salesRows.reduce((acc, r) => acc + r.taxCollected, 0);
-    const purchaseTotal = purchaseRows.reduce((acc, r) => acc + r.taxCollected, 0);
-    return {
-      salesRows,
-      purchaseRows,
-      salesTotal,
-      purchaseTotal,
-      net: salesTotal - purchaseTotal,
-      salesInvoices: salesRows.reduce((a, r) => a + r.invoices, 0),
-      purchaseInvoices: purchaseRows.reduce((a, r) => a + r.invoices, 0),
-    };
-  }, [sales, purchases, range, branch]);
-
-  // Prefer backend aggregation when available; otherwise keep mock computation.
+  // Backend-only. Zeroed (not mocked) until the query resolves or if it fails.
   const data = useMemo(() => {
-    if (backend && beTax) {
-      const salesRows: TaxRow[] = beTax.salesByRate.map((r) => ({
-        rate: r.rate,
-        invoices: r.invoices,
-        taxableAmount: r.taxable,
-        taxCollected: r.tax,
-      }));
-      const purchaseRows: TaxRow[] = beTax.purchaseByRate.map((r) => ({
-        rate: r.rate,
-        invoices: r.bills,
-        taxableAmount: r.taxable,
-        taxCollected: r.tax,
-      }));
-      return {
-        salesRows,
-        purchaseRows,
-        salesTotal: beTax.salesTotal,
-        purchaseTotal: beTax.purchaseTotal,
-        net: beTax.net,
-        salesInvoices: salesRows.reduce((a, r) => a + r.invoices, 0),
-        purchaseInvoices: purchaseRows.reduce((a, r) => a + r.invoices, 0),
-      };
-    }
-    // On a real backend error, show an empty/zeroed report instead of mock.
-    if (backend && error) {
+    if (!beTax) {
       return {
         salesRows: [] as TaxRow[],
         purchaseRows: [] as TaxRow[],
@@ -139,8 +55,28 @@ export default function TaxReportPage() {
         purchaseInvoices: 0,
       };
     }
-    return mockData;
-  }, [backend, beTax, mockData, error]);
+    const salesRows: TaxRow[] = beTax.salesByRate.map((r) => ({
+      rate: r.rate,
+      invoices: r.invoices,
+      taxableAmount: r.taxable,
+      taxCollected: r.tax,
+    }));
+    const purchaseRows: TaxRow[] = beTax.purchaseByRate.map((r) => ({
+      rate: r.rate,
+      invoices: r.bills,
+      taxableAmount: r.taxable,
+      taxCollected: r.tax,
+    }));
+    return {
+      salesRows,
+      purchaseRows,
+      salesTotal: beTax.salesTotal,
+      purchaseTotal: beTax.purchaseTotal,
+      net: beTax.net,
+      salesInvoices: salesRows.reduce((a, r) => a + r.invoices, 0),
+      purchaseInvoices: purchaseRows.reduce((a, r) => a + r.invoices, 0),
+    };
+  }, [beTax]);
 
   return (
     <div>
@@ -154,10 +90,8 @@ export default function TaxReportPage() {
       />
 
       <div className="p-6 space-y-4 max-w-5xl">
-        {backend && loading && !beTax && (
-          <div className="text-sm text-muted-foreground">Loading…</div>
-        )}
-        {backend && error && (
+        {loading && !beTax && <div className="text-sm text-muted-foreground">Loading…</div>}
+        {error && (
           <div className="text-sm text-muted-foreground">
             Couldn’t load — backend error. Check connection and retry.
           </div>
@@ -244,6 +178,8 @@ export default function TaxReportPage() {
             total={data.salesTotal}
             totalLabel="Tax collected"
             invoiceLabel="Invoices"
+            loading={loading}
+            error={error}
           />
         )}
         {(mode === 'purchase' || mode === 'combined') && (
@@ -254,6 +190,8 @@ export default function TaxReportPage() {
             total={data.purchaseTotal}
             totalLabel="Tax paid"
             invoiceLabel="Bills"
+            loading={loading}
+            error={error}
           />
         )}
 
@@ -280,6 +218,8 @@ function Section({
   total,
   totalLabel,
   invoiceLabel,
+  loading,
+  error,
 }: {
   title: string;
   tone: 'success' | 'warning';
@@ -287,6 +227,8 @@ function Section({
   total: number;
   totalLabel: string;
   invoiceLabel: string;
+  loading: boolean;
+  error: boolean;
 }) {
   return (
     <Card className="overflow-hidden">
@@ -306,7 +248,11 @@ function Section({
       </div>
       {rows.length === 0 && (
         <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-          No data in this range.
+          {loading
+            ? 'Loading…'
+            : error
+              ? 'Couldn’t load — backend error. Check connection and retry.'
+              : 'No data in this range.'}
         </div>
       )}
       {rows.map((r) => (

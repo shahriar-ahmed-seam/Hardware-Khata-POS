@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Printer,
@@ -19,6 +19,11 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { useSales, type SaleRecord } from '@/stores/sales';
 import { useCustomers } from '@/stores/contacts';
+import { confirm } from '@/stores/confirm';
+import { promptText } from '@/stores/prompt';
+import { useCan } from '@/hooks/useCan';
+import { api } from '@/lib/api';
+import { toSaleRecord, type BackendSale } from '@/hooks/saleAdapter';
 import { cn, formatBDT } from '@/lib/utils';
 import { AddPaymentModal } from './AddPaymentModal';
 
@@ -35,14 +40,66 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
   const voidSale = useSales((s) => s.voidSale);
   const deleteSale = useSales((s) => s.deleteSale);
   const customers = useCustomers((s) => s.items);
-  const sale = sales.find((s) => s.id === saleId) ?? null;
   const [payOpen, setPayOpen] = useState(false);
+  // UI-only gating; the IPC boundary is the real gate (see hooks/useCan.ts).
+  const canEdit = useCan('sales.edit');
+  const canVoid = useCan('sales.void');
+
+  // The store now holds ONE PAGE of sales, so the requested row may simply not
+  // be loaded (opened from a search result, a deep link, or another page of the
+  // list). Prefer the store row when it IS there — writes like Add Payment or
+  // Void rehydrate the store, so the drawer reflects them instantly — and fall
+  // back to a single-record read otherwise.
+  const storeSale = sales.find((s) => s.id === saleId) ?? null;
+  const hasStoreSale = !!storeSale;
+  const [fetched, setFetched] = useState<SaleRecord | null>(null);
+  const [fetching, setFetching] = useState(false);
+  const [notFound, setNotFound] = useState(false);
+
+  useEffect(() => {
+    if (!open || !saleId || hasStoreSale) {
+      setFetched(null);
+      setFetching(false);
+      setNotFound(false);
+      return;
+    }
+    let alive = true;
+    setFetching(true);
+    setNotFound(false);
+    void api<BackendSale | null>('sales.get', { id: saleId })
+      .then((row) => {
+        if (!alive) return;
+        if (row) setFetched(toSaleRecord(row));
+        else setNotFound(true);
+        setFetching(false);
+      })
+      .catch(() => {
+        if (!alive) return;
+        // Channel error or running outside Electron — treat as unavailable.
+        setNotFound(true);
+        setFetching(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open, saleId, hasStoreSale]);
+
+  const sale = storeSale ?? fetched;
 
   if (!sale) {
-    return <Drawer open={open} onClose={onClose} title="Sale" width="max-w-3xl">{null}</Drawer>;
+    return (
+      <Drawer open={open} onClose={onClose} title="Sale" width="max-w-3xl">
+        <div className="p-8 text-center text-sm text-muted-foreground">
+          {fetching ? 'Loading sale…' : notFound ? 'Sale not found.' : null}
+        </div>
+      </Drawer>
+    );
   }
 
   const customer = customers.find((c) => c.id === sale.customerId);
+  // `sales.get` returns the header without the joined customer name, so prefer
+  // the contacts store when this row came from the fallback fetch.
+  const customerLabel = customer?.name ?? sale.customerName;
 
   const StatusPill = () => {
     if (sale.status === 'void') return <Badge variant="destructive">Voided</Badge>;
@@ -60,7 +117,7 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
         onClose={onClose}
         width="max-w-3xl"
         title={sale.invoiceNo}
-        subtitle={`${sale.customerName} · ${new Date(sale.date).toLocaleString('en-GB')}`}
+        subtitle={`${customerLabel} · ${new Date(sale.date).toLocaleString('en-GB')}`}
       >
         <div className="flex-1 overflow-auto">
           <div className="p-5 space-y-5">
@@ -238,18 +295,28 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
               <Truck className="size-3.5" /> Create Shipment
             </Button>
           )}
-          <Link to={`/sales/${sale.id}/edit`}>
-            <Button variant="outline" size="sm">
-              <Edit2 className="size-3.5" /> Edit
-            </Button>
-          </Link>
+          {/* Editing an invoice rewrites money that has already been taken, so
+              the button only appears for a user who holds `sales.edit` (Admin by
+              default). A voided sale is settled and can never be edited. */}
+          {canEdit && sale.status !== 'void' && (
+            <Link to={`/sales/${sale.id}/edit`}>
+              <Button variant="outline" size="sm">
+                <Edit2 className="size-3.5" /> Edit
+              </Button>
+            </Link>
+          )}
           <div className="flex-1" />
-          {(sale.status === 'draft' || sale.status === 'quotation') && (
+          {canVoid && (sale.status === 'draft' || sale.status === 'quotation') && (
             <Button
               variant="destructive"
               size="sm"
-              onClick={() => {
-                if (confirm(`Delete ${sale.status} ${sale.invoiceNo}?`)) {
+              onClick={async () => {
+                if (
+                  await confirm({
+                    title: `Delete ${sale.status} ${sale.invoiceNo}?`,
+                    variant: 'destructive',
+                  })
+                ) {
                   deleteSale(sale.id);
                   onClose();
                 }
@@ -258,12 +325,21 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
               <Trash2 className="size-3.5" /> Delete
             </Button>
           )}
-          {sale.status === 'final' && (
+          {canVoid && sale.status === 'final' && (
             <Button
               variant="destructive"
               size="sm"
-              onClick={() => {
-                const reason = prompt('Reason for voiding?');
+              onClick={async () => {
+                const reason = await promptText({
+                  title: `Void ${sale.invoiceNo}?`,
+                  message: 'Voiding returns the items to stock and reverses any cash taken.',
+                  label: 'Reason',
+                  placeholder: 'e.g. customer cancelled',
+                  confirmLabel: 'Void sale',
+                  cancelLabel: 'Keep it',
+                  variant: 'destructive',
+                  required: true,
+                });
                 if (reason !== null) {
                   voidSale(sale.id, 'Seam', reason);
                 }

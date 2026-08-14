@@ -1,30 +1,32 @@
-import { categories } from '@/mocks/data';
+import { useCategories } from '@/hooks/useCatalog';
 import { cn } from '@/lib/utils';
 
 interface Props {
   url?: string;
   categoryId?: string;
+  /**
+   * Optional emoji placeholder. When omitted the emoji is resolved from the real
+   * category record; a neutral box icon is used when there is none.
+   */
+  emoji?: string;
   size?: number; // px
   className?: string;
   rounded?: 'md' | 'lg' | 'xl';
 }
 
-const FALLBACK_EMOJI: Record<string, string> = {
-  c1: '🔨',
-  c2: '🪚',
-  c3: '🚰',
-  c4: '💡',
-  c5: '🎨',
-  c6: '🔩',
-  c7: '🧱',
-  c8: '⛑️',
-};
-
 /**
  * Renders product image when present; otherwise a category-based emoji placeholder
  * with a subtle gradient background.
  */
-export function ProductImage({ url, categoryId, size = 40, className, rounded = 'md' }: Props) {
+export function ProductImage({
+  url,
+  categoryId,
+  emoji,
+  size = 40,
+  className,
+  rounded = 'md',
+}: Props) {
+  const categoriesQuery = useCategories();
   const r = rounded === 'xl' ? 'rounded-xl' : rounded === 'lg' ? 'rounded-lg' : 'rounded-md';
   if (url) {
     return (
@@ -36,7 +38,10 @@ export function ProductImage({ url, categoryId, size = 40, className, rounded = 
       />
     );
   }
-  const emoji = (categoryId && FALLBACK_EMOJI[categoryId]) ?? categories.find((c) => c.id === categoryId)?.emoji ?? '📦';
+  const categoryEmoji = categoryId
+    ? categoriesQuery.data?.find((c) => c.id === categoryId)?.emoji
+    : undefined;
+  const placeholder = emoji ?? categoryEmoji ?? '📦';
   return (
     <div
       style={{ width: size, height: size }}
@@ -46,7 +51,7 @@ export function ProductImage({ url, categoryId, size = 40, className, rounded = 
       )}
     >
       <span style={{ fontSize: size * 0.5 }} className="leading-none">
-        {emoji}
+        {placeholder}
       </span>
     </div>
   );

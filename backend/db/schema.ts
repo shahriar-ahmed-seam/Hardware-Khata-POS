@@ -166,7 +166,11 @@ CREATE TABLE IF NOT EXISTS products (
   category_id         TEXT REFERENCES categories(id),
   brand_id            TEXT REFERENCES brands(id),
   unit                TEXT NOT NULL DEFAULT 'pc',
+  -- cost is the CURRENT buying price. Its history lives in
+  -- product_cost_history; avg_cost / cost_updated_at are caches derived from it.
   cost                REAL NOT NULL DEFAULT 0,
+  avg_cost            REAL NOT NULL DEFAULT 0,
+  cost_updated_at     TEXT,
   price               REAL NOT NULL DEFAULT 0,
   wholesale_price     REAL,
   contractor_price    REAL,
@@ -180,6 +184,14 @@ CREATE TABLE IF NOT EXISTS products (
   allow_discount      INTEGER NOT NULL DEFAULT 1,
   show_in_pos         INTEGER NOT NULL DEFAULT 1,
   not_for_sale        INTEGER NOT NULL DEFAULT 0,
+  -- RETIRED, not deleted. Set when a product that already appears on a sale,
+  -- purchase, transfer or adjustment is removed from the catalogue: those
+  -- documents reference products(id) with no ON DELETE clause, so a hard delete
+  -- is refused by SQLite and would destroy history if it were not. An archived
+  -- product disappears from the catalogue and the POS but every past document
+  -- still resolves. NULL = active. Distinct from not_for_sale, which means
+  -- "we stock it but never sell it" (a purchase-only item) and is not a retirement.
+  archived_at         TEXT,
   created_at          TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -190,6 +202,33 @@ CREATE TABLE IF NOT EXISTS product_units (
   factor     REAL NOT NULL DEFAULT 1,
   PRIMARY KEY (product_id, unit_short)
 );
+
+-- Purchase-price (cost) history.
+--
+-- A hardware shop's buying price moves: 10pc at 100 a few months ago, 20pc at
+-- 120 today. products.cost holds only the CURRENT buying price, which made the
+-- old price unrecoverable and gave the owner no way to see how it had drifted.
+-- Every change to the buying price appends a row here, so:
+--   * products.cost            = the newest entry cost (the current price)
+--   * products.cost_updated_at = when that entry was recorded
+--   * products.avg_cost        = the mean of every entry (see services/costing.ts)
+-- The table is the source of truth; the three product columns are a cache that
+-- is fully recomputed from it on every write, and the verify suite asserts they
+-- can never drift apart.
+CREATE TABLE IF NOT EXISTS product_cost_history (
+  id         TEXT PRIMARY KEY,
+  product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  cost       REAL NOT NULL,
+  at         TEXT NOT NULL,
+  user_id    TEXT,
+  -- 'manual'  — typed in Update Price & Stock
+  -- 'initial' — the product's opening cost, captured when it was created
+  source     TEXT NOT NULL DEFAULT 'manual',
+  note       TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_cost_history_product
+  ON product_cost_history(product_id, at DESC);
 
 CREATE TABLE IF NOT EXISTS stock_movements (
   id          TEXT PRIMARY KEY,

@@ -6,10 +6,11 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
+import { Pagination } from '@/components/ui/Pagination';
 import { useStock, type StockTransfer, type TransferStatus } from '@/stores/stock';
+import { confirm } from '@/stores/confirm';
 import { Modal } from '@/components/ui/Modal';
 import { NumberField } from '@/components/ui/NumberField';
-import { hasBackend } from '@/lib/api';
 import { SkeletonTable } from '@/components/ui/Skeleton';
 import { formatBDT, cn } from '@/lib/utils';
 
@@ -26,10 +27,9 @@ export default function StockTransfers() {
   const cancelTransfer = useStock((s) => s.cancelTransfer);
   const loading = useStock((s) => s.loading);
   const hydrate = useStock((s) => s.hydrate);
-  const backend = hasBackend();
 
   // Mirror Purchases.tsx: hydrate from the backend on mount so the store is
-  // populated when this page is the entry point. No-op without backend.
+  // populated when this page is the entry point.
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
@@ -37,6 +37,11 @@ export default function StockTransfers() {
   const [q, setQ] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | TransferStatus | 'inbound'>('all');
   const [receiveOpen, setReceiveOpen] = useState<StockTransfer | null>(null);
+
+  // Client-side paging: `transfers.list` is header-only and this list grows
+  // slowly, so every row is already in memory — we slice the filtered set.
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
 
   const currentBranch = 'Mirpur Branch';
 
@@ -58,6 +63,22 @@ export default function StockTransfers() {
     return arr.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [transfers, statusFilter, q]);
 
+  // Any filter change resets to page 1 — staying on page 5 of a narrower result
+  // set would show an empty table.
+  useEffect(() => {
+    setPage(1);
+  }, [q, statusFilter, pageSize]);
+
+  // Clamp so a shrinking list can never leave the user past the last page.
+  const pageCount = Math.max(1, Math.ceil(list.length / pageSize));
+  const current = Math.min(page, pageCount);
+  const pageRows = useMemo(
+    () => list.slice((current - 1) * pageSize, current * pageSize),
+    [list, current, pageSize],
+  );
+
+  // Summed over the FULL filtered set, not just this page — all rows are in
+  // memory, so there is no reason to scope these to the visible slice.
   const totals = {
     count: list.length,
     units: list.reduce((s, t) => s + t.lines.reduce((u, l) => u + l.qty, 0), 0),
@@ -114,11 +135,12 @@ export default function StockTransfers() {
         </Card>
 
         <Card className="overflow-hidden">
-          {backend && loading && transfers.length === 0 ? (
+          {loading && transfers.length === 0 ? (
             <div className="p-4">
               <SkeletonTable count={6} />
             </div>
           ) : (
+          <>
           <table className="w-full text-sm">
             <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50">
               <tr>
@@ -134,7 +156,7 @@ export default function StockTransfers() {
               </tr>
             </thead>
             <tbody>
-              {list.map((t) => {
+              {pageRows.map((t) => {
                 const value = t.lines.reduce((s, l) => s + l.qty * l.unitCost, 0);
                 const items = t.lines.reduce((s, l) => s + l.qty, 0);
                 const canReceive =
@@ -177,8 +199,16 @@ export default function StockTransfers() {
                         </Link>
                         {t.status === 'pending' && (
                           <button
-                            onClick={() => {
-                              if (confirm(`Cancel transfer ${t.refNo}?`)) cancelTransfer(t.id);
+                            onClick={async () => {
+                              if (
+                                await confirm({
+                                  title: `Cancel transfer ${t.refNo}?`,
+                                  confirmLabel: 'Cancel transfer',
+                                  cancelLabel: 'Keep it',
+                                  variant: 'destructive',
+                                })
+                              )
+                                cancelTransfer(t.id);
                             }}
                             className="size-7 grid place-items-center rounded hover:bg-destructive/10 hover:text-destructive"
                             title="Cancel"
@@ -200,6 +230,15 @@ export default function StockTransfers() {
               )}
             </tbody>
           </table>
+          <Pagination
+            page={current}
+            pageSize={pageSize}
+            total={list.length}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+            label="transfers"
+          />
+          </>
           )}
         </Card>
       </div>

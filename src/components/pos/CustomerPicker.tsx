@@ -5,9 +5,9 @@ import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { customers as mockCustomers, type Customer } from '@/mocks/data';
+import type { Customer } from '@/types/domain';
 import { cn, formatBDT } from '@/lib/utils';
-import { api, hasBackend } from '@/lib/api';
+import { api } from '@/lib/api';
 import { useCustomersQuery, CUSTOMERS_KEY } from '@/hooks/useCustomers';
 import { toast } from '@/stores/toast';
 
@@ -21,13 +21,12 @@ interface Props {
 export function CustomerPicker({ open, onClose, selectedId, onSelect }: Props) {
   const [q, setQ] = useState('');
   const [adding, setAdding] = useState(false);
-  const backend = hasBackend();
   const qc = useQueryClient();
   const customersQuery = useCustomersQuery();
 
-  // Mock path keeps a local list so inline-added customers appear immediately.
-  const [mockList, setMockList] = useState<Customer[]>(mockCustomers);
-  const list: Customer[] = backend ? (customersQuery.data ?? []) : mockList;
+  // Single source of truth: the backend customers query (seed fallback removed).
+  const list: Customer[] = customersQuery.data ?? [];
+  const loading = customersQuery.isLoading;
 
   useEffect(() => {
     if (!open) {
@@ -52,32 +51,18 @@ export function CustomerPicker({ open, onClose, selectedId, onSelect }: Props) {
     phone: string;
     group: Customer['group'];
   }) => {
-    if (backend) {
-      try {
-        // Persist, then refetch and select the returned backend id.
-        const res = await api<{ id: string }>('customers.create', {
-          name: data.name,
-          phone: data.phone,
-          group: data.group,
-        });
-        await qc.invalidateQueries({ queryKey: [CUSTOMERS_KEY] });
-        pick(res.id);
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : 'Failed to add customer');
-      }
-      return;
+    try {
+      // Persist, then refetch and select the returned backend id.
+      const res = await api<{ id: string }>('customers.create', {
+        name: data.name,
+        phone: data.phone,
+        group: data.group,
+      });
+      await qc.invalidateQueries({ queryKey: [CUSTOMERS_KEY] });
+      pick(res.id);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to add customer');
     }
-    // ---- mock path (unchanged): local optimistic add ----
-    const id = 'cu_' + Date.now();
-    const c: Customer = {
-      id,
-      ...data,
-      due: 0,
-      totalPurchase: 0,
-      joined: new Date().toISOString().slice(0, 10),
-    };
-    setMockList((cs) => [c, ...cs]);
-    pick(id);
   };
 
   return (
@@ -102,7 +87,12 @@ export function CustomerPicker({ open, onClose, selectedId, onSelect }: Props) {
             </div>
 
             <div className="max-h-[55vh] overflow-auto scroll-hide rounded-lg border border-border divide-y divide-border">
-              {filtered.length === 0 && (
+              {loading && (
+                <div className="p-8 text-center text-sm text-muted-foreground">
+                  Loading customers…
+                </div>
+              )}
+              {!loading && filtered.length === 0 && (
                 <div className="p-8 text-center text-sm text-muted-foreground">
                   No customers match "{q}". <button onClick={() => setAdding(true)} className="text-primary underline">Add new</button>
                 </div>

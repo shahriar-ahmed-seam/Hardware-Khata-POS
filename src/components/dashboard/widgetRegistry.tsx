@@ -1,8 +1,6 @@
 import type { WidgetId } from '@/stores/dashboard';
 import { Widget } from './Widget';
 import * as W from './widgets';
-import { Badge } from '@/components/ui/Badge';
-import { TrendingUp } from 'lucide-react';
 
 export interface WidgetMeta {
   id: WidgetId;
@@ -50,12 +48,10 @@ export function renderWidget(id: WidgetId, args: RenderArgs) {
 
   switch (id) {
     case 'hourlySales':
+      // The old `+12.4%` badge here was a hardcoded number, not a real trend —
+      // removed with the rest of the fabricated dashboard data.
       return (
-        <Widget
-          {...common}
-          to="/reports"
-          badge={<Badge variant="info"><TrendingUp className="size-3" /> +12.4%</Badge>}
-        >
+        <Widget {...common} to="/reports">
           <W.HourlySales />
         </Widget>
       );

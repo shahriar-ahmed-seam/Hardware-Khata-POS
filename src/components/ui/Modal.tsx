@@ -31,7 +31,14 @@ export function Modal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-6 animate-fade-in">
+    // `data-overlay` marks this as a modal layer. The POS product panel uses it
+    // to know it must NOT steal the caret into its search box while a dialog is
+    // open (it used to sniff for hard-coded `.fixed.inset-0.z-50` classes, which
+    // missed every modal that used a different z-index).
+    <div
+      data-overlay="true"
+      className="fixed inset-0 z-50 flex items-center justify-center p-6 animate-fade-in"
+    >
       <button className="absolute inset-0 bg-black/50 animate-fade-in" onClick={onClose} aria-label="Close" />
       <div
         className={cn(

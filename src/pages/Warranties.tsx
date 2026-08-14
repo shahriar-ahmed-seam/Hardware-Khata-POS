@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Drawer } from '@/components/ui/Drawer';
 import { useWarranties, type Warranty } from '@/stores/masterData';
+import { confirm } from '@/stores/confirm';
 import { NumberField } from '@/components/ui/NumberField';
 
 export default function Warranties() {
@@ -83,8 +84,14 @@ export default function Warranties() {
                         <Edit2 className="size-3.5" />
                       </button>
                       <button
-                        onClick={() => {
-                          if (confirm(`Delete warranty "${w.name}"?`)) remove(w.id);
+                        onClick={async () => {
+                          if (
+                            await confirm({
+                              title: `Delete warranty "${w.name}"?`,
+                              variant: 'destructive',
+                            })
+                          )
+                            remove(w.id);
                         }}
                         className="size-7 grid place-items-center rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
                         title="Delete"

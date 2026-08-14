@@ -10,6 +10,7 @@ import {
   type ExpenseRecord,
   type RecurringFrequency,
 } from '@/stores/expenses';
+import { confirm } from '@/stores/confirm';
 import { cn } from '@/lib/utils';
 import { NewExpenseCategoryModal } from './NewExpenseCategoryModal';
 
@@ -298,8 +299,8 @@ export function AddExpenseDrawer({ open, onClose, initial }: Props) {
           {initial ? (
             <Button
               variant="outline"
-              onClick={() => {
-                if (confirm('Delete this expense?')) {
+              onClick={async () => {
+                if (await confirm({ title: 'Delete this expense?', variant: 'destructive' })) {
                   removeExpense(initial.id);
                   onClose();
                 }

@@ -10,6 +10,7 @@ export const ALL_PRODUCT_COLUMNS = [
   'brand',
   'unit',
   'cost',
+  'avgCost',
   'price',
   'wholesalePrice',
   'contractorPrice',
@@ -39,7 +40,8 @@ const DEFAULT_COLUMNS: ProductColumn[] = [
   'name',
   'sku',
   'category',
-  'brand',
+  'cost',
+  'avgCost',
   'price',
   'stock',
   'status',
@@ -68,7 +70,10 @@ export const useProductsUI = create<ProductsUI>()(
       moveColumn: (c, dir) => set((s) => ({ columns: move(s.columns, c, dir) })),
       resetColumns: () => set({ columns: DEFAULT_COLUMNS }),
     }),
-    { name: 'pos-products-ui' },
+    // v1: the column set gained 'avgCost' and 'cost' joined the defaults.
+    // Without a bump, an existing install keeps its stored column list and the
+    // new Avg. Buying Price column would never appear.
+    { name: 'pos-products-ui', version: 1 },
   ),
 );
 
@@ -80,7 +85,9 @@ export const COLUMN_META: Record<ProductColumn, { label: string; align?: 'right'
   category:        { label: 'Category' },
   brand:           { label: 'Brand' },
   unit:            { label: 'Unit' },
-  cost:            { label: 'Cost', align: 'right' },
+  cost:            { label: 'Buying Price', align: 'right' },
+  // The mean of every recorded buying price — see backend/services/costing.ts.
+  avgCost:         { label: 'Avg. Buying Price', align: 'right' },
   price:           { label: 'Sell Price', align: 'right' },
   wholesalePrice:  { label: 'Wholesale', align: 'right' },
   contractorPrice: { label: 'Contractor', align: 'right' },

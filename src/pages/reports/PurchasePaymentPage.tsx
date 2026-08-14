@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Banknote, Smartphone, CreditCard, Building, FileText, Search } from 'lucide-react';
 import {
   ReportToolbar,
@@ -52,19 +52,33 @@ interface BackendPayments {
 
 export default function PurchasePaymentPage() {
   const purchases = usePurchases((s) => s.purchases);
+  const hydratePurchases = usePurchases((s) => s.hydrate);
   const [range, setRange] = useState<DateRange>(DEFAULT_RANGE);
   const [branch, setBranch] = useState('');
   const [q, setQ] = useState('');
   const [method, setMethod] = useState('');
 
-  // Backend wiring: by-method totals only; detail rows stay client-side.
+  // The detail table below needs individual payment records, which the purchases
+  // store carries (it hydrates `purchases.list` with nested payments). Hydrate on
+  // mount so the table is populated when this page is the entry point.
+  useEffect(() => {
+    void hydratePurchases();
+  }, [hydratePurchases]);
+
+  // Backend wiring: `reports.purchasePayments` returns by-method totals only, so
+  // it drives the summary chips + grand total.
   const branchId = useBranchId(branch);
-  const { data: bePayments, loading, backend, error } = useReport<BackendPayments>(
+  const { data: bePayments, loading, error } = useReport<BackendPayments>(
     'reports.purchasePayments',
     hasBackend() ? { range, branchId } : null,
     [range, branchId],
   );
 
+  // Per-payment detail rows read from the backend-hydrated purchases store; there
+  // is no report channel that returns individual payment records.
+  // BACKEND WORK NEEDED: a `reports.purchasePaymentRows` channel
+  // (purchase_payments joined to purchases, filtered by range + branch) so the
+  // detail table does not depend on the purchases store being hydrated.
   const rows: Row[] = useMemo(() => {
     const out: Row[] = [];
     for (const purchase of purchases) {
@@ -95,21 +109,10 @@ export default function PurchasePaymentPage() {
     return list.sort((a, b) => b.date.localeCompare(a.date));
   }, [purchases, range, branch, q, method]);
 
+  // By-method totals come exclusively from the backend (authoritative for the
+  // period). Zeroed — never client-recomputed — until the query resolves.
   const summary = useMemo(() => {
-    // Prefer backend by-method totals; detail rows still come from the store.
-    if (backend && bePayments) {
-      const map = new Map<string, { count: number; amount: number }>();
-      for (const m of bePayments.byMethod) {
-        map.set(m.method, { count: m.cnt, amount: m.amount });
-      }
-      return {
-        methods: Array.from(map.entries()).sort((a, b) => b[1].amount - a[1].amount),
-        total: bePayments.total,
-        count: bePayments.byMethod.reduce((a, m) => a + m.cnt, 0),
-      };
-    }
-    // On a real backend error, do NOT fall back to mock totals — zero out.
-    if (backend && error) {
+    if (!bePayments) {
       return {
         methods: [] as [string, { count: number; amount: number }][],
         total: 0,
@@ -117,19 +120,15 @@ export default function PurchasePaymentPage() {
       };
     }
     const map = new Map<string, { count: number; amount: number }>();
-    for (const r of rows) {
-      const e = map.get(r.method) ?? { count: 0, amount: 0 };
-      e.count += 1;
-      e.amount += r.amount;
-      map.set(r.method, e);
+    for (const m of bePayments.byMethod) {
+      map.set(m.method, { count: m.cnt, amount: m.amount });
     }
-    const total = rows.reduce((a, r) => a + r.amount, 0);
     return {
       methods: Array.from(map.entries()).sort((a, b) => b[1].amount - a[1].amount),
-      total,
-      count: rows.length,
+      total: bePayments.total,
+      count: bePayments.byMethod.reduce((a, m) => a + m.cnt, 0),
     };
-  }, [rows, backend, bePayments, error]);
+  }, [bePayments]);
 
   const allMethods = ['Cash', 'bKash', 'Nagad', 'Card', 'Bank', 'Cheque'];
 
@@ -209,7 +208,11 @@ export default function PurchasePaymentPage() {
           </div>
           {rows.length === 0 && (
             <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-              {backend && loading ? 'Loading…' : backend && error ? 'Couldn’t load — backend error. Check connection and retry.' : 'No payments in this range.'}
+              {loading
+                ? 'Loading…'
+                : error
+                  ? 'Couldn’t load — backend error. Check connection and retry.'
+                  : 'No payments in this range.'}
             </div>
           )}
           {rows.map((r, i) => {
@@ -217,8 +220,8 @@ export default function PurchasePaymentPage() {
             return (
               <div
                 key={r.purchaseId + i}
-                className="grid grid-cols-[1fr_1.2fr_1.5fr_0.9fr_1fr_1fr_0.8fr] gap-2 px-4 py-2.5 border-b border-border last:border-b-0 hover:bg-secondary/30 cursor-pointer text-sm"
-                onClick={() => alert(`Drill: open purchase ${r.refNo}`)}
+                // Presentational — see the note in SellPaymentPage.
+                className="grid grid-cols-[1fr_1.2fr_1.5fr_0.9fr_1fr_1fr_0.8fr] gap-2 px-4 py-2.5 border-b border-border last:border-b-0 hover:bg-secondary/30 text-sm"
               >
                 <div className="text-muted-foreground tabular">
                   {new Date(r.date).toLocaleDateString('en-GB', {

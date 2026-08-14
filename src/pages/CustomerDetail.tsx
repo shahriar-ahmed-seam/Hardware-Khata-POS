@@ -5,7 +5,6 @@ import {
   Edit2,
   HandCoins,
   ScanBarcode,
-  MessageSquare,
   Printer,
   Trash2,
   Phone,
@@ -20,7 +19,12 @@ import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { Drawer } from '@/components/ui/Drawer';
 import { useCustomers } from '@/stores/contacts';
-import { useSales } from '@/stores/sales';
+import { useSales, type SaleRecord } from '@/stores/sales';
+import { confirm } from '@/stores/confirm';
+import { api } from '@/lib/api';
+import { toCustomer, type BackendCustomer } from '@/hooks/contactAdapter';
+import { toSaleRecord, type BackendSale } from '@/hooks/saleAdapter';
+import type { Customer } from '@/types/domain';
 import { Avatar } from '@/components/contacts/Avatar';
 import { CustomerForm } from '@/components/contacts/CustomerForm';
 import { ReceivePaymentModal } from '@/components/contacts/ReceivePaymentModal';
@@ -32,29 +36,119 @@ type Tab = 'overview' | 'ledger' | 'sales' | 'returns' | 'notes';
 export default function CustomerDetail() {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
-  const customer = useCustomers((s) => s.items.find((c) => c.id === id));
+  const storeCustomer = useCustomers((s) => s.items.find((c) => c.id === id)) ?? null;
   const update = useCustomers((s) => s.update);
   const remove = useCustomers((s) => s.remove);
-  const hydrate = useCustomers((s) => s.hydrate);
-  // Hydrate from the backend on mount so deep-link entry populates the store.
-  // Sales/returns are read below for the ledger + history tabs, so hydrate that
-  // store too (cheap no-op without a backend).
+  // Returns come from the sales store (that list is NOT paged), so hydrate it on
+  // mount. `sales` there IS one page, which is why this customer's invoices are
+  // fetched separately below.
   useEffect(() => {
-    void hydrate();
     void useSales.getState().hydrate();
-  }, [hydrate]);
-  const sales = useSales((s) => s.sales);
+  }, []);
   const returns = useSales((s) => s.returns);
+
+  // The contacts store holds ONE PAGE of customers, so a deep-linked customer
+  // is usually NOT in `items` — hydrating and doing items.find() would render
+  // "not found" for anyone past page 1. Prefer the store row when it IS there
+  // (writes like Edit / Receive Payment rehydrate the store, so the page
+  // reflects them instantly) and fall back to a single-record read.
+  const hasStoreCustomer = !!storeCustomer;
+  const [fetched, setFetched] = useState<Customer | null>(null);
+  const [fetching, setFetching] = useState(false);
+  const [notFound, setNotFound] = useState(false);
+  // Bumped after a payment: store rows refresh via the store's rehydrate, but a
+  // row read directly has to be re-read to pick up the new due. IPC calls are
+  // FIFO on one channel, so this lands after the payment writes.
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    if (!id || hasStoreCustomer) {
+      setFetched(null);
+      setFetching(false);
+      setNotFound(false);
+      return;
+    }
+    let alive = true;
+    setFetching(true);
+    setNotFound(false);
+    void api<BackendCustomer | null>('customers.get', { id })
+      .then((row) => {
+        if (!alive) return;
+        if (row) setFetched(toCustomer(row));
+        else setNotFound(true);
+        setFetching(false);
+      })
+      .catch(() => {
+        if (!alive) return;
+        // Channel error or running outside Electron — treat as unavailable.
+        setNotFound(true);
+        setFetching(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [id, hasStoreCustomer, reloadKey]);
+
+  const customer = storeCustomer ?? fetched;
+
+  /**
+   * Persist a patch and keep the on-screen copy in step. When the row came from
+   * the store, `update()`'s rehydrate refreshes it; when it came from the
+   * single-record fetch the store page does not contain it, so the same patch is
+   * merged into the local copy (the Notes textarea is a controlled input, so it
+   * needs this to stay editable).
+   */
+  const savePatch = (patch: Partial<Customer>) => {
+    if (!customer) return;
+    update(customer.id, patch);
+    setFetched((prev) => (prev ? { ...prev, ...patch } : prev));
+  };
 
   const [tab, setTab] = useState<Tab>('overview');
   const [editOpen, setEditOpen] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
   const [saleId, setSaleId] = useState<string | null>(null);
 
-  const customerSales = useMemo(
-    () => (customer ? sales.filter((s) => s.customerId === customer.id) : []),
-    [sales, customer],
-  );
+  /**
+   * This customer's invoices. `useSales().sales` is ONE PAGE of the GLOBAL sales
+   * list, so the ledger balance and the Sales History tab would only ever show
+   * the invoices that happen to sit on that page. Instead every page of
+   * `sales.listPage` FILTERED TO THIS CUSTOMER is pulled (the paged channel is
+   * the one that attaches payments per sale, which the ledger needs for its
+   * credit rows). The ledger arithmetic below is untouched.
+   */
+  const [customerSales, setCustomerSales] = useState<SaleRecord[]>([]);
+
+  useEffect(() => {
+    if (!id) {
+      setCustomerSales([]);
+      return;
+    }
+    let alive = true;
+    void (async () => {
+      try {
+        const rows: BackendSale[] = [];
+        // The backend caps pageSize at 200, so walk the pages for this customer.
+        for (let page = 1; page <= 50; page += 1) {
+          const res = await api<{ rows: BackendSale[]; total: number }>('sales.listPage', {
+            page,
+            pageSize: 200,
+            customerId: id,
+          });
+          rows.push(...res.rows);
+          if (res.rows.length === 0 || rows.length >= res.total) break;
+        }
+        if (alive) setCustomerSales(rows.map(toSaleRecord));
+      } catch {
+        // Channel error or running outside Electron — leave the tabs empty
+        // rather than showing a partial ledger.
+        if (alive) setCustomerSales([]);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [id, reloadKey]);
   const customerReturns = useMemo(
     () => (customer ? returns.filter((r) => r.customerId === customer.id) : []),
     [returns, customer],
@@ -127,6 +221,12 @@ export default function CustomerDetail() {
   }, [customer, customerSales, customerReturns]);
 
   if (!customer) {
+    // Loading and "not found" are DISTINCT states: the fetch above resolves
+    // asynchronously, so a blank/"not found" flash while it is in flight would
+    // be misleading.
+    if (id && (fetching || !notFound)) {
+      return <div className="p-8 text-sm text-muted-foreground">Loading customer…</div>;
+    }
     return (
       <div className="p-8 text-sm text-muted-foreground">
         Customer not found.{' '}
@@ -153,9 +253,7 @@ export default function CustomerDetail() {
             <Button variant="ghost" onClick={() => nav('/contacts/customers')}>
               <ArrowLeft className="size-4" /> Back
             </Button>
-            <Button variant="outline" size="sm">
-              <MessageSquare className="size-4" /> Send SMS
-            </Button>
+            {/* "Send SMS" removed with the SMS feature — it had no handler. */}
             <Button variant="outline" size="sm">
               <Printer className="size-4" /> Print Statement
             </Button>
@@ -504,7 +602,7 @@ export default function CustomerDetail() {
           <Card className="p-4">
             <textarea
               value={customer.notes ?? ''}
-              onChange={(e) => update(customer.id, { notes: e.target.value })}
+              onChange={(e) => savePatch({ notes: e.target.value })}
               rows={6}
               placeholder="Internal notes about this customer (saved automatically)…"
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 resize-y"
@@ -524,12 +622,12 @@ export default function CustomerDetail() {
           asDrawer
           initial={customer}
           onSave={(c) => {
-            update(c.id, c);
+            savePatch(c);
             setEditOpen(false);
           }}
           onCancel={() => setEditOpen(false)}
-          onDelete={() => {
-            if (confirm(`Delete "${customer.name}"?`)) {
+          onDelete={async () => {
+            if (await confirm({ title: `Delete "${customer.name}"?`, variant: 'destructive' })) {
               remove(customer.id);
               nav('/contacts/customers');
             }
@@ -539,7 +637,10 @@ export default function CustomerDetail() {
 
       <ReceivePaymentModal
         open={payOpen}
-        onClose={() => setPayOpen(false)}
+        onClose={() => {
+          setPayOpen(false);
+          setReloadKey((k) => k + 1);
+        }}
         customerId={customer.id}
       />
 

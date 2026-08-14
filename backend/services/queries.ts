@@ -9,13 +9,24 @@ import { round2 } from '../core/money.ts';
  */
 
 // ---------- Products ----------
-export function listProducts(db: DB, opts: { branchId?: string; q?: string } = {}) {
+export function listProducts(
+  db: DB,
+  opts: { branchId?: string; q?: string; includeArchived?: boolean; archivedOnly?: boolean } = {},
+) {
+  // Archived (retired) products are excluded by default. They still exist so
+  // that past invoices resolve, but they are not part of the catalogue any more.
+  const archiveSql = opts.archivedOnly
+    ? 'WHERE p.archived_at IS NOT NULL'
+    : opts.includeArchived
+      ? ''
+      : 'WHERE p.archived_at IS NULL';
   const products = db
     .prepare(
       `SELECT p.*, c.name AS category_name, c.emoji AS category_emoji, b.name AS brand_name
          FROM products p
          LEFT JOIN categories c ON c.id = p.category_id
          LEFT JOIN brands b ON b.id = p.brand_id
+        ${archiveSql}
         ORDER BY p.name`,
     )
     .all() as Record<string, unknown>[];

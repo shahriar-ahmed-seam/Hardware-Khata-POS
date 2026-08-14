@@ -1,9 +1,9 @@
-import type { Customer, Supplier } from '@/mocks/data';
+import type { Customer, Supplier } from '@/types/domain';
 
 /**
  * Maps backend contact rows (snake_case, with derived totals attached by
  * queries.ts via customerTotals/supplierTotals) into the frontend Customer /
- * Supplier mock shapes that all the contacts components already consume.
+ * Supplier domain shapes that all the contacts components already consume.
  *
  * Mirrors purchaseAdapter.ts. Derived fields (due/totalPurchase/totalPaid) come
  * straight off the list/detail row — they are NEVER stored columns.

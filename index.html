@@ -3,13 +3,24 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>POS</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
-      rel="stylesheet"
-    />
+    <title>Hardware Khata POS</title>
+    <!--
+      NO WEBFONTS ON PURPOSE.
+
+      This used to pull Inter + JetBrains Mono from fonts.googleapis.com. In a
+      packaged offline-first shop app that is a liability, not a nicety:
+        - on a counter PC with no internet it is a render-blocking request that
+          waits on a DNS timeout before the UI paints, and
+        - it was the app's ONLY outbound request, and it correlated with
+          repeated "Network service crashed, restarting service" in the packaged
+          build.
+      The font stacks in tailwind.config.js / globals.css already fall back to
+      fonts every Windows machine ships with — system-ui (Segoe UI) for text,
+      Consolas for figures, and Nirmala UI for Bangla — so the app now renders
+      identically with or without a network, and makes no outbound request at
+      all. Inter is still first in the stack, so it is picked up automatically if
+      the shop ever installs it locally.
+    -->
   </head>
   <body>
     <div id="root"></div>

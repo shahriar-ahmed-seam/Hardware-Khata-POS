@@ -7,11 +7,7 @@ import {
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
-import {
-  products as ALL_PRODUCTS,
-  categories as ALL_CATEGORIES,
-  brands as ALL_BRANDS,
-} from '@/mocks/data';
+import { useCategories, useBrands } from '@/hooks/useCatalog';
 import { useReport } from '@/hooks/useReport';
 import { hasBackend } from '@/lib/api';
 import { formatBDT, formatNumber } from '@/lib/utils';
@@ -69,52 +65,22 @@ export default function ItemsReportPage() {
 
   // Backend wiring: catalog snapshot is range-independent → `products.list {}`.
   // Client search/category/brand filters stay on top of the fetched rows.
-  const { data: beProducts, loading, backend, error } = useReport<BackendProductRow[]>(
+  const { data: beProducts, loading, error } = useReport<BackendProductRow[]>(
     'products.list',
     hasBackend() ? {} : null,
     [],
   );
 
-  const mockRows: ItemRow[] = useMemo(() => {
-    let list = ALL_PRODUCTS.map((p) => {
-      const cat = ALL_CATEGORIES.find((c) => c.id === p.categoryId);
-      const brand = ALL_BRANDS.find((b) => b.id === p.brandId);
-      const margin = p.cost > 0 ? ((p.price - p.cost) / p.cost) * 100 : 0;
-      return {
-        id: p.id,
-        sku: p.sku,
-        barcode: p.barcode,
-        name: p.name,
-        cat: cat?.name ?? '—',
-        catEmoji: cat?.emoji,
-        brand: brand?.name ?? '—',
-        unit: p.unit,
-        cost: p.cost,
-        price: p.price,
-        wholesale: p.wholesalePrice,
-        contractor: p.contractorPrice,
-        margin,
-        tax: p.tax ?? 0,
-        notForSale: !!p.notForSale,
-        showInPOS: p.showInPOS !== false,
-        categoryId: p.categoryId ?? '',
-        brandId: p.brandId ?? '',
-      };
-    });
-    if (categoryId)
-      list = list.filter((r) => r.categoryId === categoryId);
-    if (brandId)
-      list = list.filter((r) => r.brandId === brandId);
-    if (q) {
-      const t = q.toLowerCase();
-      list = list.filter((r) => `${r.name} ${r.sku} ${r.barcode}`.toLowerCase().includes(t));
-    }
-    return list.sort((a, b) => a.name.localeCompare(b.name));
-  }, [q, categoryId, brandId]);
+  // Real catalog for the filter dropdowns (backend-backed).
+  const categoriesQuery = useCategories();
+  const brandsQuery = useBrands();
+  const categories = categoriesQuery.data ?? [];
+  const brands = brandsQuery.data ?? [];
 
   // Map backend product rows into the page's row shape.
+  // NOTE: no mock/sample fallback — if the backend has nothing, the report is empty.
   const backendRows: ItemRow[] | null = useMemo(() => {
-    if (!backend || !beProducts) return null;
+    if (!beProducts) return null;
     let list = beProducts.map((p) => ({
       id: p.id,
       sku: p.sku,
@@ -142,9 +108,9 @@ export default function ItemsReportPage() {
       list = list.filter((r) => `${r.name} ${r.sku} ${r.barcode}`.toLowerCase().includes(t));
     }
     return list.sort((a, b) => a.name.localeCompare(b.name));
-  }, [backend, beProducts, q, categoryId, brandId]);
+  }, [beProducts, q, categoryId, brandId]);
 
-  const rows: ItemRow[] = backend && error ? [] : (backendRows ?? mockRows);
+  const rows: ItemRow[] = backendRows ?? [];
 
   const totals = useMemo(() => {
     const cats = new Set<string>();
@@ -179,7 +145,7 @@ export default function ItemsReportPage() {
               className="h-7 rounded-md border border-input bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-ring/50"
             >
               <option value="">All categories</option>
-              {ALL_CATEGORIES.map((c) => (
+              {categories.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.emoji} {c.name}
                 </option>
@@ -191,7 +157,7 @@ export default function ItemsReportPage() {
               className="h-7 rounded-md border border-input bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-ring/50"
             >
               <option value="">All brands</option>
-              {ALL_BRANDS.map((b) => (
+              {brands.map((b) => (
                 <option key={b.id} value={b.id}>
                   {b.name}
                 </option>
@@ -236,7 +202,7 @@ export default function ItemsReportPage() {
           {rows.length === 0 && (
             <div className="px-4 py-12 text-center text-sm text-muted-foreground">
               <Package className="size-6 mx-auto mb-2 opacity-50" />
-              {backend && loading ? 'Loading…' : backend && error ? 'Couldn’t load — backend error. Check connection and retry.' : 'No products match.'}
+              {loading ? 'Loading…' : error ? 'Couldn’t load — backend error. Check connection and retry.' : 'No products match.'}
             </div>
           )}
           {rows.map((r) => (

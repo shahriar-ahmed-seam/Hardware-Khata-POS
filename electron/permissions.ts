@@ -22,6 +22,12 @@
 export const CHANNEL_PERMISSIONS: Record<string, string> = {
   // ----- sales -----
   'sales.create': 'sales.create',
+  // Editing a FINALIZED invoice rewrites money that has already been taken and
+  // stock that has already left the shelf. It is deliberately a SEPARATE, more
+  // restricted permission than creating a sale: a cashier who mistypes an amount
+  // must not be able to quietly correct it themselves — the owner does that, and
+  // the reason is recorded in sale_audit.
+  'sales.update': 'sales.edit',
   'sales.addPayment': 'sales.payment',
   'sales.void': 'sales.void',
   'sales.delete': 'sales.void', // destructive purge of a draft/quotation
@@ -51,6 +57,15 @@ export const CHANNEL_PERMISSIONS: Record<string, string> = {
   'products.create': 'products.create',
   'products.update': 'products.edit',
   'products.delete': 'products.delete',
+  // Archiving is REVERSIBLE and destroys nothing, so it sits with the other
+  // catalogue edits rather than behind the Admin-only delete permission — a
+  // manager must be able to retire a discontinued line. `products.usage` is a
+  // read and stays OPEN so the UI can decide which of the two to offer.
+  'products.archive': 'products.edit',
+  'products.unarchive': 'products.edit',
+  // Recording a new buying price is a catalogue edit. Reads (costHistory /
+  // costInfo) stay OPEN like every other read.
+  'products.setCost': 'products.edit',
   'categories.create': 'products.create',
   'categories.update': 'products.edit',
   'categories.delete': 'products.delete',
@@ -106,6 +121,38 @@ export const CHANNEL_PERMISSIONS: Record<string, string> = {
   // device/UI preference blobs (appearance/receipt/printers/...) are app-wide
   // settings — gate writes behind the same business-settings permission.
   'settings.set': 'settings.business',
+
+  // ----- backup / cloud saving -----
+  // `backup.status` is an OPEN read (the Backup screen must be able to render).
+  // Everything that writes a file or changes where shop data is copied to is
+  // gated behind the dedicated 'settings.backup' permission — a cashier must not
+  // be able to redirect snapshots to a folder of their choosing, and exporting
+  // CSVs is a bulk data extraction of the entire shop.
+  'backup.run': 'settings.backup',
+  'backup.configure': 'settings.backup',
+  'backup.export': 'settings.backup',
+  'backup.verify': 'settings.backup',
+  // Restore replaces the live database and relaunches the app — same permission,
+  // enforced in electron/ipc.ts where the channel is handled.
+  'backup.restore': 'settings.backup',
+  'backup.chooseFolder': 'settings.backup',
+  'backup.setFolder': 'settings.backup',
+  'backup.setPdfFolder': 'settings.backup',
+  'backup.folderOptions': 'settings.backup',
+  'backup.reveal': 'settings.backup',
+  'backup.revealPdfFolder': 'settings.backup',
+  // Copying the whole shop database onto a pendrive is a bulk data extraction
+  // that physically leaves the building — same permission as redirecting the
+  // backup folder, and for the same reason. Listing drives is gated too: it
+  // reveals what hardware is plugged into the counter PC.
+  'backup.usbDrives': 'settings.backup',
+  'backup.toUsb': 'settings.backup',
+
+  // ----- invoice PDFs -----
+  // Saving an invoice PDF is part of completing a sale, so it sits behind the
+  // same permission as making one — a cashier must be able to do it. Listing and
+  // opening an already-saved PDF are reads and stay open.
+  'invoice.savePdf': 'sales.create',
 
   // ----- settings: users + roles -----
   'users.create': 'settings.users',

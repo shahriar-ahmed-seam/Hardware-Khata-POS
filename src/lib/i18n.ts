@@ -3,6 +3,7 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { startBanglaUI, stopBanglaUI } from './bn/translate';
 
 export type Lang = 'en' | 'bn';
 
@@ -24,8 +25,9 @@ const en: Dict = {
   'common.due': 'Due',
   'common.status': 'Status',
   'common.actions': 'Actions',
-  'titlebar.search.placeholder':
-    'Search products, invoices, customers…  (Ctrl+K)  try #invoice:INV-001 or #product:cement',
+  // Kept short on purpose: the Ctrl+K hint is already shown as a kbd badge
+  // inside the field, and the #scope: examples are in the dropdown footer.
+  'titlebar.search.placeholder': 'Search products, invoices, customers…',
   'titlebar.shift.open': 'Shift Open',
   'titlebar.synced': 'Synced',
   'titlebar.offline': 'Offline',
@@ -60,8 +62,7 @@ const bn: Dict = {
   'common.due': 'বাকি',
   'common.status': 'অবস্থা',
   'common.actions': 'কার্যাবলী',
-  'titlebar.search.placeholder':
-    'পণ্য, ইনভয়েস, গ্রাহক খুঁজুন…  (Ctrl+K)  উদাহরণ: #invoice:INV-001 বা #product:সিমেন্ট',
+  'titlebar.search.placeholder': 'পণ্য, ইনভয়েস, গ্রাহক খুঁজুন…',
   'titlebar.shift.open': 'শিফট খোলা',
   'titlebar.synced': 'সিঙ্ক হয়েছে',
   'titlebar.offline': 'অফলাইন',
@@ -94,11 +95,26 @@ export const useLang = create<LangState>()(
       setLang: (lang) => {
         document.documentElement.lang = lang;
         set({ lang });
+        // Applied synchronously and imported statically on purpose: a dynamic
+        // import made rapid toggles race, so two clicks could settle into the
+        // wrong state.
+        if (lang === 'bn') startBanglaUI();
+        else stopBanglaUI();
       },
     }),
     { name: 'pos-lang' },
   ),
 );
+
+/**
+ * Apply the persisted language once the app has mounted. Call from App.
+ * Re-applying `bn` is what turns on the DOM translation layer after a reload.
+ */
+export function applyPersistedLang(): void {
+  const { lang } = useLang.getState();
+  document.documentElement.lang = lang;
+  if (lang === 'bn') startBanglaUI();
+}
 
 export function t(key: string, lang?: Lang): string {
   const l = lang ?? useLang.getState().lang;

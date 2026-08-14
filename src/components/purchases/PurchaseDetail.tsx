@@ -15,6 +15,9 @@ import { Drawer } from '@/components/ui/Drawer';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { usePurchases } from '@/stores/purchases';
+import { confirm } from '@/stores/confirm';
+import { promptText } from '@/stores/prompt';
+import { useCan } from '@/hooks/useCan';
 import { cn, formatBDT } from '@/lib/utils';
 import { AddPurchasePaymentModal } from './AddPurchasePaymentModal';
 import { CreatePurchaseReturnModal } from './CreatePurchaseReturnModal';
@@ -29,6 +32,8 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
   const purchases = usePurchases((s) => s.purchases);
   const cancelPurchase = usePurchases((s) => s.cancelPurchase);
   const deletePurchase = usePurchases((s) => s.deletePurchase);
+  // UI-only gating; the IPC boundary is the real gate (see hooks/useCan.ts).
+  const canEdit = useCan('purchases.edit');
   const purchase = purchases.find((p) => p.id === purchaseId) ?? null;
   const [payOpen, setPayOpen] = useState(false);
   const [returnOpen, setReturnOpen] = useState(false);
@@ -227,18 +232,22 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
               <Undo2 className="size-3.5" /> Create Return
             </Button>
           )}
-          <Link to={`/purchases/${purchase.id}/edit`}>
-            <Button variant="outline" size="sm">
-              <Edit2 className="size-3.5" /> Edit
-            </Button>
-          </Link>
+          {/* Purchases affect stock and supplier balances, so editing/cancelling
+              is for whoever holds `purchases.edit` — not every counter user. */}
+          {canEdit && (
+            <Link to={`/purchases/${purchase.id}/edit`}>
+              <Button variant="outline" size="sm">
+                <Edit2 className="size-3.5" /> Edit
+              </Button>
+            </Link>
+          )}
           <div className="flex-1" />
-          {(purchase.status === 'ordered' || purchase.status === 'cancelled') && (
+          {canEdit && (purchase.status === 'ordered' || purchase.status === 'cancelled') && (
             <Button
               variant="destructive"
               size="sm"
-              onClick={() => {
-                if (confirm(`Delete ${purchase.refNo}?`)) {
+              onClick={async () => {
+                if (await confirm({ title: `Delete ${purchase.refNo}?`, variant: 'destructive' })) {
                   deletePurchase(purchase.id);
                   onClose();
                 }
@@ -247,12 +256,21 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
               <Trash2 className="size-3.5" /> Delete
             </Button>
           )}
-          {purchase.status !== 'cancelled' && purchase.status !== 'ordered' && (
+          {canEdit && purchase.status !== 'cancelled' && purchase.status !== 'ordered' && (
             <Button
               variant="destructive"
               size="sm"
-              onClick={() => {
-                const reason = prompt('Reason for cancelling?');
+              onClick={async () => {
+                const reason = await promptText({
+                  title: `Cancel ${purchase.refNo}?`,
+                  message: 'Cancelling reverses the stock it brought in and the cash it paid out.',
+                  label: 'Reason',
+                  placeholder: 'e.g. wrong supplier',
+                  confirmLabel: 'Cancel purchase',
+                  cancelLabel: 'Keep it',
+                  variant: 'destructive',
+                  required: true,
+                });
                 if (reason !== null) cancelPurchase(purchase.id, 'Seam', reason);
               }}
             >

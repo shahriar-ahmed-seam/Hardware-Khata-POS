@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Drawer } from '@/components/ui/Drawer';
-import { useCategories as useCategoriesStore, type CategoryNode } from '@/stores/masterData';
+import { type CategoryNode } from '@/stores/masterData';
 import {
   useCategories as useCategoriesQuery,
   useCreateCategory,
@@ -13,26 +13,22 @@ import {
   useDeleteCategory,
 } from '@/hooks/useCatalog';
 import { useProducts } from '@/hooks/useProducts';
-import { products as seedProducts } from '@/mocks/data';
-import { hasBackend } from '@/lib/api';
+import { confirm } from '@/stores/confirm';
 import { toast } from '@/stores/toast';
 import { cn } from '@/lib/utils';
 
 const EMOJIS = ['🔨', '🪚', '🚰', '💡', '🎨', '🔩', '🧱', '⛑️', '🛠️', '⚙️', '🪛', '📦', '🔥', '🪜', '🚪', '🛁'];
 
 export default function Categories() {
-  const backend = hasBackend();
-
-  // ----- Data source: backend when available, else mock store -----
-  const store = useCategoriesStore();
+  // ----- Data source: the SQLite backend -----
   const categoriesQuery = useCategoriesQuery();
   const productsQuery = useProducts();
   const createCategory = useCreateCategory();
   const updateCategory = useUpdateCategory();
   const deleteCategory = useDeleteCategory();
 
-  const items: CategoryNode[] = backend ? (categoriesQuery.data ?? []) : store.items;
-  const productList = backend ? (productsQuery.data ?? []) : seedProducts;
+  const items: CategoryNode[] = categoriesQuery.data ?? [];
+  const productList = productsQuery.data ?? [];
 
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState<CategoryNode | 'new' | null>(null);
@@ -50,49 +46,44 @@ export default function Categories() {
   const productCount = (id: string) => productList.filter((p) => p.categoryId === id).length;
 
   const save = async (data: Omit<CategoryNode, 'id'>, current: CategoryNode | 'new') => {
-    if (backend) {
-      try {
-        if (current === 'new') {
-          await createCategory.mutateAsync({
-            name: data.name,
-            emoji: data.emoji,
-            parentId: data.parentId,
-          });
-        } else {
-          await updateCategory.mutateAsync({
-            id: current.id,
-            patch: { name: data.name, emoji: data.emoji, parentId: data.parentId ?? null },
-          });
-        }
-        toast.success(current === 'new' ? 'Category added' : 'Category updated');
-        setEditing(null);
-      } catch (e) {
-        toast.error('Save failed', { description: e instanceof Error ? e.message : undefined });
+    try {
+      if (current === 'new') {
+        await createCategory.mutateAsync({
+          name: data.name,
+          emoji: data.emoji,
+          parentId: data.parentId,
+        });
+      } else {
+        await updateCategory.mutateAsync({
+          id: current.id,
+          patch: { name: data.name, emoji: data.emoji, parentId: data.parentId ?? null },
+        });
       }
-    } else {
-      if (current === 'new') store.add(data);
-      else store.update(current.id, data);
+      toast.success(current === 'new' ? 'Category added' : 'Category updated');
       setEditing(null);
+    } catch (e) {
+      toast.error('Save failed', { description: e instanceof Error ? e.message : undefined });
     }
   };
 
   const onDelete = async (c: CategoryNode) => {
     const used = productCount(c.id);
     const childCount = items.filter((i) => i.parentId === c.id).length;
-    let msg = `Delete "${c.name}"?`;
-    if (used > 0) msg += ` ${used} product(s) use this category.`;
+    const notes: string[] = [];
+    if (used > 0) notes.push(`${used} product(s) use this category.`);
     if (childCount > 0)
-      msg += ` ${childCount} subcategor${childCount === 1 ? 'y' : 'ies'} will be detached.`;
-    if (!confirm(msg)) return;
-    if (backend) {
-      try {
-        await deleteCategory.mutateAsync(c.id);
-        toast.success('Category deleted');
-      } catch (e) {
-        toast.error('Delete failed', { description: e instanceof Error ? e.message : undefined });
-      }
-    } else {
-      store.remove(c.id);
+      notes.push(`${childCount} subcategor${childCount === 1 ? 'y' : 'ies'} will be detached.`);
+    const ok = await confirm({
+      title: `Delete "${c.name}"?`,
+      message: notes.length > 0 ? notes.join(' ') : undefined,
+      variant: 'destructive',
+    });
+    if (!ok) return;
+    try {
+      await deleteCategory.mutateAsync(c.id);
+      toast.success('Category deleted');
+    } catch (e) {
+      toast.error('Delete failed', { description: e instanceof Error ? e.message : undefined });
     }
   };
 

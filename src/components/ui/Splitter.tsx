@@ -13,30 +13,31 @@ interface Props {
   className?: string;
 }
 
+/**
+ * Draggable two-pane splitter.
+ *
+ * DRAG USES POINTER CAPTURE, NOT WINDOW MOUSE LISTENERS.
+ * The previous version set `document.body.style.cursor` / `userSelect` on
+ * mousedown and cleared them in a window `mouseup` handler. In a frameless
+ * Electron window, releasing the button outside the window means that `mouseup`
+ * never arrives: the drag flag stayed true, the panel kept following the cursor,
+ * and `user-select: none` stayed on <body>. `setPointerCapture` fixes both — the
+ * browser guarantees `pointerup`/`pointercancel` on the capturing element, and
+ * `lostpointercapture` is the single place that undoes the body styles.
+ */
 export function Splitter({ ratio, onChange, left, right, min = 0.25, max = 0.85, className }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
 
-  useEffect(() => {
-    const onMove = (e: MouseEvent) => {
-      if (!draggingRef.current || !containerRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const r = Math.min(max, Math.max(min, x / rect.width));
-      onChange(r);
-    };
-    const onUp = () => {
-      draggingRef.current = false;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-  }, [onChange, min, max]);
+  const stopDrag = () => {
+    draggingRef.current = false;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  };
+
+  // Whatever happens (unmount mid-drag, route change, hot reload) the body must
+  // not be left un-selectable with a resize cursor.
+  useEffect(() => stopDrag, []);
 
   return (
     <div ref={containerRef} className={cn('flex w-full h-full min-h-0', className)}>
@@ -44,13 +45,24 @@ export function Splitter({ ratio, onChange, left, right, min = 0.25, max = 0.85,
         {left}
       </div>
       <div
-        onMouseDown={() => {
+        onPointerDown={(e) => {
+          // Ignore right/middle button and any non-primary pointer.
+          if (e.button !== 0) return;
+          e.currentTarget.setPointerCapture(e.pointerId);
           draggingRef.current = true;
           document.body.style.cursor = 'col-resize';
           document.body.style.userSelect = 'none';
         }}
+        onPointerMove={(e) => {
+          if (!draggingRef.current || !containerRef.current) return;
+          const rect = containerRef.current.getBoundingClientRect();
+          const r = Math.min(max, Math.max(min, (e.clientX - rect.left) / rect.width));
+          onChange(r);
+        }}
+        onPointerUp={(e) => e.currentTarget.releasePointerCapture(e.pointerId)}
+        onLostPointerCapture={stopDrag}
         onDoubleClick={() => onChange(0.65)}
-        className="group relative w-1 shrink-0 bg-border hover:bg-primary/40 active:bg-primary cursor-col-resize transition-colors"
+        className="group relative w-1 shrink-0 bg-border hover:bg-primary/40 active:bg-primary cursor-col-resize transition-colors touch-none"
         title="Drag to resize · double-click to reset"
       >
         <div className="absolute inset-y-0 -left-1 -right-1" />

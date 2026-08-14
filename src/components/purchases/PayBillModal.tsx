@@ -4,9 +4,12 @@ import { Button } from '@/components/ui/Button';
 import { NumberField } from '@/components/ui/NumberField';
 import { Input } from '@/components/ui/Input';
 import { Banknote, Smartphone, CreditCard, Building2, FileText, Save } from 'lucide-react';
-import { usePurchases, type PaymentMethod } from '@/stores/purchases';
+import { usePurchases, type PaymentMethod, type PurchaseRecord } from '@/stores/purchases';
 import { useSuppliers } from '@/stores/contacts';
-import { hasBackend } from '@/lib/api';
+import { api, hasBackend } from '@/lib/api';
+import { toSupplier, type BackendSupplier } from '@/hooks/contactAdapter';
+import { toPurchaseRecord, type BackendPurchase } from '@/hooks/purchaseAdapter';
+import type { Supplier } from '@/types/domain';
 import { cn, formatBDT } from '@/lib/utils';
 
 const METHODS: { id: PaymentMethod; icon: any; label: string; needsRef?: boolean }[] = [
@@ -27,10 +30,24 @@ interface Props {
 }
 
 export function PayBillModal({ open, onClose, initialSupplierId }: Props) {
-  const purchases = usePurchases((s) => s.purchases);
+  const storePurchases = usePurchases((s) => s.purchases);
   const addPayment = usePurchases((s) => s.addPayment);
-  const suppliers = useSuppliers((s) => s.items);
+  const storeSuppliers = useSuppliers((s) => s.items);
   const paySupplier = useSuppliers((s) => s.paySupplier);
+
+  /**
+   * PAGINATION — both stores hold ONE PAGE, which is not enough for this modal:
+   *   - the supplier select must offer EVERY supplier with a payable, and it
+   *     needs the derived `due` per row (so `options`, which is id+name only,
+   *     cannot serve it) → unpaged `suppliers.list`;
+   *   - the allocation runs over the supplier's outstanding bills, and a bill
+   *     missing from the current purchases page would silently drop out of it
+   *     → unpaged `purchases.list` (headers carry `total`/`paid`/`due`).
+   * Both fall back to the store page if the read fails (e.g. outside Electron).
+   */
+  const [allSuppliers, setAllSuppliers] = useState<Supplier[] | null>(null);
+  const [fetchedSupplier, setFetchedSupplier] = useState<Supplier | null>(null);
+  const [allBills, setAllBills] = useState<PurchaseRecord[] | null>(null);
 
   const [supplierId, setSupplierId] = useState(initialSupplierId ?? '');
   const [mode, setMode] = useState<Mode>('auto');
@@ -50,14 +67,83 @@ export function PayBillModal({ open, onClose, initialSupplierId }: Props) {
     }
   }, [open, initialSupplierId]);
 
-  const supplier = suppliers.find((s) => s.id === supplierId);
+  // Full supplier list (with derived dues) for the select, loaded on open.
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    void api<BackendSupplier[]>('suppliers.list', {})
+      .then((rows) => {
+        if (alive) setAllSuppliers(rows.map(toSupplier));
+      })
+      .catch(() => {
+        // Fall back to the store page below.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open]);
+
+  // Full bill list for the chosen supplier, so the allocation can see EVERY
+  // outstanding bill and not just the ones on the current purchases page.
+  useEffect(() => {
+    if (!open || !supplierId) {
+      setAllBills(null);
+      return;
+    }
+    let alive = true;
+    void api<BackendPurchase[]>('purchases.list', { status: 'received' })
+      .then((rows) => {
+        if (alive) setAllBills(rows.map(toPurchaseRecord));
+      })
+      .catch(() => {
+        // Fall back to the store page below.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open, supplierId]);
+
+  const suppliers = allSuppliers ?? storeSuppliers;
+
+  // Single-row fallback: an `initialSupplierId` handed in from another screen is
+  // not guaranteed to be on the store page (and `suppliers.list` may be
+  // unavailable), so read that one record directly when it is missing.
+  const supplierInList = suppliers.find((s) => s.id === supplierId);
+  useEffect(() => {
+    if (!open || !supplierId || supplierInList) {
+      setFetchedSupplier(null);
+      return;
+    }
+    let alive = true;
+    void api<BackendSupplier | null>('suppliers.get', { id: supplierId })
+      .then((row) => {
+        if (alive && row) setFetchedSupplier(toSupplier(row));
+      })
+      .catch(() => {
+        // Channel error or running outside Electron — leave the picker empty.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open, supplierId, supplierInList]);
+
+  const supplier =
+    supplierInList ?? (fetchedSupplier?.id === supplierId ? fetchedSupplier : undefined);
+
+  // Suppliers with a payable, plus the pre-selected one when it only came from
+  // the single-row fallback (otherwise the select would show a blank label).
+  const supplierOptions = useMemo(() => {
+    const withDue = suppliers.filter((s) => s.due > 0);
+    if (supplier && !withDue.some((s) => s.id === supplier.id)) return [supplier, ...withDue];
+    return withDue;
+  }, [suppliers, supplier]);
 
   const dueBills = useMemo(() => {
     if (!supplierId) return [];
-    return purchases
+    return (allBills ?? storePurchases)
       .filter((p) => p.status === 'received' && p.supplierId === supplierId && p.due > 0)
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  }, [purchases, supplierId]);
+  }, [allBills, storePurchases, supplierId]);
 
   // Auto-allocate preview
   const allocation = useMemo(() => {
@@ -149,13 +235,11 @@ export function PayBillModal({ open, onClose, initialSupplierId }: Props) {
             className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="">Select supplier…</option>
-            {suppliers
-              .filter((s) => s.due > 0)
-              .map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name} · {formatBDT(s.due)}
-                </option>
-              ))}
+            {supplierOptions.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name} · {formatBDT(s.due)}
+              </option>
+            ))}
           </select>
         </div>
 

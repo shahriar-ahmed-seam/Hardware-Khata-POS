@@ -49,16 +49,6 @@ export const SCOPE_HINTS: { scope: SearchScope; label: string; example: string }
   { scope: 'barcode', label: 'Barcode', example: '#barcode:8801001000017' },
 ];
 
-// Mock searcher — backend will replace with IPC-backed search.
-import {
-  products,
-  customers,
-  suppliers,
-  recentSales,
-  brandName,
-  categoryName,
-} from '@/mocks/data';
-
 export interface SearchResult {
   id: string;
   type: 'invoice' | 'product' | 'customer' | 'supplier';
@@ -68,88 +58,9 @@ export interface SearchResult {
   to: string;
 }
 
-export function runSearch(parsed: ParsedSearch, limit = 8): SearchResult[] {
-  const term = parsed.term.toLowerCase();
-  if (!term) return [];
-
-  const results: SearchResult[] = [];
-
-  const includeProducts = parsed.scope === 'all' || parsed.scope === 'product' || parsed.scope === 'sku' || parsed.scope === 'barcode';
-  const includeInvoices = parsed.scope === 'all' || parsed.scope === 'invoice';
-  const includeCustomers = parsed.scope === 'all' || parsed.scope === 'customer';
-  const includeSuppliers = parsed.scope === 'all' || parsed.scope === 'supplier';
-
-  if (includeProducts) {
-    products.forEach((p) => {
-      const hay =
-        parsed.scope === 'sku'
-          ? p.sku.toLowerCase()
-          : parsed.scope === 'barcode'
-            ? p.barcode.toLowerCase()
-            : `${p.name} ${p.sku} ${p.barcode}`.toLowerCase();
-      if (hay.includes(term)) {
-        results.push({
-          id: p.id,
-          type: 'product',
-          title: p.name,
-          subtitle: `${p.sku} · ${brandName(p.brandId)} · ${categoryName(p.categoryId)}`,
-          meta: `${p.stock} ${p.unit}`,
-          to: `/products?q=${encodeURIComponent(p.name)}`,
-        });
-      }
-    });
-  }
-
-  if (includeInvoices) {
-    recentSales.forEach((s) => {
-      if (
-        s.invoiceNo.toLowerCase().includes(term) ||
-        s.customerName.toLowerCase().includes(term)
-      ) {
-        results.push({
-          id: s.id,
-          type: 'invoice',
-          title: s.invoiceNo,
-          subtitle: `${s.customerName} · ${new Date(s.date).toLocaleDateString()}`,
-          meta: s.status,
-          to: `/sales?q=${encodeURIComponent(s.invoiceNo)}`,
-        });
-      }
-    });
-  }
-
-  if (includeCustomers) {
-    customers.forEach((c) => {
-      if (`${c.name} ${c.phone}`.toLowerCase().includes(term)) {
-        results.push({
-          id: c.id,
-          type: 'customer',
-          title: c.name,
-          subtitle: `${c.phone} · ${c.group}`,
-          meta: c.due > 0 ? `Due ৳${c.due}` : '',
-          to: `/contacts/customers?q=${encodeURIComponent(c.name)}`,
-        });
-      }
-    });
-  }
-
-  if (includeSuppliers) {
-    suppliers.forEach((s) => {
-      if (`${s.name} ${s.phone}`.toLowerCase().includes(term)) {
-        results.push({
-          id: s.id,
-          type: 'supplier',
-          title: s.name,
-          subtitle: `${s.phone}${s.company ? ' · ' + s.company : ''}`,
-          meta: s.due > 0 ? `Due ৳${s.due}` : '',
-          to: `/contacts/suppliers?q=${encodeURIComponent(s.name)}`,
-        });
-      }
-    });
-  }
-
-  return results.slice(0, limit);
-}
+/* Removed: the local `runSearch` stub (and the mock dataset it once indexed).
+ * Search results come exclusively from the backend `search.global` channel via
+ * `mapBackendResults` below. */
 
 /* ----------------------------------------------------------------------------
  * Backend-backed search (search.global)
@@ -157,8 +68,7 @@ export function runSearch(parsed: ParsedSearch, limit = 8): SearchResult[] {
  * The backend returns FTS rows; we map them into the same SearchResult[] shape
  * the dropdown already renders. Routing emits a `?q=` param so the target list
  * page can highlight the match (Products/Sales/Customers/Suppliers read it).
- * GlobalSearch picks this path when hasBackend(); runSearch() above is the
- * !hasBackend() fallback.
+ * This is the only source of search results.
  * ------------------------------------------------------------------------- */
 
 /** Raw shape returned by the `search.global` channel (queries.globalSearch). */

@@ -1,9 +1,7 @@
 import { Link } from 'react-router-dom';
 import {
   Zap,
-  ScanBarcode,
   ShoppingBag,
-  Receipt,
   Package,
   Users,
   Wallet,
@@ -17,13 +15,7 @@ interface Props {
   onOpenProfit: () => void;
 }
 
-// Pinned / default shortcuts shown at the top of the menu.
-const pinned = [
-  { to: '/pos',   icon: ScanBarcode, label: 'POS',             desc: 'Counter sale (fast)' },
-  { to: '/sales', icon: Receipt,     label: "New Sale",         desc: 'Form-based sale (credit, B2B)' },
-  { kind: 'profit' as const, icon: TrendingUp, label: "Today's Profit", desc: 'View profit breakdown' },
-];
-
+// More shortcuts shown in the dropdown menu
 const more = [
   { to: '/purchases',          icon: ShoppingBag, label: 'New Purchase',     desc: 'Goods received from supplier' },
   { to: '/products',           icon: Package,     label: 'New Product',      desc: 'Add to inventory' },
@@ -47,50 +39,7 @@ export function Shortcuts({ onOpenProfit }: Props) {
       {(close) => (
         <div className="py-2">
           <div className="px-3 py-1 text-[10px] font-semibold uppercase text-muted-foreground">
-            Pinned
-          </div>
-          {pinned.map((it) => {
-            const Icon = it.icon;
-            const content = (
-              <>
-                <div className="size-8 rounded-md bg-primary/10 text-primary grid place-items-center">
-                  <Icon className="size-4" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium">{it.label}</div>
-                  <div className="text-[10px] text-muted-foreground">{it.desc}</div>
-                </div>
-              </>
-            );
-            if ('kind' in it && it.kind === 'profit') {
-              return (
-                <button
-                  key={it.label}
-                  onClick={() => {
-                    close();
-                    onOpenProfit();
-                  }}
-                  className="flex items-center gap-3 px-3 py-2 hover:bg-secondary w-full text-left"
-                >
-                  {content}
-                </button>
-              );
-            }
-            return (
-              <Link
-                key={it.label}
-                to={(it as { to: string }).to}
-                onClick={close}
-                className="flex items-center gap-3 px-3 py-2 hover:bg-secondary"
-              >
-                {content}
-              </Link>
-            );
-          })}
-
-          <div className="border-t border-border my-1" />
-          <div className="px-3 py-1 text-[10px] font-semibold uppercase text-muted-foreground">
-            More
+            Quick Actions
           </div>
           {more.map((it) => {
             const Icon = it.icon;

@@ -1,6 +1,5 @@
 import { create } from 'zustand';
-import { recentSales, type Sale } from '@/mocks/data';
-import { api, hasBackend } from '@/lib/api';
+import { api } from '@/lib/api';
 import { toast } from '@/stores/toast';
 import { useBranches } from '@/stores/branches';
 import { toSaleRecord, toSellReturnRecord, toShipment, type BackendSale } from '@/hooks/saleAdapter';
@@ -146,166 +145,30 @@ export interface Shipment {
   createdAt: string;
 }
 
-// ----- Helpers to convert legacy mock sales into rich records -----
-function inflate(s: Sale): SaleRecord {
-  const tax = s.tax;
-  const taxPct = s.subtotal > 0 ? (tax / s.subtotal) * 100 : 0;
-  return {
-    id: s.id,
-    invoiceNo: s.invoiceNo,
-    status: 'final',
-    date: s.date,
-    customerId: s.customerId,
-    customerName: s.customerName,
-    branch: 'Mirpur Branch',
-    user: s.user,
-    lines: [
-      // Mock single placeholder line (real data would have full lines)
-      {
-        productId: 'p_seed',
-        name: '[items]',
-        sku: '—',
-        qty: s.items,
-        unit: 'pc',
-        unitPrice: s.subtotal / Math.max(1, s.items),
-        discountPct: 0,
-        discountFlat: 0,
-        taxPct: 0,
-      },
-    ],
-    subtotal: s.subtotal,
-    totalLineDiscount: 0,
-    orderDiscountPct: 0,
-    orderDiscountFlat: s.discount,
-    orderDiscount: s.discount,
-    taxPct: Number(taxPct.toFixed(2)),
-    tax,
-    shipping: 0,
-    other: 0,
-    total: s.total,
-    paid: s.paid,
-    due: s.due,
-    payments:
-      s.paid > 0
-        ? [
-            {
-              id: 'pay_' + s.id,
-              method:
-                s.paymentMethod === 'Mixed'
-                  ? 'Cash'
-                  : (s.paymentMethod as SalePayment['method']),
-              amount: s.paid,
-              paidAt: s.date,
-            },
-          ]
-        : [],
-    audit: [
-      { id: 'a_' + s.id, at: s.date, by: s.user, action: 'created' },
-    ],
-    profit: Math.round((s.subtotal - s.discount) * 0.22),
-  };
-}
-
-const SEED_SALES: SaleRecord[] = recentSales.map(inflate);
-
-// Add a couple drafts and quotations for demo
-SEED_SALES.push({
-  ...inflate({
-    id: 'sl_draft1',
-    invoiceNo: 'DRF-2026-0007',
-    date: '2026-05-26T09:14:00',
-    customerId: 'cu2',
-    customerName: 'Rahim Construction',
-    items: 5,
-    subtotal: 12400,
-    discount: 0,
-    tax: 0,
-    total: 12400,
-    paid: 0,
-    due: 12400,
-    status: 'due',
-    paymentMethod: 'Credit',
-    user: 'Seam',
-  }),
-  status: 'draft',
-});
-
-SEED_SALES.push({
-  ...inflate({
-    id: 'sl_quote1',
-    invoiceNo: 'QTN-2026-0014',
-    date: '2026-05-25T15:33:00',
-    customerId: 'cu4',
-    customerName: 'New Era Builders',
-    items: 14,
-    subtotal: 84200,
-    discount: 1200,
-    tax: 0,
-    total: 83000,
-    paid: 0,
-    due: 83000,
-    status: 'due',
-    paymentMethod: 'Credit',
-    user: 'Faruq',
-  }),
-  status: 'quotation',
-  validUntil: '2026-06-15',
-});
-
-// One demo return + shipment
-const SEED_RETURNS: SellReturn[] = [
-  {
-    id: 'ret1',
-    refNo: 'RTN-2026-0005',
-    saleId: 'sl4',
-    saleInvoiceNo: 'INV-2026-0448',
-    date: '2026-05-26T13:10:00',
-    customerId: 'cu1',
-    customerName: 'Walk-in Customer',
-    user: 'Seam',
-    reason: 'wrong-item',
-    refundMethod: 'Cash',
-    lines: [
-      {
-        productId: 'p1',
-        name: 'Claw Hammer 16oz',
-        sku: 'HT-CLW-16',
-        qty: 1,
-        unit: 'pc',
-        unitPrice: 520,
-        refundAmount: 520,
-      },
-    ],
-    total: 520,
-  },
-];
-
-const SEED_SHIPMENTS: Shipment[] = [
-  {
-    id: 'shp1',
-    refNo: 'SHP-2026-0021',
-    saleId: 'sl3',
-    saleInvoiceNo: 'INV-2026-0449',
-    customerName: 'New Era Builders',
-    driver: 'Karim',
-    vehicleNo: 'DH 11-3344',
-    status: 'in-transit',
-    address: 'Uttara Sector 7, Dhaka',
-    targetDate: '2026-05-27',
-    createdAt: '2026-05-26T11:30:00',
-    notes: '24 bags cement + 150 kg rebar',
-  },
-];
-
 interface SalesState {
   sales: SaleRecord[];
   returns: SellReturn[];
   shipments: Shipment[];
   loading: boolean;
+  /** Total rows matching the CURRENT query (not the number loaded). */
+  total: number;
+  /** The query that produced `sales` — re-run by `hydrate()` after any write. */
+  query: SalesQuery;
+  /**
+   * Load ONE page of sales. All filtering happens in SQL, so the renderer never
+   * holds more than `pageSize` rows.
+   */
+  loadPage: (patch?: Partial<SalesQuery>) => Promise<void>;
+  /** Re-run the last query (used after a write). Also refreshes returns/shipments. */
   hydrate: () => Promise<void>;
   // Sales CRUD
   addSale: (s: SaleRecord) => void;
-  updateSale: (id: string, patch: Partial<SaleRecord>) => void;
+  /**
+   * Correct an existing sale IN PLACE via `sales.update`, keeping its invoice
+   * number. `reason` is mandatory — it is written to the sale's audit trail.
+   * Resolves true on success so the caller can navigate only when it worked.
+   */
+  updateSale: (id: string, next: SaleRecord, reason: string) => Promise<boolean>;
   voidSale: (id: string, by: string, reason?: string) => void;
   deleteSale: (id: string) => void; // only for drafts/quotations
   addPayment: (saleId: string, p: Omit<SalePayment, 'id'>) => void;
@@ -317,6 +180,36 @@ interface SalesState {
 }
 
 const CURRENT_USER = 'u_admin';
+
+/** Server-side query for the sales list. Mirrors `PageQuery` in backend/services/paged.ts. */
+export interface SalesQuery {
+  page: number;
+  pageSize: number;
+  /** Which lifecycle statuses this screen shows (Sales vs Drafts vs Quotations). */
+  statuses: SaleStatus[];
+  customerId?: string;
+  userId?: string;
+  method?: string;
+  from?: string;
+  to?: string;
+  q?: string;
+}
+
+interface SalesPageResponse {
+  rows: BackendSale[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export const DEFAULT_SALES_QUERY: SalesQuery = {
+  page: 1,
+  pageSize: 50,
+  statuses: ['final', 'void'],
+};
+
+/** Guards against out-of-order responses when the user types or pages quickly. */
+let salesRequestToken = 0;
 
 let invoiceCounter = 0;
 let draftCounter = 100;
@@ -349,43 +242,80 @@ export function nextShipmentNo() {
 }
 
 export const useSales = create<SalesState>((set, get) => ({
-  sales: hasBackend() ? [] : SEED_SALES,
-  returns: hasBackend() ? [] : SEED_RETURNS,
-  // Backed by the `shipments` table under Electron; mock seed in browser dev.
-  shipments: hasBackend() ? [] : SEED_SHIPMENTS,
+  sales: [],
+  returns: [],
+  // Backed by the `shipments` table.
+  shipments: [],
   loading: false,
+  total: 0,
+  query: { ...DEFAULT_SALES_QUERY },
 
-  /** Load sales (with nested detail) + sell returns + shipments from the backend. No-op without backend. */
-  hydrate: async () => {
-    if (!hasBackend()) return;
-    set({ loading: true });
+  /**
+   * PERFORMANCE — this replaced an N+1 that froze the app.
+   *
+   * The old `hydrate()` fetched EVERY sale and then made one `sales.get` IPC
+   * call per row (3,000+ synchronous SQLite hits on the main process). Now a
+   * single `sales.listPage` call returns one page with lines/payments/audit
+   * already attached, plus the total for the pager — about five queries no
+   * matter how much history the shop has.
+   */
+  loadPage: async (patch) => {
+    const query: SalesQuery = { ...get().query, ...patch };
+    // Any filter change resets to page 1 — staying on page 9 of a narrower
+    // result set would show an empty table.
+    if (patch && Object.keys(patch).some((k) => k !== 'page')) query.page = patch.page ?? 1;
+
+    set({ loading: true, query });
+    const token = ++salesRequestToken;
     try {
-      const list = await api<BackendSale[]>('sales.list', {});
-      // list rows lack nested lines/payments/audit; fetch detail per id (small N).
-      const detailed = await Promise.all(
-        list.map((row) => api<BackendSale>('sales.get', { id: row.id })),
-      );
-      const returns = await api<Parameters<typeof toSellReturnRecord>[0][]>('sellReturns.list', {});
-      const shipments = await api<Parameters<typeof toShipment>[0][]>('shipments.list', {});
-      set({
-        sales: detailed.map(toSaleRecord),
-        returns: returns.map(toSellReturnRecord),
-        shipments: shipments.map(toShipment),
-        loading: false,
+      const res = await api<SalesPageResponse>('sales.listPage', {
+        page: query.page,
+        pageSize: query.pageSize,
+        statuses: query.statuses,
+        customerId: query.customerId === 'all' ? undefined : query.customerId,
+        userId: query.userId === 'all' ? undefined : query.userId,
+        method: query.method === 'all' ? undefined : query.method,
+        from: query.from,
+        to: query.to,
+        q: query.q?.trim() || undefined,
       });
+      // Drop a stale response so fast typing/paging can't overwrite newer rows.
+      if (token !== salesRequestToken) return;
+      set({ sales: res.rows.map(toSaleRecord), total: res.total, loading: false });
     } catch (e: unknown) {
+      if (token !== salesRequestToken) return;
       toast.error(e instanceof Error ? e.message : 'Failed to load sales');
       set({ loading: false });
     }
   },
 
+  /**
+   * Re-run the current page query, and refresh the (small) returns + shipments
+   * lists. Called after every write.
+   */
+  hydrate: async () => {
+    await get().loadPage();
+    try {
+      const [returns, shipments] = await Promise.all([
+        api<Parameters<typeof toSellReturnRecord>[0][]>('sellReturns.list', {}),
+        api<Parameters<typeof toShipment>[0][]>('shipments.list', {}),
+      ]);
+      set({
+        returns: returns.map(toSellReturnRecord),
+        shipments: shipments.map(toShipment),
+      });
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to load returns/shipments');
+    }
+  },
+
   addSale: (s) => {
-    if (hasBackend()) {
+    {
       // Resolve branch name -> id via the branches store (AddSale still uses
       // branch names); falls back to the default branch only if unresolvable.
       const branchId = resolveBranchToId(s.branch);
-      // Only pass a customerId when it looks like a real backend id; the mock
-      // AddSale form uses local ids like 'cu1' that won't resolve server-side.
+      // Only pass a customerId when it looks like a real backend id; a
+      // walk-in/unsaved selection must persist as "no customer".
       const customerId = s.customerId?.startsWith('cu_') ? s.customerId : undefined;
       void api('sales.create', {
         status: s.status,
@@ -421,150 +351,121 @@ export const useSales = create<SalesState>((set, get) => ({
           toast.error(e instanceof Error ? e.message : 'Failed to save sale');
           void get().hydrate();
         });
-      return;
     }
-    set((st) => ({ sales: [s, ...st.sales] }));
   },
-  // updateSale (edit) stays mock for now — full edit-form wiring is deferred
-  // until the Contacts slice provides real backend customer/product/branch ids.
-  updateSale: (id, patch) =>
-    set((st) => ({
-      sales: st.sales.map((x) =>
-        x.id === id
-          ? {
-              ...x,
-              ...patch,
-              audit: [
-                ...x.audit,
-                {
-                  id: 'a_' + Date.now(),
-                  at: new Date().toISOString(),
-                  by: 'Seam',
-                  action: 'edited',
-                },
-              ],
-            }
-          : x,
-      ),
-    })),
-  voidSale: (id, by, reason) => {
-    if (hasBackend()) {
-      void api('sales.void', { saleId: id, userId: CURRENT_USER, reason })
-        .then(() => get().hydrate())
-        .catch((e: unknown) => {
-          toast.error(e instanceof Error ? e.message : 'Failed to void sale');
-          void get().hydrate();
-        });
-      return;
+  /**
+   * Edit an existing sale through the backend.
+   *
+   * This used to patch only the local copy, with a note saying no `sales.update`
+   * channel existed. It does now: `updateSale` in backend/services/sales.ts
+   * reverses the original stock and cash and re-applies the corrected figures in
+   * one transaction, keeping the invoice number. So the ONLY thing to do here is
+   * send it and re-hydrate from the database — never mutate the local list, or
+   * the screen would show numbers the database does not agree with.
+   *
+   * `sales.update` is gated behind the `sales.edit` permission at the IPC
+   * boundary, so a cashier's attempt fails with a permission error and the
+   * caller surfaces it.
+   */
+  updateSale: async (id, next, reason) => {
+    const branchId = resolveBranchToId(next.branch);
+    const customerId = next.customerId?.startsWith('cu_') ? next.customerId : undefined;
+    try {
+      await api('sales.update', {
+        saleId: id,
+        input: {
+          status: next.status,
+          date: next.date,
+          customerId,
+          branchId,
+          userId: CURRENT_USER,
+          lines: next.lines.map((l) => ({
+            productId: l.productId,
+            qty: l.qty,
+            unitUsed: l.unit,
+            spr: l.unitPrice,
+            discountPct: l.discountPct,
+            discountFlat: l.discountFlat,
+            taxPct: l.taxPct,
+          })),
+          orderDiscountPct: next.orderDiscountPct,
+          orderDiscountFlat: next.orderDiscountFlat,
+          taxPct: next.taxPct,
+          shipping: next.shipping,
+          other: next.other,
+          // Payments already recorded against the invoice are preserved as-is;
+          // the edit is about what was sold and for how much.
+          payments: next.payments.map((pay) => ({
+            method: pay.method,
+            amount: pay.amount,
+            reference: pay.reference,
+            paidAt: pay.paidAt,
+          })),
+          validUntil: next.validUntil,
+          notes: next.notes,
+          reason,
+        },
+      });
+      await get().hydrate();
+      return true;
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save the correction');
+      await get().hydrate();
+      return false;
     }
-    set((st) => ({
-      sales: st.sales.map((x) =>
-        x.id === id
-          ? {
-              ...x,
-              status: 'void',
-              audit: [
-                ...x.audit,
-                {
-                  id: 'a_' + Date.now(),
-                  at: new Date().toISOString(),
-                  by,
-                  action: 'voided',
-                  note: reason,
-                },
-              ],
-            }
-          : x,
-      ),
-    }));
   },
+  voidSale: (id, _by, reason) => {
+    void api('sales.void', { saleId: id, userId: CURRENT_USER, reason })
+      .then(() => get().hydrate())
+      .catch((e: unknown) => {
+        toast.error(e instanceof Error ? e.message : 'Failed to void sale');
+        void get().hydrate();
+      });
+  },
+  // Only drafts/quotations are deletable — the backend enforces that rule (a
+  // final sale must be voided instead, so stock and dues are reversed).
   deleteSale: (id) => {
-    if (hasBackend()) {
-      void api('sales.delete', { saleId: id })
-        .then(() => get().hydrate())
-        .catch((e: unknown) => {
-          toast.error(e instanceof Error ? e.message : 'Failed to delete sale');
-          void get().hydrate();
-        });
-      return;
-    }
-    set((st) => ({
-      sales: st.sales.filter(
-        (x) => !(x.id === id && (x.status === 'draft' || x.status === 'quotation')),
-      ),
-    }));
+    void api('sales.delete', { saleId: id })
+      .then(() => get().hydrate())
+      .catch((e: unknown) => {
+        toast.error(e instanceof Error ? e.message : 'Failed to delete sale');
+        void get().hydrate();
+      });
   },
   addPayment: (saleId, p) => {
-    if (hasBackend()) {
-      void api('sales.addPayment', {
-        saleId,
-        payment: { method: p.method, amount: p.amount, reference: p.reference, paidAt: p.paidAt },
-        userId: CURRENT_USER,
-      })
-        .then(() => get().hydrate())
-        .catch((e: unknown) => {
-          toast.error(e instanceof Error ? e.message : 'Failed to record payment');
-          void get().hydrate();
-        });
-      return;
-    }
-    set((st) => ({
-      sales: st.sales.map((x) => {
-        if (x.id !== saleId) return x;
-        const payment: SalePayment = { ...p, id: 'pay_' + Date.now() };
-        const paid = x.paid + p.amount;
-        return {
-          ...x,
-          paid,
-          due: Math.max(0, x.total - paid),
-          payments: [...x.payments, payment],
-          audit: [
-            ...x.audit,
-            {
-              id: 'a_' + Date.now(),
-              at: new Date().toISOString(),
-              by: 'Seam',
-              action: 'paid',
-              note: `${p.method} ৳ ${p.amount}`,
-            },
-          ],
-        };
-      }),
-    }));
+    void api('sales.addPayment', {
+      saleId,
+      payment: { method: p.method, amount: p.amount, reference: p.reference, paidAt: p.paidAt },
+      userId: CURRENT_USER,
+    })
+      .then(() => get().hydrate())
+      .catch((e: unknown) => {
+        toast.error(e instanceof Error ? e.message : 'Failed to record payment');
+        void get().hydrate();
+      });
   },
   addReturn: (r) => {
-    if (hasBackend()) {
-      void api('sellReturns.create', {
-        saleId: r.saleId || undefined,
-        customerId: r.customerId?.startsWith('cu_') ? r.customerId : undefined,
-        branchId: 'br_mp',
-        userId: CURRENT_USER,
-        reason: r.reason,
-        refundMethod: r.refundMethod,
-        lines: r.lines.map((l) => ({
-          productId: l.productId,
-          qty: l.qty,
-          unit: l.unit,
-          unitPrice: l.unitPrice,
-          refundAmount: l.refundAmount,
-        })),
-        notes: r.notes,
-      })
-        .then(() => get().hydrate())
-        .catch((e: unknown) => {
-          toast.error(e instanceof Error ? e.message : 'Failed to save return');
-          void get().hydrate();
-        });
-      return;
-    }
-    set((st) => ({
-      returns: [r, ...st.returns],
-      sales: st.sales.map((s) =>
-        s.id === r.saleId
-          ? { ...s, returnIds: [...(s.returnIds ?? []), r.id], audit: [...s.audit, { id: 'a_' + Date.now(), at: new Date().toISOString(), by: r.user, action: 'returned' }] }
-          : s,
-      ),
-    }));
+    void api('sellReturns.create', {
+      saleId: r.saleId || undefined,
+      customerId: r.customerId?.startsWith('cu_') ? r.customerId : undefined,
+      branchId: 'br_mp',
+      userId: CURRENT_USER,
+      reason: r.reason,
+      refundMethod: r.refundMethod,
+      lines: r.lines.map((l) => ({
+        productId: l.productId,
+        qty: l.qty,
+        unit: l.unit,
+        unitPrice: l.unitPrice,
+        refundAmount: l.refundAmount,
+      })),
+      notes: r.notes,
+    })
+      .then(() => get().hydrate())
+      .catch((e: unknown) => {
+        toast.error(e instanceof Error ? e.message : 'Failed to save return');
+        void get().hydrate();
+      });
   },
   // ----- Shipments (logistics tracking) -----
   // Backed by the `shipments` table + service under Electron. A shipment is a
@@ -577,58 +478,43 @@ export const useSales = create<SalesState>((set, get) => ({
   // SaleDetail "Create Shipment" button guard (`!sale.shipmentId`) stays as a
   // soft client-side hint only (it won't reflect server state after rehydrate).
   addShipment: (s) => {
-    if (hasBackend()) {
-      void api('shipments.create', {
-        saleId: s.saleId || undefined,
-        saleInvoiceNo: s.saleInvoiceNo || undefined,
-        customerName: s.customerName || undefined,
-        driver: s.driver,
-        vehicleNo: s.vehicleNo,
-        trackingNo: s.trackingNo,
-        status: s.status,
-        address: s.address,
-        targetDate: s.targetDate,
-        notes: s.notes,
-        branchId: 'br_mp',
-        userId: CURRENT_USER,
-      })
-        .then(() => get().hydrate())
-        .catch((e: unknown) => {
-          toast.error(e instanceof Error ? e.message : 'Failed to save shipment');
-          void get().hydrate();
-        });
-      return;
-    }
-    set((st) => ({
-      shipments: [s, ...st.shipments],
-      sales: st.sales.map((sale) =>
-        sale.id === s.saleId
-          ? { ...sale, shipmentId: s.id, audit: [...sale.audit, { id: 'a_' + Date.now(), at: new Date().toISOString(), by: 'Seam', action: 'shipped' }] }
-          : sale,
-      ),
-    }));
+    void api('shipments.create', {
+      saleId: s.saleId || undefined,
+      saleInvoiceNo: s.saleInvoiceNo || undefined,
+      customerName: s.customerName || undefined,
+      driver: s.driver,
+      vehicleNo: s.vehicleNo,
+      trackingNo: s.trackingNo,
+      status: s.status,
+      address: s.address,
+      targetDate: s.targetDate,
+      notes: s.notes,
+      branchId: 'br_mp',
+      userId: CURRENT_USER,
+    })
+      .then(() => get().hydrate())
+      .catch((e: unknown) => {
+        toast.error(e instanceof Error ? e.message : 'Failed to save shipment');
+        void get().hydrate();
+      });
   },
   updateShipment: (id, patch) => {
-    if (hasBackend()) {
-      void api('shipments.update', {
-        id,
-        patch: {
-          status: patch.status,
-          driver: patch.driver,
-          vehicleNo: patch.vehicleNo,
-          trackingNo: patch.trackingNo,
-          address: patch.address,
-          targetDate: patch.targetDate,
-          notes: patch.notes,
-        },
-      })
-        .then(() => get().hydrate())
-        .catch((e: unknown) => {
-          toast.error(e instanceof Error ? e.message : 'Failed to update shipment');
-          void get().hydrate();
-        });
-      return;
-    }
-    set((st) => ({ shipments: st.shipments.map((s) => (s.id === id ? { ...s, ...patch } : s)) }));
+    void api('shipments.update', {
+      id,
+      patch: {
+        status: patch.status,
+        driver: patch.driver,
+        vehicleNo: patch.vehicleNo,
+        trackingNo: patch.trackingNo,
+        address: patch.address,
+        targetDate: patch.targetDate,
+        notes: patch.notes,
+      },
+    })
+      .then(() => get().hydrate())
+      .catch((e: unknown) => {
+        toast.error(e instanceof Error ? e.message : 'Failed to update shipment');
+        void get().hydrate();
+      });
   },
 }));

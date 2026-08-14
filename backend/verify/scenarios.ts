@@ -9,7 +9,7 @@ import { seedMaster } from '../seed/master.ts';
 import { Suite } from './assert.ts';
 import { round2 } from '../core/money.ts';
 import { recordMovement, stockOnHand, weightedAvgCost } from '../services/stock.ts';
-import { createSale, addSalePayment, voidSale, deleteSale } from '../services/sales.ts';
+import { createSale, updateSale, addSalePayment, voidSale, deleteSale } from '../services/sales.ts';
 import { createPurchase, addPurchasePayment, cancelPurchase, deletePurchase } from '../services/purchases.ts';
 import { createSellReturn, createPurchaseReturn } from '../services/returns.ts';
 import { createShipment, updateShipment, deleteShipment } from '../services/shipments.ts';
@@ -27,6 +27,9 @@ import {
   createProduct,
   updateProduct,
   deleteProduct,
+  archiveProduct,
+  unarchiveProduct,
+  productUsage,
   createWarranty,
   updateWarranty,
   deleteWarranty,
@@ -67,7 +70,14 @@ import {
   setSetting,
   getAllSettings,
 } from '../services/settings.ts';
-import { listAgents, listWarranties, listPriceGroups, listShipments } from '../services/queries.ts';
+import {
+  listAgents,
+  listWarranties,
+  listPriceGroups,
+  listShipments,
+  listProducts,
+  getProduct,
+} from '../services/queries.ts';
 import {
   hashSecret,
   verifySecret,
@@ -403,6 +413,73 @@ export function runScenarios(s: Suite) {
     }
     s.ok('delete blocked by document history', blockedByHistory);
 
+    // ---- the "Update Price & Stock" popup path ----
+    // The UI lets the owner type a COUNTED quantity, but stock is
+    // SUM(stock_movements.qty) and can only move via a signed movement. So the
+    // popup posts a `recount` adjustment for the DIFFERENCE. These checks pin
+    // that arithmetic down, in both directions, plus the reason the popup has to
+    // exist: `updateProduct` has no stock column and silently ignores it.
+    s.section('quick-price-stock-update');
+    const qid = createProduct(db, {
+      sku: 'TEST-QUICK',
+      name: 'Quick Update Item',
+      cost: 100,
+      price: 150,
+      unit: 'pc',
+      openingStock: 24,
+      branchId: 'br_mp',
+      userId: 'u_admin',
+    }).id;
+    s.money('opening stock recorded', stockOnHand(db, qid, 'br_mp'), 24);
+
+    // Price-only patch, exactly as the popup sends it.
+    updateProduct(db, qid, { price: 165 });
+    const afterPrice = db.prepare('SELECT price, cost FROM products WHERE id = ?').get(qid) as {
+      price: number;
+      cost: number;
+    };
+    s.money('price-only patch applies', afterPrice.price, 165);
+    s.money('price-only patch leaves cost alone', afterPrice.cost, 100);
+
+    // THE TRAP the popup exists to avoid: stock is not a column, so passing it
+    // to updateProduct changes nothing (and must not throw).
+    updateProduct(db, qid, { stock: 999 } as never);
+    s.money('updateProduct cannot change stock', stockOnHand(db, qid, 'br_mp'), 24);
+
+    // Counted MORE than the system thought: 30 vs 24 → +6.
+    const countedUp = 30;
+    createAdjustment(db, {
+      branchId: 'br_mp',
+      type: 'recount',
+      reason: 'counted in shop',
+      lines: [{ productId: qid, qty: countedUp - stockOnHand(db, qid, 'br_mp') }],
+      createdBy: 'u_admin',
+    });
+    s.money('recount up lands on the counted number', stockOnHand(db, qid, 'br_mp'), countedUp);
+
+    // Counted FEWER: 18 vs 30 → −12.
+    const countedDown = 18;
+    createAdjustment(db, {
+      branchId: 'br_mp',
+      type: 'recount',
+      reason: 'counted in shop',
+      lines: [{ productId: qid, qty: countedDown - stockOnHand(db, qid, 'br_mp') }],
+      createdBy: 'u_admin',
+    });
+    s.money('recount down lands on the counted number', stockOnHand(db, qid, 'br_mp'), countedDown);
+    s.gte('stock never goes negative on a recount', stockOnHand(db, qid, 'br_mp'), 0);
+
+    // The correction is auditable — that is the whole point of doing it this way
+    // rather than overwriting a number.
+    const recounts = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM stock_movements
+          WHERE product_id = ? AND reason = 'recount' AND ref_type = 'adjustment'`,
+      )
+      .get(qid) as { n: number };
+    s.eq('each correction leaves an adjustment movement', recounts.n, 2);
+    s.section('catalog');
+
     // a clean product (no stock, no history) deletes successfully
     const clean = createProduct(db, {
       sku: 'TEST-CLEAN',
@@ -410,9 +487,432 @@ export function runScenarios(s: Suite) {
       cost: 10,
       price: 20,
     });
+    s.ok('a product with no documents reports deletable', productUsage(db, clean.id).deletable);
     deleteProduct(db, clean.id);
     const gone = db.prepare('SELECT COUNT(*) c FROM products WHERE id = ?').get(clean.id) as { c: number };
     s.eq('clean product deleted', gone.c, 0);
+
+    // ---- delete guards: stock is overridable, documents are NOT ----
+    // A product with leftover stock but no documents. Refused by default (so the
+    // owner is told), deleted with force (Admin), because nothing outlives it.
+    const stocked = createProduct(db, {
+      sku: 'TEST-STOCKED',
+      name: 'Left On The Shelf',
+      cost: 5,
+      price: 9,
+      openingStock: 12,
+      branchId: 'br_mp',
+      userId: 'u_admin',
+    });
+    s.money('stocked product has stock', stockOnHand(db, stocked.id, 'br_mp'), 12);
+    let stockGuard = '';
+    try {
+      deleteProduct(db, stocked.id);
+    } catch (e) {
+      stockGuard = e instanceof Error ? e.message : String(e);
+    }
+    s.ok('delete is refused while the product still has stock', stockGuard.includes('still has'));
+    s.ok(
+      'the product survives the refused delete',
+      !!db.prepare('SELECT id FROM products WHERE id = ?').get(stocked.id),
+    );
+    deleteProduct(db, stocked.id, { force: true });
+    s.eq(
+      'force delete removes a stocked product',
+      (db.prepare('SELECT COUNT(*) c FROM products WHERE id = ?').get(stocked.id) as { c: number }).c,
+      0,
+    );
+    s.eq(
+      'force delete leaves no orphan stock movements',
+      (
+        db.prepare('SELECT COUNT(*) c FROM stock_movements WHERE product_id = ?').get(stocked.id) as {
+          c: number;
+        }
+      ).c,
+      0,
+    );
+
+    // Give p1 a document reference: sell some. That is what makes it
+    // undeletable, and it is the ordinary case in a shop that has been trading.
+    createSale(db, {
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      lines: [{ productId: 'p1', qty: 2, spr: 500 }],
+      payments: [{ method: 'Cash', amount: 1000 }],
+    });
+    const soldUsage = productUsage(db, 'p1');
+    s.gt('a sold product reports document references', soldUsage.documentCount, 0);
+    s.ok('a sold product is NOT deletable', !soldUsage.deletable);
+    let docGuard = '';
+    try {
+      deleteProduct(db, 'p1', { force: true });
+    } catch (e) {
+      docGuard = e instanceof Error ? e.message : String(e);
+    }
+    s.ok('force does NOT override the document guard', docGuard.includes('sales history'));
+    s.ok('the refusal points at archiving instead', docGuard.toLowerCase().includes('archive'));
+    s.ok(
+      'the sold product survives',
+      !!db.prepare('SELECT id FROM products WHERE id = ?').get('p1'),
+    );
+
+    // ---- archive is the answer, and it is reversible ----
+    const salesBefore = (
+      db.prepare('SELECT COUNT(*) c FROM sale_lines WHERE product_id = ?').get('p1') as { c: number }
+    ).c;
+    archiveProduct(db, 'p1', 'u_admin');
+    s.ok('archive sets archived_at', productUsage(db, 'p1').archived);
+    const productIds = (opts?: { includeArchived?: boolean; archivedOnly?: boolean }): string[] =>
+      (listProducts(db, opts) as unknown as { id: string }[]).map((p) => p.id);
+    s.eq(
+      'an archived product is out of the catalogue list',
+      productIds().filter((id) => id === 'p1').length,
+      0,
+    );
+    s.eq(
+      'an archived product is still fetchable by id (past documents resolve)',
+      (getProduct(db, 'p1') as { id: string } | null)?.id ?? '',
+      'p1',
+    );
+    s.eq(
+      'archiving destroys no sales history',
+      (db.prepare('SELECT COUNT(*) c FROM sale_lines WHERE product_id = ?').get('p1') as { c: number })
+        .c,
+      salesBefore,
+    );
+    s.eq(
+      'an archived product cannot reach the POS',
+      (db.prepare('SELECT show_in_pos FROM products WHERE id = ?').get('p1') as { show_in_pos: number })
+        .show_in_pos,
+      0,
+    );
+    s.eq(
+      'an archived product is out of the search index',
+      (
+        db.prepare('SELECT COUNT(*) c FROM fts_products WHERE product_id = ?').get('p1') as {
+          c: number;
+        }
+      ).c,
+      0,
+    );
+    s.eq(
+      'archivedOnly lists exactly the archived product',
+      productIds({ archivedOnly: true }).join(','),
+      'p1',
+    );
+    s.gt(
+      'includeArchived brings it back into the list',
+      productIds({ includeArchived: true }).filter((id) => id === 'p1').length,
+      0,
+    );
+
+    unarchiveProduct(db, 'p1', 'u_admin');
+    s.ok('unarchive clears archived_at', !productUsage(db, 'p1').archived);
+    s.gt('the restored product is back in the catalogue', productIds().filter((id) => id === 'p1').length, 0);
+    s.eq(
+      'the restored product is back in the search index',
+      (
+        db.prepare('SELECT COUNT(*) c FROM fts_products WHERE product_id = ?').get('p1') as {
+          c: number;
+        }
+      ).c,
+      1,
+    );
+    db.close();
+  }
+
+  // ---------- Scenario: EDIT a finalized sale ----------
+  // The rookie-cashier case: an invoice is finalized with the wrong amount and
+  // has to be corrected. The correction must reverse the original stock and cash
+  // and re-apply the new figures, keeping the invoice number, with the net effect
+  // being exactly the difference — and all of it visible as appended movements.
+  s.section('scenario-sale-edit');
+  {
+    const db = fresh();
+    const shiftId = openShift(db, { branchId: 'br_mp', userId: 'u_admin', openingCash: 10000 });
+    const stockBefore = stockOnHand(db, 'p1', 'br_mp');
+    const drawerBefore = shiftTotals(db, shiftId).expected;
+    // Relative, not absolute: the seeded customer may carry an opening balance,
+    // and this scenario is about what the EDIT changes.
+    const dueBefore = customerDue(db, 'cu2');
+
+    // Wrong sale: 10 units at 500, fully paid in cash.
+    const wrong = createSale(db, {
+      branchId: 'br_mp',
+      userId: 'u_rana',
+      customerId: 'cu2',
+      lines: [{ productId: 'p1', qty: 10, spr: 500 }],
+      payments: [{ method: 'Cash', amount: 5000 }],
+    });
+    s.money('the wrong sale totals 5000', wrong.totals.total, 5000);
+    s.money('stock left the shelf', stockOnHand(db, 'p1', 'br_mp'), stockBefore - 10);
+    s.money('cash went into the drawer', shiftTotals(db, shiftId).expected, drawerBefore + 5000);
+
+    // ---- guards ----
+    let noReason = '';
+    try {
+      updateSale(db, wrong.id, {
+        branchId: 'br_mp',
+        userId: 'u_admin',
+        lines: [{ productId: 'p1', qty: 4, spr: 500 }],
+        reason: '   ',
+      });
+    } catch (e) {
+      noReason = e instanceof Error ? e.message : String(e);
+    }
+    s.ok('an edit without a reason is refused', noReason.includes('reason is required'));
+
+    let noLines = '';
+    try {
+      updateSale(db, wrong.id, {
+        branchId: 'br_mp',
+        userId: 'u_admin',
+        lines: [],
+        reason: 'emptying it',
+      });
+    } catch (e) {
+      noLines = e instanceof Error ? e.message : String(e);
+    }
+    s.ok('an edit cannot empty the sale', noLines.includes('at least one line'));
+
+    let toVoid = '';
+    try {
+      updateSale(db, wrong.id, {
+        status: 'void',
+        branchId: 'br_mp',
+        userId: 'u_admin',
+        lines: [{ productId: 'p1', qty: 4, spr: 500 }],
+        reason: 'sneaky void',
+      });
+    } catch (e) {
+      toVoid = e instanceof Error ? e.message : String(e);
+    }
+    s.ok('an edit cannot be used to void a sale', toVoid.includes('sales.void'));
+
+    s.money('a refused edit changed no stock', stockOnHand(db, 'p1', 'br_mp'), stockBefore - 10);
+    s.money('a refused edit changed no cash', shiftTotals(db, shiftId).expected, drawerBefore + 5000);
+
+    // ---- the correction: it was really 4 units at 450, paid 1800 cash ----
+    const fixed = updateSale(db, wrong.id, {
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      customerId: 'cu2',
+      lines: [{ productId: 'p1', qty: 4, spr: 450 }],
+      payments: [{ method: 'Cash', amount: 1800 }],
+      reason: 'cashier typed the wrong quantity and price',
+    });
+
+    s.eq('the sale keeps its id', fixed.id, wrong.id);
+    s.eq('the sale keeps its invoice number', fixed.invoiceNo, wrong.invoiceNo);
+    s.money('the corrected total is 1800', fixed.totals.total, 1800);
+    s.money('the previous total is reported back', fixed.previousTotal, 5000);
+    s.eq(
+      'exactly one sale row still exists for that invoice',
+      (
+        db.prepare('SELECT COUNT(*) c FROM sales WHERE invoice_no = ?').get(wrong.invoiceNo) as {
+          c: number;
+        }
+      ).c,
+      1,
+    );
+    s.eq('the sale is still final', (db.prepare('SELECT status FROM sales WHERE id = ?').get(wrong.id) as { status: string }).status, 'final');
+
+    // NET effect is the difference, not a doubling and not a wipe.
+    s.money('stock nets to the corrected quantity', stockOnHand(db, 'p1', 'br_mp'), stockBefore - 4);
+    s.money('the drawer nets to the corrected cash', shiftTotals(db, shiftId).expected, drawerBefore + 1800);
+
+    // The identity that must never break: stock is the SUM of its movements.
+    const movementSum = (
+      db
+        .prepare(
+          "SELECT COALESCE(SUM(qty),0) AS s FROM stock_movements WHERE product_id = 'p1' AND branch_id = 'br_mp'",
+        )
+        .get() as { s: number }
+    ).s;
+    s.money('stock still equals SUM(stock_movements)', stockOnHand(db, 'p1', 'br_mp'), round2(movementSum));
+
+    // The correction is auditable movement by movement, and is NOT disguised as
+    // a customer return.
+    s.eq(
+      'the reversal is recorded as a sale_edit movement',
+      (
+        db
+          .prepare("SELECT COUNT(*) c FROM stock_movements WHERE ref_id = ? AND reason = 'sale_edit'")
+          .get(wrong.id) as { c: number }
+      ).c,
+      1,
+    );
+    s.eq(
+      'the edit did not fake a customer return',
+      (
+        db
+          .prepare("SELECT COUNT(*) c FROM stock_movements WHERE ref_id = ? AND reason = 'sale_return'")
+          .get(wrong.id) as { c: number }
+      ).c,
+      0,
+    );
+    s.eq(
+      'the corrected line produced a fresh sale movement',
+      (
+        db
+          .prepare("SELECT COUNT(*) c FROM stock_movements WHERE ref_id = ? AND reason = 'sale'")
+          .get(wrong.id) as { c: number }
+      ).c,
+      2, // the original one, plus the re-applied one
+    );
+
+    // Lines and payments are REPLACED, not appended to.
+    s.eq(
+      'the old lines are gone',
+      (db.prepare('SELECT COUNT(*) c FROM sale_lines WHERE sale_id = ?').get(wrong.id) as { c: number })
+        .c,
+      1,
+    );
+    s.money(
+      'the line holds the corrected quantity',
+      (db.prepare('SELECT qty FROM sale_lines WHERE sale_id = ?').get(wrong.id) as { qty: number }).qty,
+      4,
+    );
+    s.eq(
+      'the old payments are gone',
+      (
+        db.prepare('SELECT COUNT(*) c FROM sale_payments WHERE sale_id = ?').get(wrong.id) as {
+          c: number;
+        }
+      ).c,
+      1,
+    );
+
+    // Derived money on the header is recomputed, never patched.
+    const header = db.prepare('SELECT paid, due, total, cogs, profit FROM sales WHERE id = ?').get(wrong.id) as {
+      paid: number;
+      due: number;
+      total: number;
+      cogs: number;
+      profit: number;
+    };
+    s.money('paid is recomputed', header.paid, 1800);
+    s.money('due is recomputed', header.due, 0);
+    s.money('COGS is recomputed for the new quantity', header.cogs, round2(4 * weightedAvgCost(db, 'p1')));
+    s.money('profit agrees with total − COGS', header.profit, round2(1800 - header.cogs));
+
+    // The customer's balance follows from the corrected invoice.
+    s.money('a fully paid correction adds nothing to what they owe', customerDue(db, 'cu2'), dueBefore);
+
+    // The audit trail explains itself.
+    const audit = db
+      .prepare("SELECT by_user, note FROM sale_audit WHERE sale_id = ? AND action = 'edited'")
+      .all(wrong.id) as { by_user: string; note: string }[];
+    s.eq('exactly one edit is recorded', audit.length, 1);
+    s.eq('the edit records who made it', audit[0]?.by_user ?? '', 'u_admin');
+    s.ok('the edit records why', (audit[0]?.note ?? '').includes('wrong quantity'));
+    s.ok('the edit records the money that changed', (audit[0]?.note ?? '').includes('5000'));
+
+    // ---- an underpaid correction leaves a real due ----
+    updateSale(db, wrong.id, {
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      customerId: 'cu2',
+      lines: [{ productId: 'p1', qty: 4, spr: 450 }],
+      payments: [{ method: 'Cash', amount: 1000 }],
+      reason: 'customer paid part in cash only',
+    });
+    s.money('the shortfall becomes a due', customerDue(db, 'cu2'), round2(dueBefore + 800));
+    s.money('stock is unchanged when only the payment changes', stockOnHand(db, 'p1', 'br_mp'), stockBefore - 4);
+    s.money('the drawer follows the corrected payment', shiftTotals(db, shiftId).expected, drawerBefore + 1000);
+    s.eq(
+      'each edit appends its own audit row',
+      (
+        db
+          .prepare("SELECT COUNT(*) c FROM sale_audit WHERE sale_id = ? AND action = 'edited'")
+          .get(wrong.id) as { c: number }
+      ).c,
+      2,
+    );
+
+    // ---- a voided sale can never be edited ----
+    voidSale(db, wrong.id, 'u_admin', 'test void');
+    let voidEdit = '';
+    try {
+      updateSale(db, wrong.id, {
+        branchId: 'br_mp',
+        userId: 'u_admin',
+        lines: [{ productId: 'p1', qty: 1, spr: 100 }],
+        reason: 'trying to resurrect it',
+      });
+    } catch (e) {
+      voidEdit = e instanceof Error ? e.message : String(e);
+    }
+    s.ok('a voided sale cannot be edited', voidEdit.includes('voided sale cannot be edited'));
+    s.money('voiding after an edit returns exactly what was still out', stockOnHand(db, 'p1', 'br_mp'), stockBefore);
+
+    db.close();
+  }
+
+  // ---------- Scenario: EDIT a draft, then convert it to a final sale ----------
+  // Drafts never touched stock or cash, so editing one must not reverse anything;
+  // converting it to final must apply the side effects exactly once.
+  s.section('scenario-draft-edit');
+  {
+    const db = fresh();
+    const shiftId = openShift(db, { branchId: 'br_mp', userId: 'u_admin', openingCash: 1000 });
+    const stockBefore = stockOnHand(db, 'p1', 'br_mp');
+    const drawerBefore = shiftTotals(db, shiftId).expected;
+
+    const draft = createSale(db, {
+      status: 'draft',
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      lines: [{ productId: 'p1', qty: 3, spr: 400 }],
+    });
+    s.money('a draft moves no stock', stockOnHand(db, 'p1', 'br_mp'), stockBefore);
+
+    updateSale(db, draft.id, {
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      lines: [{ productId: 'p1', qty: 5, spr: 400 }],
+      reason: 'customer wanted more',
+    });
+    s.money('editing a draft still moves no stock', stockOnHand(db, 'p1', 'br_mp'), stockBefore);
+    s.eq(
+      'editing a draft keeps its number',
+      (db.prepare('SELECT invoice_no FROM sales WHERE id = ?').get(draft.id) as { invoice_no: string })
+        .invoice_no,
+      draft.invoiceNo,
+    );
+    s.money(
+      'an edited draft still carries no due',
+      (db.prepare('SELECT due FROM sales WHERE id = ?').get(draft.id) as { due: number }).due,
+      0,
+    );
+
+    // Convert to final — side effects apply once, for the edited quantity.
+    updateSale(db, draft.id, {
+      status: 'final',
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      lines: [{ productId: 'p1', qty: 5, spr: 400 }],
+      payments: [{ method: 'Cash', amount: 2000 }],
+      reason: 'confirmed at the counter',
+    });
+    s.money('converting a draft moves stock exactly once', stockOnHand(db, 'p1', 'br_mp'), stockBefore - 5);
+    s.money('converting a draft takes the cash once', shiftTotals(db, shiftId).expected, drawerBefore + 2000);
+    // Two edits happened; both land in the same ISO millisecond, so look across
+    // the rows rather than trusting an ORDER BY on a tied timestamp.
+    const draftNotes = (
+      db
+        .prepare("SELECT note FROM sale_audit WHERE sale_id = ? AND action = 'edited'")
+        .all(draft.id) as { note: string }[]
+    ).map((r) => r.note);
+    s.eq('both edits are recorded', draftNotes.length, 2);
+    s.ok(
+      'the status change is in the audit note',
+      draftNotes.some((n) => n.includes('draft → final')),
+    );
+    s.ok(
+      'an edit that did not change status says nothing about status',
+      draftNotes.some((n) => !n.includes('→ final') && n.includes('customer wanted more')),
+    );
     db.close();
   }
 
@@ -1247,10 +1747,46 @@ export function runScenarios(s: Suite) {
     ) as { name: string; paperWidth: number; isDefault: boolean }[];
     s.eq('printer profile persisted', printers.length, 1);
     s.eq('printer name persisted', printers[0].name, 'Front Counter');
+    // The wizard's cloud toggle sets the backup SCHEDULE. It used to write a
+    // `cloudProvider: 'supabase'` field for a provider integration that never
+    // existed; backups are now real (verified `VACUUM INTO` snapshots into a
+    // folder the owner's own cloud client syncs), and the folder is chosen after
+    // this transaction because it needs the Electron layer + the session that
+    // setup.complete creates. See backend/services/backup.ts.
     const backup = JSON.parse(
       (db.prepare("SELECT value FROM settings_kv WHERE key = 'backup'").get() as { value: string }).value,
-    ) as { cloudProvider: string; autoBackup: string };
-    s.eq('cloud backup provider persisted', backup.cloudProvider, 'supabase');
+    ) as { auto: string; keep: number; folder: string };
+    s.eq('opting into cloud schedules a backup at shift close', backup.auto, 'on-shift-close');
+    s.gte('a retention count is set', backup.keep, 1);
+    s.eq('the folder is left for the app layer to resolve', backup.folder, '');
+
+    // ---- the login screen's data contract ----
+    // The PIN login screen lists accounts from `users.list`. If that read ever
+    // returns nothing (or nothing ACTIVE) there is no account to pick and the
+    // shop is locked out of its own till — which is exactly what happened when
+    // the screen relied on a store nothing had hydrated. `users.list` is also a
+    // deliberately OPEN read (not in CHANNEL_PERMISSIONS) precisely so it works
+    // before anyone is signed in; these checks pin that contract down.
+    const loginUsers = db
+      .prepare("SELECT id, name, status FROM users WHERE status = 'active'")
+      .all() as { id: string; name: string; status: string }[];
+    s.gte('an active account exists to sign in with', loginUsers.length, 1);
+    s.ok(
+      'the configured owner is among the active accounts',
+      loginUsers.some((u) => u.id === 'u_admin'),
+    );
+    s.ok(
+      'every active account has a display name for the chooser',
+      loginUsers.every((u) => !!u.name && u.name.trim().length > 0),
+    );
+    // The PIN must be verifiable but never readable — the login screen used to
+    // infer PIN LENGTH from a `pin` field, which does not (and must not) exist.
+    const ownerRow = db.prepare('SELECT * FROM users WHERE id = ?').get('u_admin') as Record<
+      string,
+      unknown
+    >;
+    s.ok('the owner row exposes no plaintext pin column', !('pin' in ownerRow));
+    s.ok('the owner pin is stored hashed', typeof ownerRow.pin_hash === 'string' && (ownerRow.pin_hash as string).length > 20);
 
     // Run-once latch is set.
     s.ok('setup_complete latch set', isSetupComplete(db) === true);

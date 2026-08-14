@@ -61,8 +61,27 @@ export default {
         sm: 'calc(var(--radius) - 4px)',
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'ui-monospace', 'monospace'],
+        // No webfonts are downloaded (see index.html). Everything after the
+        // first entry ships with Windows, so the app looks the same offline.
+        sans: ['Inter', 'Hind Siliguri', 'Noto Sans Bengali', 'system-ui', 'Segoe UI', 'sans-serif'],
+        mono: ['JetBrains Mono', 'Consolas', 'ui-monospace', 'monospace'],
+      },
+      /**
+       * LEGIBILITY SCALE — the shop owner is elderly, so every step is bumped
+       * roughly 2px over the Tailwind default and expressed in rem so the
+       * Settings → Appearance font-scale slider still multiplies it.
+       * (Tailwind default for reference: xs 12 · sm 14 · base 16 · lg 18 · xl 20)
+       */
+      fontSize: {
+        '2xs': ['0.75rem', { lineHeight: '1.05rem' }], //  12px (was ~10px)
+        xs: ['0.875rem', { lineHeight: '1.25rem' }], //   14px (was 12px)
+        sm: ['1rem', { lineHeight: '1.45rem' }], //       16px (was 14px)
+        base: ['1.0625rem', { lineHeight: '1.6rem' }], // 17px (was 16px)
+        lg: ['1.1875rem', { lineHeight: '1.75rem' }], //  19px (was 18px)
+        xl: ['1.3125rem', { lineHeight: '1.9rem' }], //   21px (was 20px)
+        '2xl': ['1.5625rem', { lineHeight: '2.1rem' }], //25px (was 24px)
+        '3xl': ['1.875rem', { lineHeight: '2.35rem' }], //30px
+        '4xl': ['2.25rem', { lineHeight: '2.6rem' }], //  36px
       },
       keyframes: {
         'fade-in': { '0%': { opacity: '0' }, '100%': { opacity: '1' } },

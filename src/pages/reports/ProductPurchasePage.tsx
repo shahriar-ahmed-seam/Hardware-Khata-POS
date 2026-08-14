@@ -1,15 +1,14 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Search, Package } from 'lucide-react';
 import {
   ReportToolbar,
   DEFAULT_RANGE,
-  isInRange,
   type DateRange,
 } from '@/components/reports/ReportToolbar';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
-import { usePurchases } from '@/stores/purchases';
-import { products as ALL_PRODUCTS, categories as ALL_CATEGORIES } from '@/mocks/data';
+import { useCategories } from '@/hooks/useCatalog';
 import { useReport, useBranchId } from '@/hooks/useReport';
 import { hasBackend } from '@/lib/api';
 import { formatBDT, formatNumber } from '@/lib/utils';
@@ -47,7 +46,7 @@ interface BackendProductRow {
 }
 
 export default function ProductPurchasePage() {
-  const purchases = usePurchases((s) => s.purchases);
+  const nav = useNavigate();
   const [range, setRange] = useState<DateRange>(DEFAULT_RANGE);
   const [branch, setBranch] = useState('');
   const [q, setQ] = useState('');
@@ -55,7 +54,7 @@ export default function ProductPurchasePage() {
 
   // Backend wiring: aggregated rows + product catalog (once) for category join.
   const branchId = useBranchId(branch);
-  const { data: beRows, loading, backend, error } = useReport<BackendPurchaseRow[]>(
+  const { data: beRows, loading, error } = useReport<BackendPurchaseRow[]>(
     'reports.productPurchase',
     hasBackend() ? { range, branchId } : null,
     [range, branchId],
@@ -66,57 +65,17 @@ export default function ProductPurchasePage() {
     [],
   );
 
-  const mockRows = useMemo(() => {
-    const fPurchases = purchases.filter(
-      (p) => p.status !== 'cancelled' && isInRange(p.date, range) && (!branch || p.branch === branch),
-    );
-
-    const map = new Map<string, Row>();
-    for (const purchase of fPurchases) {
-      for (const line of purchase.lines) {
-        const product = ALL_PRODUCTS.find((p) => p.sku === line.sku || p.id === line.productId);
-        const productId = product?.id ?? line.productId;
-        const cat = product ? ALL_CATEGORIES.find((c) => c.id === product.categoryId) : undefined;
-        if (categoryId && cat?.id !== categoryId) continue;
-        const spend = line.lineTotal;
-        const existing = map.get(productId);
-        if (existing) {
-          existing.qty += line.qty;
-          existing.spend += spend;
-          existing.bills += 1;
-          existing.suppliers.add(purchase.supplierName);
-        } else {
-          map.set(productId, {
-            productId,
-            name: product?.name ?? line.name,
-            sku: line.sku,
-            category: cat?.name ?? '—',
-            qty: line.qty,
-            spend,
-            avgCost: 0,
-            bills: 1,
-            suppliers: new Set([purchase.supplierName]),
-          });
-        }
-      }
-    }
-    const list = Array.from(map.values());
-    list.forEach((r) => {
-      r.avgCost = r.qty > 0 ? r.spend / r.qty : 0;
-    });
-    if (q) {
-      const t = q.toLowerCase();
-      return list.filter((r) => `${r.name} ${r.sku}`.toLowerCase().includes(t));
-    }
-    return list.sort((a, b) => b.spend - a.spend);
-  }, [purchases, range, branch, q, categoryId]);
+  // Real catalog for the category filter dropdown (backend-backed).
+  const categoriesQuery = useCategories();
+  const categories = categoriesQuery.data ?? [];
 
   // Map backend rows; join category client-side. The backend aggregation does
-  // not break spend down by supplier, so the Suppliers column is empty when
-  // backed (per-supplier rollup is a later enhancement).
+  // not break spend down by supplier, so the Suppliers column is empty (a
+  // per-supplier rollup is a later enhancement).
+  // NOTE: no mock/sample fallback — an empty backend result renders as empty.
   const backendRows: Row[] | null = useMemo(() => {
-    if (!backend || !beRows) return null;
-    const catNameById = new Map(ALL_CATEGORIES.map((c) => [c.id, c.name]));
+    if (!beRows) return null;
+    const catNameById = new Map(categories.map((c) => [c.id, c.name]));
     const prodCat = new Map<string, { id?: string; name: string }>();
     for (const p of beProducts ?? []) {
       prodCat.set(p.sku, {
@@ -147,9 +106,9 @@ export default function ProductPurchasePage() {
     return list
       .sort((a, b) => b.spend - a.spend)
       .map(({ categoryId: _omit, ...rest }) => rest);
-  }, [backend, beRows, beProducts, categoryId, q]);
+  }, [beRows, beProducts, categories, categoryId, q]);
 
-  const rows: Row[] = backend && error ? [] : (backendRows ?? mockRows);
+  const rows: Row[] = backendRows ?? [];
 
   const totals = useMemo(
     () => ({
@@ -177,7 +136,7 @@ export default function ProductPurchasePage() {
             className="h-7 rounded-md border border-input bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="">All categories</option>
-            {ALL_CATEGORIES.map((c) => (
+            {categories.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.emoji} {c.name}
               </option>
@@ -219,14 +178,14 @@ export default function ProductPurchasePage() {
           {rows.length === 0 && (
             <div className="px-4 py-12 text-center text-sm text-muted-foreground">
               <Package className="size-6 mx-auto mb-2 opacity-50" />
-              {backend && loading ? 'Loading…' : backend && error ? 'Couldn’t load — backend error. Check connection and retry.' : 'No purchases in this range.'}
+              {loading ? 'Loading…' : error ? 'Couldn’t load — backend error. Check connection and retry.' : 'No data in this range.'}
             </div>
           )}
           {rows.map((r) => (
             <div
               key={r.productId}
               className="grid grid-cols-[2fr_1fr_0.7fr_0.8fr_1fr_1.5fr_0.7fr] gap-2 px-4 py-2.5 border-b border-border last:border-b-0 hover:bg-secondary/30 cursor-pointer"
-              onClick={() => alert(`Drill: open Product ${r.sku}`)}
+              onClick={() => nav(`/products/${r.productId}`)}
             >
               <div className="min-w-0">
                 <div className="font-medium text-sm truncate">{r.name}</div>

@@ -1,19 +1,25 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState } from 'react';
 import { Users } from 'lucide-react';
 import {
   ReportToolbar,
   DEFAULT_RANGE,
-  isInRange,
   type DateRange,
 } from '@/components/reports/ReportToolbar';
 import { Card } from '@/components/ui/Card';
-import { useSales } from '@/stores/sales';
-import { useCustomers } from '@/stores/contacts';
 import { useReport, useBranchId } from '@/hooks/useReport';
 import { hasBackend } from '@/lib/api';
 import { formatBDT, formatNumber } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 
+/**
+ * One `reports.customerGroup` row — every figure now comes from the backend
+ * aggregation.
+ *
+ * This page used to merge `customerCount` / `totalDue` in from the customers
+ * store. That store became paginated (one 50-row page), which silently capped
+ * this report at 50 customers, so both figures moved into SQL. See
+ * `customerGroup()` in backend/services/reports.ts.
+ */
 interface GroupRow {
   group: string;
   customerCount: number;
@@ -24,123 +30,18 @@ interface GroupRow {
   totalDue: number;
 }
 
-/** One `reports.customerGroup` row. */
-interface BackendGroupRow {
-  group: string;
-  saleCount: number;
-  grossSales: number;
-  netSales: number;
-  avgTicket: number;
-}
-
 export default function CustomerGroupPage() {
-  const sales = useSales((s) => s.sales);
-  const customers = useCustomers((s) => s.items);
-  const hydrateCustomers = useCustomers((s) => s.hydrate);
-
   const [range, setRange] = useState<DateRange>(DEFAULT_RANGE);
   const [branch, setBranch] = useState('');
 
-  // The backend customerGroup aggregation does not include per-group customer
-  // counts or outstanding due; those are merged in from the customers store, so
-  // hydrate it on mount to populate them when this is the entry point. The mock
-  // computation path reads the sales store directly, so hydrate that too (cheap
-  // no-op without a backend).
-  useEffect(() => {
-    void hydrateCustomers();
-    void useSales.getState().hydrate();
-  }, [hydrateCustomers]);
-
-  // Backend wiring: sales metrics come from `reports.customerGroup`. Customer
-  // counts + outstanding due are NOT in that shape, so they are merged in from
-  // the customers store (range-independent figures).
   const branchId = useBranchId(branch);
-  const { data: beRows, loading, backend, error } = useReport<BackendGroupRow[]>(
+  const { data: beRows, loading, error } = useReport<GroupRow[]>(
     'reports.customerGroup',
     hasBackend() ? { range, branchId } : null,
     [range, branchId],
   );
 
-  const mockRows: GroupRow[] = useMemo(() => {
-    const fSales = sales.filter(
-      (s) => s.status === 'final' && isInRange(s.date, range) && (!branch || s.branch === branch),
-    );
-
-    const customersByGroup = new Map<string, number>();
-    customers.forEach((c) => {
-      customersByGroup.set(c.group, (customersByGroup.get(c.group) ?? 0) + 1);
-    });
-
-    const map = new Map<string, GroupRow>();
-    customers.forEach((c) => {
-      if (!map.has(c.group)) {
-        map.set(c.group, {
-          group: c.group,
-          customerCount: customersByGroup.get(c.group) ?? 0,
-          saleCount: 0,
-          grossSales: 0,
-          netSales: 0,
-          avgTicket: 0,
-          totalDue: 0,
-        });
-      }
-      const row = map.get(c.group)!;
-      row.totalDue += c.due;
-    });
-
-    fSales.forEach((sale) => {
-      const customer = customers.find((c) => c.id === sale.customerId);
-      const group = customer?.group ?? 'Retail';
-      let row = map.get(group);
-      if (!row) {
-        row = {
-          group,
-          customerCount: customersByGroup.get(group) ?? 0,
-          saleCount: 0,
-          grossSales: 0,
-          netSales: 0,
-          avgTicket: 0,
-          totalDue: 0,
-        };
-        map.set(group, row);
-      }
-      row.saleCount += 1;
-      row.grossSales += sale.subtotal;
-      row.netSales += sale.subtotal - sale.orderDiscount;
-    });
-
-    const list = Array.from(map.values());
-    list.forEach((r) => {
-      r.avgTicket = r.saleCount > 0 ? r.netSales / r.saleCount : 0;
-    });
-    list.sort((a, b) => b.netSales - a.netSales);
-    return list;
-  }, [sales, customers, range, branch]);
-
-  // Map backend rows; merge customer counts + total due from the store (those
-  // figures are not part of the backend customerGroup aggregation).
-  const backendRows: GroupRow[] | null = useMemo(() => {
-    if (!backend || !beRows) return null;
-    const countByGroup = new Map<string, number>();
-    const dueByGroup = new Map<string, number>();
-    customers.forEach((c) => {
-      countByGroup.set(c.group, (countByGroup.get(c.group) ?? 0) + 1);
-      dueByGroup.set(c.group, (dueByGroup.get(c.group) ?? 0) + c.due);
-    });
-    return beRows
-      .map((r) => ({
-        group: r.group,
-        customerCount: countByGroup.get(r.group) ?? 0,
-        saleCount: r.saleCount,
-        grossSales: r.grossSales,
-        netSales: r.netSales,
-        avgTicket: r.avgTicket,
-        totalDue: dueByGroup.get(r.group) ?? 0,
-      }))
-      .sort((a, b) => b.netSales - a.netSales);
-  }, [backend, beRows, customers]);
-
-  const rows: GroupRow[] = backend && error ? [] : (backendRows ?? mockRows);
+  const rows: GroupRow[] = useMemo(() => beRows ?? [], [beRows]);
 
   const totals = useMemo(
     () => ({
@@ -178,6 +79,11 @@ export default function CustomerGroupPage() {
           <Kpi label="Outstanding due" value={formatBDT(totals.due)} tone="warning" />
         </div>
 
+        <div className="text-xs text-muted-foreground">
+          Sales figures cover the selected date range. Customer counts and outstanding due are
+          lifetime balances across all branches.
+        </div>
+
         {/* Cards per group */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {rows.map((r) => {
@@ -213,7 +119,11 @@ export default function CustomerGroupPage() {
           {rows.length === 0 && (
             <div className="px-4 py-12 text-center text-sm text-muted-foreground">
               <Users className="size-6 mx-auto mb-2 opacity-50" />
-              {backend && loading ? 'Loading…' : backend && error ? 'Couldn’t load — backend error. Check connection and retry.' : 'No data in this range.'}
+              {loading
+                ? 'Loading…'
+                : error
+                  ? 'Couldn’t load — backend error. Check connection and retry.'
+                  : 'No data in this range.'}
             </div>
           )}
           {rows.map((r) => (

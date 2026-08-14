@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/Input';
 import { NumberField } from '@/components/ui/NumberField';
 import { Save, UserCog } from 'lucide-react';
 import { useSuppliers } from '@/stores/contacts';
-import type { Supplier } from '@/mocks/data';
+import type { Supplier } from '@/types/domain';
 import { cn } from '@/lib/utils';
 
 const TERMS: NonNullable<Supplier['paymentTerms']>[] = ['Cash', 'Net7', 'Net15', 'Net30', 'Net60'];

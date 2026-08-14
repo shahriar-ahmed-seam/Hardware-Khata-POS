@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import type { Category, Brand } from '@/mocks/data';
+import type { Category, Brand } from '@/types/domain';
 import type { UnitRecord, UnitType } from '@/stores/masterData';
 
 /** Categories + brands hooks (backend-backed), adapted to the UI's flat types. */

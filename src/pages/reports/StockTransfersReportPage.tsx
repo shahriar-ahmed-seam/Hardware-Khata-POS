@@ -8,7 +8,7 @@ import {
 } from '@/components/reports/ReportToolbar';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
-import { useStock, type TransferStatus } from '@/stores/stock';
+import { type TransferStatus } from '@/stores/stock';
 import { useBranches } from '@/stores/branches';
 import { useReport, useBranchId } from '@/hooks/useReport';
 import { hasBackend } from '@/lib/api';
@@ -52,49 +52,38 @@ interface BackendTransfer {
 }
 
 export default function StockTransfersReportPage() {
-  const transfers = useStock((s) => s.transfers);
   const [range, setRange] = useState<DateRange>(DEFAULT_RANGE);
   const [branch, setBranch] = useState('');
   const [status, setStatus] = useState<TransferStatus | ''>('');
 
   // Backend wiring: `transfers.list {}` returns all rows; status + date-range +
-  // branch filters stay client-side, matching the mock path.
+  // branch filters stay client-side because the channel takes no filter payload.
+  // BACKEND WORK NEEDED: range/branch/status filter args on `transfers.list`.
   const branchId = useBranchId(branch);
   const branches = useBranches((s) => s.items);
   const branchNameById = useMemo(
     () => new Map(branches.map((b) => [b.id, b.name])),
     [branches],
   );
-  const { data: beTransfers, loading, backend, error } = useReport<BackendTransfer[]>(
+  const { data: beTransfers, loading, error } = useReport<BackendTransfer[]>(
     'transfers.list',
     hasBackend() ? {} : null,
     [],
   );
 
+  // Backend rows only (empty until they arrive — no store fallback).
   const source: TransferRow[] = useMemo(() => {
-    // On a real backend error, do NOT fall back to the mock store — show empty.
-    if (backend && error) return [];
-    if (backend && beTransfers) {
-      return beTransfers.map((t) => ({
-        id: t.id,
-        refNo: t.ref_no,
-        date: t.date,
-        fromBranch: branchNameById.get(t.from_branch) ?? t.from_branch,
-        toBranch: branchNameById.get(t.to_branch) ?? t.to_branch,
-        status: normalizeStatus(t.status),
-        lines: t.lines.map((l) => ({ qty: l.qty, unitCost: l.unit_cost })),
-      }));
-    }
-    return transfers.map((t) => ({
+    if (!beTransfers) return [];
+    return beTransfers.map((t) => ({
       id: t.id,
-      refNo: t.refNo,
+      refNo: t.ref_no,
       date: t.date,
-      fromBranch: t.fromBranch,
-      toBranch: t.toBranch,
-      status: t.status,
-      lines: t.lines.map((l) => ({ qty: l.qty, unitCost: l.unitCost })),
+      fromBranch: branchNameById.get(t.from_branch) ?? t.from_branch,
+      toBranch: branchNameById.get(t.to_branch) ?? t.to_branch,
+      status: normalizeStatus(t.status),
+      lines: t.lines.map((l) => ({ qty: l.qty, unitCost: l.unit_cost })),
     }));
-  }, [backend, beTransfers, transfers, branchNameById, error]);
+  }, [beTransfers, branchNameById]);
 
   const filtered = useMemo(() => {
     return source
@@ -171,7 +160,11 @@ export default function StockTransfersReportPage() {
           {filtered.length === 0 && (
             <div className="px-4 py-12 text-center text-sm text-muted-foreground">
               <ArrowLeftRight className="size-6 mx-auto mb-2 opacity-50" />
-              {backend && loading ? 'Loading…' : backend && error ? 'Couldn’t load — backend error. Check connection and retry.' : 'No transfers in this range.'}
+              {loading
+                ? 'Loading…'
+                : error
+                  ? 'Couldn’t load — backend error. Check connection and retry.'
+                  : 'No transfers in this range.'}
             </div>
           )}
           {filtered.map((t) => {

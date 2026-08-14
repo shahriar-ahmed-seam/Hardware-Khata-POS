@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Plus,
@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { ColumnsPanel } from '@/components/ui/ColumnsPanel';
+import { Pagination } from '@/components/ui/Pagination';
 import { SkeletonTable } from '@/components/ui/Skeleton';
 import { useExpenses, categoryPath, type ExpenseRecord } from '@/stores/expenses';
 import {
@@ -26,10 +27,37 @@ import {
   useExpensesUI,
   type ExpenseColumn,
 } from '@/stores/expensesUI';
-import { formatBDT, cn } from '@/lib/utils';
+import { confirm } from '@/stores/confirm';
+import { formatBDT, formatNumber, cn } from '@/lib/utils';
 import { hasBackend } from '@/lib/api';
 import { AddExpenseDrawer } from '@/components/expenses/AddExpenseDrawer';
 import { NumberField } from '@/components/ui/NumberField';
+
+type DateFilter = 'all' | 'today' | 'week' | 'month';
+
+/** `YYYY-MM-DD` for a local date. */
+function ymd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * Turn a date preset into inclusive bounds for the server query.
+ *
+ * Expense dates are stored either as full ISO (seeds) or as the drawer's
+ * `YYYY-MM-DDTHH:MM` (datetime-local), so the bounds are deliberately built at
+ * day granularity — a date-only lower bound sorts before any time-of-day on that
+ * day, and `T23:59:59.999` sorts after it. This makes the chips calendar-based
+ * (today / last 7 days / last 30 days) rather than the old rolling-millisecond
+ * windows, which is what the labels always implied.
+ */
+function presetToRange(preset: DateFilter): { from?: string; to?: string } {
+  if (preset === 'all') return { from: undefined, to: undefined };
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (preset === 'week') start.setDate(start.getDate() - 6);
+  if (preset === 'month') start.setDate(start.getDate() - 29);
+  return { from: ymd(start), to: `${ymd(now)}T23:59:59.999` };
+}
 
 export default function Expenses() {
   const nav = useNavigate();
@@ -37,77 +65,72 @@ export default function Expenses() {
   const cats = useExpenses((s) => s.categories);
   const removeExpense = useExpenses((s) => s.deleteExpense);
   const loading = useExpenses((s) => s.loading);
-  const hydrate = useExpenses((s) => s.hydrate);
+  const total = useExpenses((s) => s.total);
+  const query = useExpenses((s) => s.query);
+  const loadPage = useExpenses((s) => s.loadPage);
+  const loadCategories = useExpenses((s) => s.loadCategories);
   const { columns, toggle, move, reset } = useExpensesUI();
   const backend = hasBackend();
-
-  // Mirror PurchaseReturns.tsx: hydrate from the backend on mount so the store
-  // is populated when this page is the entry point. No-op without a backend.
-  useEffect(() => {
-    void hydrate();
-  }, [hydrate]);
 
   const [q, setQ] = useState('');
   const [categoryId, setCategoryId] = useState<string | 'all'>('all');
   const [method, setMethod] = useState<string | 'all'>('all');
   const [minAmt, setMinAmt] = useState(0);
   const [maxAmt, setMaxAmt] = useState(0);
-  const [dateRange, setDateRange] = useState<'all' | 'today' | 'week' | 'month'>('all');
+  const [dateRange, setDateRange] = useState<DateFilter>('all');
   const [colsOpen, setColsOpen] = useState(false);
   const [drawerInitial, setDrawerInitial] = useState<ExpenseRecord | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  const filtered = useMemo(() => {
-    const now = Date.now();
-    return expenses
-      .filter((e) => !e.voided)
-      .filter((e) => {
-        if (q) {
-          const t = q.toLowerCase();
-          if (!`${e.note ?? ''} ${e.refNo ?? ''} ${e.reference ?? ''}`.toLowerCase().includes(t))
-            return false;
-        }
-        if (categoryId !== 'all' && e.categoryId !== categoryId) return false;
-        if (method !== 'all' && e.paymentMethod !== method) return false;
-        if (minAmt > 0 && e.amount < minAmt) return false;
-        if (maxAmt > 0 && e.amount > maxAmt) return false;
-        if (dateRange === 'today') {
-          if (new Date(e.date).toDateString() !== new Date().toDateString()) return false;
-        } else if (dateRange === 'week') {
-          if (now - new Date(e.date).getTime() > 7 * 86_400_000) return false;
-        } else if (dateRange === 'month') {
-          if (now - new Date(e.date).getTime() > 30 * 86_400_000) return false;
-        }
-        return true;
-      })
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [expenses, q, categoryId, method, minAmt, maxAmt, dateRange]);
+  // Load ONE page + the (small) category reference list on mount. Replaces the
+  // old full-table hydrate. No-op without a backend.
+  useEffect(() => {
+    void loadPage({ page: 1, categoryId: undefined, method: undefined, from: undefined, to: undefined });
+    void loadCategories();
+  }, [loadPage, loadCategories]);
 
-  const totals = useMemo(() => {
-    const all = expenses.filter((e) => !e.voided);
-    const now = new Date();
-    const thisMonth = all
-      .filter(
-        (e) =>
-          new Date(e.date).getMonth() === now.getMonth() &&
-          new Date(e.date).getFullYear() === now.getFullYear(),
-      )
-      .reduce((s, e) => s + e.amount, 0);
-    const thisYear = all
-      .filter((e) => new Date(e.date).getFullYear() === now.getFullYear())
-      .reduce((s, e) => s + e.amount, 0);
-    return {
+  // Free-text search hits the DATABASE (ref, note, category name), so it is
+  // debounced ~300ms. The first run is skipped — mount already loaded.
+  const searchMounted = useRef(false);
+  useEffect(() => {
+    if (!searchMounted.current) {
+      searchMounted.current = true;
+      return;
+    }
+    const handle = setTimeout(() => {
+      void loadPage({ q: q.trim() || undefined });
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [q, loadPage]);
+
+  /**
+   * Server already narrowed by text / category / method / date range and ordered
+   * by date DESC, and voided rows never come back. Only the amount range has no
+   * server-side field, so it stays CLIENT-side over the rows of this page.
+   */
+  const filtered = useMemo(() => {
+    if (minAmt <= 0 && maxAmt <= 0) return expenses;
+    return expenses.filter((e) => {
+      if (minAmt > 0 && e.amount < minAmt) return false;
+      if (maxAmt > 0 && e.amount > maxAmt) return false;
+      return true;
+    });
+  }, [expenses, minAmt, maxAmt]);
+
+  // These sums cover the LOADED PAGE only — the rest of the range was never
+  // fetched. Labelled "this page" in the UI; Reports has the full figures.
+  const totals = useMemo(
+    () => ({
       count: filtered.length,
       total: filtered.reduce((s, e) => s + e.amount, 0),
       cash: filtered.filter((e) => e.paymentMethod === 'Cash').reduce((s, e) => s + e.amount, 0),
       nonCash: filtered
         .filter((e) => e.paymentMethod !== 'Cash')
         .reduce((s, e) => s + e.amount, 0),
-      thisMonth,
-      thisYear,
-    };
-  }, [expenses, filtered]);
+    }),
+    [filtered],
+  );
 
   const allSelected = filtered.length > 0 && filtered.every((e) => selected.has(e.id));
   const toggleAll = () =>
@@ -128,7 +151,7 @@ export default function Expenses() {
     <div>
       <PageHeader
         title="Expenses"
-        subtitle={`${totals.count} expenses · ${formatBDT(totals.total)} total`}
+        subtitle={`${formatNumber(total)} expenses`}
         actions={
           <>
             <IconBtn title="Customize columns" onClick={() => setColsOpen(true)}>
@@ -156,13 +179,20 @@ export default function Expenses() {
       />
 
       <div className="p-6 space-y-4">
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-          <Stat label="Count" value={String(totals.count)} />
-          <Stat label="Total" value={formatBDT(totals.total)} tone="primary" />
-          <Stat label="Cash" value={formatBDT(totals.cash)} />
-          <Stat label="Non-cash" value={formatBDT(totals.nonCash)} />
-          <Stat label="This month" value={formatBDT(totals.thisMonth)} />
-          <Stat label="This year" value={formatBDT(totals.thisYear)} />
+        {/* KPI strip — PAGE-SCOPED. The old "This month" / "This year" stats were
+            dropped: they summed whatever rows happened to be loaded, which is no
+            longer the whole table, and a page-scoped year total is just wrong.
+            Reports owns full-range figures. */}
+        <div>
+          <div className="text-[11px] text-muted-foreground mb-1.5">
+            Totals for this page only. Use Reports for full-range figures.
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Stat label="Count (this page)" value={String(totals.count)} />
+            <Stat label="Total (this page)" value={formatBDT(totals.total)} tone="primary" />
+            <Stat label="Cash (this page)" value={formatBDT(totals.cash)} />
+            <Stat label="Non-cash (this page)" value={formatBDT(totals.nonCash)} />
+          </div>
         </div>
 
         <Card className="p-3 flex flex-wrap items-center gap-2">
@@ -177,7 +207,10 @@ export default function Expenses() {
           </div>
           <select
             value={categoryId}
-            onChange={(e) => setCategoryId(e.target.value)}
+            onChange={(e) => {
+              setCategoryId(e.target.value);
+              void loadPage({ categoryId: e.target.value });
+            }}
             className="h-9 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="all">All categories</option>
@@ -190,7 +223,10 @@ export default function Expenses() {
           </select>
           <select
             value={method}
-            onChange={(e) => setMethod(e.target.value)}
+            onChange={(e) => {
+              setMethod(e.target.value);
+              void loadPage({ method: e.target.value });
+            }}
             className="h-9 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="all">All methods</option>
@@ -204,7 +240,10 @@ export default function Expenses() {
             {(['all', 'today', 'week', 'month'] as const).map((s) => (
               <button
                 key={s}
-                onClick={() => setDateRange(s)}
+                onClick={() => {
+                  setDateRange(s);
+                  void loadPage(presetToRange(s));
+                }}
                 className={cn(
                   'px-3 py-1 rounded font-medium capitalize transition',
                   dateRange === s
@@ -230,6 +269,7 @@ export default function Expenses() {
               placeholder="Max"
               className="h-9 w-24 text-right"
             />
+            <span className="text-[11px] text-muted-foreground">Amount filters this page</span>
           </div>
         </Card>
 
@@ -243,8 +283,13 @@ export default function Expenses() {
             <Button
               variant="destructive"
               size="sm"
-              onClick={() => {
-                if (confirm(`Delete ${selected.size} expense(s)?`)) {
+              onClick={async () => {
+                if (
+                  await confirm({
+                    title: `Delete ${selected.size} expense(s)?`,
+                    variant: 'destructive',
+                  })
+                ) {
                   Array.from(selected).forEach(removeExpense);
                   setSelected(new Set());
                 }
@@ -334,6 +379,15 @@ export default function Expenses() {
             </table>
             )}
           </div>
+          <Pagination
+            page={query.page}
+            pageSize={query.pageSize}
+            total={total}
+            onPageChange={(page) => void loadPage({ page })}
+            onPageSizeChange={(pageSize) => void loadPage({ pageSize })}
+            label="expenses"
+            busy={loading}
+          />
         </Card>
       </div>
 

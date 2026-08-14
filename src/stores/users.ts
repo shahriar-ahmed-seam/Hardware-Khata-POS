@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { api, hasBackend } from '@/lib/api';
+import { api } from '@/lib/api';
 import { toast } from '@/stores/toast';
 import {
   toUser,
@@ -140,7 +140,13 @@ export interface Role {
   permissions: string[]; // list of permission action ids
 }
 
-const SYSTEM_ROLES: Role[] = [
+/**
+ * Built-in role → permission definitions. Kept as STATIC METADATA only: the live
+ * `roles` rows always come from the backend. These ids/permission sets are the
+ * contract the IPC permission gate and the backend seed rely on, so they must
+ * stay in sync with electron/permissions.ts and the seed.
+ */
+export const SYSTEM_ROLES: Role[] = [
   {
     id: 'role_admin',
     name: 'Admin',
@@ -153,8 +159,13 @@ const SYSTEM_ROLES: Role[] = [
     name: 'Manager',
     description: 'Day-to-day operations, no destructive settings',
     isSystem: true,
+    // Must stay in step with backend/seed/master.ts — see the note there for why
+    // each of these five is owner-only.
     permissions: ALL_PERMISSIONS.filter(
-      (p) => !['settings.users', 'settings.roles', 'settings.backup', 'products.delete'].includes(p),
+      (p) =>
+        !['settings.users', 'settings.roles', 'settings.backup', 'products.delete', 'sales.edit'].includes(
+          p,
+        ),
     ),
   },
   {
@@ -208,7 +219,7 @@ export interface User {
   username: string; // login handle
   phone?: string;
   email?: string;
-  pin?: string; // 4-6 digit cashier PIN (mock)
+  pin?: string; // 4-6 digit cashier PIN (hashed by the backend)
   passwordSet?: boolean;
   roleId: string;
   branchIds: string[]; // branches the user can operate at; empty = all
@@ -217,73 +228,7 @@ export interface User {
   createdAt: string;
 }
 
-const SEED_USERS: User[] = [
-  {
-    id: 'u_admin',
-    name: 'Seam',
-    username: 'seam',
-    phone: '01711-000001',
-    email: 'owner@hardwarepos.local',
-    pin: '1234',
-    passwordSet: true,
-    roleId: 'role_admin',
-    branchIds: [],
-    status: 'active',
-    lastLoginAt: new Date().toISOString(),
-    createdAt: new Date(Date.now() - 365 * 24 * 3600 * 1000).toISOString(),
-  },
-  {
-    id: 'u_faruq',
-    name: 'Faruq Hossain',
-    username: 'faruq',
-    phone: '01711-000002',
-    pin: '4321',
-    passwordSet: true,
-    roleId: 'role_manager',
-    branchIds: ['br_ut'],
-    status: 'active',
-    lastLoginAt: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
-    createdAt: new Date(Date.now() - 200 * 24 * 3600 * 1000).toISOString(),
-  },
-  {
-    id: 'u_rana',
-    name: 'Rana Ahmed',
-    username: 'rana',
-    phone: '01711-000003',
-    pin: '1111',
-    passwordSet: true,
-    roleId: 'role_cashier',
-    branchIds: ['br_mp'],
-    status: 'active',
-    lastLoginAt: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
-    createdAt: new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString(),
-  },
-  {
-    id: 'u_rashed',
-    name: 'Rashed Khan',
-    username: 'rashed',
-    phone: '01711-000004',
-    pin: '2222',
-    passwordSet: true,
-    roleId: 'role_stockkeeper',
-    branchIds: ['br_mp', 'br_ut'],
-    status: 'active',
-    lastLoginAt: new Date(Date.now() - 4 * 24 * 3600 * 1000).toISOString(),
-    createdAt: new Date(Date.now() - 120 * 24 * 3600 * 1000).toISOString(),
-  },
-  {
-    id: 'u_arif',
-    name: 'Arif Mia',
-    username: 'arif',
-    phone: '01711-000005',
-    roleId: 'role_cashier',
-    branchIds: ['br_dh'],
-    status: 'inactive',
-    createdAt: new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString(),
-  },
-];
-
-// ---------- Sales Commission Agents (placeholder) ----------
+// ---------- Sales Commission Agents ----------
 export interface CommissionAgent {
   id: string;
   name: string;
@@ -323,12 +268,11 @@ export const useUsers = create<State>()(
       loading: false,
 
       /**
-       * Load users, roles, and agents from the backend in one pass. No-op without
-       * backend (keeps persisted/seed). SYSTEM_ROLES/PERMISSION_GROUPS stay static
-       * metadata — only the live `roles` rows come from the backend.
+       * Load users, roles, and agents from the backend in one pass.
+       * SYSTEM_ROLES/PERMISSION_GROUPS stay static metadata — only the live
+       * `roles` rows come from the backend.
        */
       hydrate: async () => {
-        if (!hasBackend()) return;
         set({ loading: true });
         try {
           const [users, roles, agents] = await Promise.all([
@@ -348,57 +292,44 @@ export const useUsers = create<State>()(
         }
       },
 
-      roles: hasBackend() ? [] : [...SYSTEM_ROLES],
+      roles: [],
       addRole: (data) => {
+        // Optimistic id; the real backend id arrives after hydrate().
         const item: Role = { id: 'role_' + Date.now(), ...data };
-        if (hasBackend()) {
-          void api('roles.create', {
-            name: data.name,
-            description: data.description,
-            permissions: data.permissions ?? [],
-          })
-            .then(() => get().hydrate())
-            .catch((e: unknown) => {
-              toast.error(e instanceof Error ? e.message : 'Failed to save role');
-              void get().hydrate();
-            });
-          return item;
-        }
-        set((s) => ({ roles: [...s.roles, item] }));
+        void api('roles.create', {
+          name: data.name,
+          description: data.description,
+          permissions: data.permissions ?? [],
+        })
+          .then(() => get().hydrate())
+          .catch((e: unknown) => {
+            toast.error(e instanceof Error ? e.message : 'Failed to save role');
+            void get().hydrate();
+          });
         return item;
       },
       updateRole: (id, patch) => {
-        if (hasBackend()) {
-          void api('roles.update', {
-            id,
-            patch: {
-              name: patch.name,
-              description: patch.description,
-              permissions: patch.permissions,
-            },
-          })
-            .then(() => get().hydrate())
-            .catch((e: unknown) => {
-              toast.error(e instanceof Error ? e.message : 'Failed to update role');
-              void get().hydrate();
-            });
-          return;
-        }
-        set((s) => ({
-          roles: s.roles.map((r) => (r.id === id ? { ...r, ...patch } : r)),
-        }));
+        void api('roles.update', {
+          id,
+          patch: {
+            name: patch.name,
+            description: patch.description,
+            permissions: patch.permissions,
+          },
+        })
+          .then(() => get().hydrate())
+          .catch((e: unknown) => {
+            toast.error(e instanceof Error ? e.message : 'Failed to update role');
+            void get().hydrate();
+          });
       },
       removeRole: (id) => {
-        if (hasBackend()) {
-          void api('roles.delete', { id })
-            .then(() => get().hydrate())
-            .catch((e: unknown) => {
-              toast.error(e instanceof Error ? e.message : 'Failed to delete role');
-              void get().hydrate();
-            });
-          return;
-        }
-        set((s) => ({ roles: s.roles.filter((r) => r.id !== id || r.isSystem) }));
+        void api('roles.delete', { id })
+          .then(() => get().hydrate())
+          .catch((e: unknown) => {
+            toast.error(e instanceof Error ? e.message : 'Failed to delete role');
+            void get().hydrate();
+          });
       },
       toggleRolePermission: (roleId, permId) => {
         // Role permission edits persist the FULL permissions array via roles.update.
@@ -410,140 +341,106 @@ export const useUsers = create<State>()(
         get().setRolePermissions(roleId, next);
       },
       setRolePermissions: (roleId, perms) => {
-        if (hasBackend()) {
-          void api('roles.update', { id: roleId, patch: { permissions: perms } })
-            .then(() => get().hydrate())
-            .catch((e: unknown) => {
-              toast.error(e instanceof Error ? e.message : 'Failed to update permissions');
-              void get().hydrate();
-            });
-          return;
-        }
-        set((s) => ({
-          roles: s.roles.map((r) => (r.id === roleId ? { ...r, permissions: perms } : r)),
-        }));
+        void api('roles.update', { id: roleId, patch: { permissions: perms } })
+          .then(() => get().hydrate())
+          .catch((e: unknown) => {
+            toast.error(e instanceof Error ? e.message : 'Failed to update permissions');
+            void get().hydrate();
+          });
       },
 
-      users: hasBackend() ? [] : [...SEED_USERS],
+      users: [],
       addUser: (data) => {
+        // NOTE: optimistic id; the real backend id arrives after rehydrate.
         const item: User = {
           id: 'u_' + Date.now(),
           createdAt: new Date().toISOString(),
           ...data,
         };
-        if (hasBackend()) {
-          // NOTE: optimistic id; the real backend id arrives after rehydrate.
-          void api('users.create', {
-            name: data.name,
-            username: data.username,
-            phone: data.phone,
-            email: data.email,
-            pin: data.pin,
-            roleId: data.roleId,
-            branchIds: data.branchIds,
-            status: data.status,
-            lastLoginAt: data.lastLoginAt,
-          })
-            .then(() => get().hydrate())
-            .catch((e: unknown) => {
-              toast.error(e instanceof Error ? e.message : 'Failed to save user');
-              void get().hydrate();
-            });
-          return item;
-        }
-        set((s) => ({ users: [...s.users, item] }));
+        void api('users.create', {
+          name: data.name,
+          username: data.username,
+          phone: data.phone,
+          email: data.email,
+          pin: data.pin,
+          roleId: data.roleId,
+          branchIds: data.branchIds,
+          status: data.status,
+          lastLoginAt: data.lastLoginAt,
+        })
+          .then(() => get().hydrate())
+          .catch((e: unknown) => {
+            toast.error(e instanceof Error ? e.message : 'Failed to save user');
+            void get().hydrate();
+          });
         return item;
       },
       updateUser: (id, patch) => {
-        if (hasBackend()) {
-          void api('users.update', {
-            id,
-            patch: {
-              name: patch.name,
-              username: patch.username,
-              phone: patch.phone,
-              email: patch.email,
-              pin: patch.pin,
-              roleId: patch.roleId,
-              branchIds: patch.branchIds,
-              status: patch.status,
-              lastLoginAt: patch.lastLoginAt,
-            },
-          })
-            .then(() => get().hydrate())
-            .catch((e: unknown) => {
-              toast.error(e instanceof Error ? e.message : 'Failed to update user');
-              void get().hydrate();
-            });
-          return;
-        }
-        set((s) => ({ users: s.users.map((u) => (u.id === id ? { ...u, ...patch } : u)) }));
+        void api('users.update', {
+          id,
+          patch: {
+            name: patch.name,
+            username: patch.username,
+            phone: patch.phone,
+            email: patch.email,
+            pin: patch.pin,
+            roleId: patch.roleId,
+            branchIds: patch.branchIds,
+            status: patch.status,
+            lastLoginAt: patch.lastLoginAt,
+          },
+        })
+          .then(() => get().hydrate())
+          .catch((e: unknown) => {
+            toast.error(e instanceof Error ? e.message : 'Failed to update user');
+            void get().hydrate();
+          });
       },
       removeUser: (id) => {
-        if (hasBackend()) {
-          void api('users.delete', { id })
-            .then(() => get().hydrate())
-            .catch((e: unknown) => {
-              toast.error(e instanceof Error ? e.message : 'Failed to delete user');
-              void get().hydrate();
-            });
-          return;
-        }
-        set((s) => ({ users: s.users.filter((u) => u.id !== id) }));
+        void api('users.delete', { id })
+          .then(() => get().hydrate())
+          .catch((e: unknown) => {
+            toast.error(e instanceof Error ? e.message : 'Failed to delete user');
+            void get().hydrate();
+          });
       },
 
-      agents: hasBackend()
-        ? []
-        : [
-            { id: 'ag_1', name: 'Hassan (Field)', phone: '01711-100001', commissionPct: 2, active: true },
-          ],
+      agents: [],
       addAgent: (data) => {
+        // Optimistic shape only — the real backend id arrives after hydrate().
         const item: CommissionAgent = { id: 'ag_' + Date.now(), active: true, ...data };
-        if (hasBackend()) {
-          void api('agents.create', {
-            name: data.name,
-            phone: data.phone,
-            commissionPct: data.commissionPct,
-            active: data.active,
-          })
-            .then(() => get().hydrate())
-            .catch((e: unknown) => {
-              toast.error(e instanceof Error ? e.message : 'Failed to save agent');
-              void get().hydrate();
-            });
-          return item;
-        }
-        set((s) => ({ agents: [...s.agents, item] }));
+        void api('agents.create', {
+          name: data.name,
+          phone: data.phone,
+          commissionPct: data.commissionPct,
+          active: data.active,
+        })
+          .then(() => get().hydrate())
+          .catch((e: unknown) => {
+            toast.error(e instanceof Error ? e.message : 'Failed to save agent');
+            void get().hydrate();
+          });
         return item;
       },
       updateAgent: (id, patch) => {
-        if (hasBackend()) {
-          void api('agents.update', { id, patch })
-            .then(() => get().hydrate())
-            .catch((e: unknown) => {
-              toast.error(e instanceof Error ? e.message : 'Failed to update agent');
-              void get().hydrate();
-            });
-          return;
-        }
-        set((s) => ({
-          agents: s.agents.map((a) => (a.id === id ? { ...a, ...patch } : a)),
-        }));
+        void api('agents.update', { id, patch })
+          .then(() => get().hydrate())
+          .catch((e: unknown) => {
+            toast.error(e instanceof Error ? e.message : 'Failed to update agent');
+            void get().hydrate();
+          });
       },
       removeAgent: (id) => {
-        if (hasBackend()) {
-          void api('agents.delete', { id })
-            .then(() => get().hydrate())
-            .catch((e: unknown) => {
-              toast.error(e instanceof Error ? e.message : 'Failed to delete agent');
-              void get().hydrate();
-            });
-          return;
-        }
-        set((s) => ({ agents: s.agents.filter((a) => a.id !== id) }));
+        void api('agents.delete', { id })
+          .then(() => get().hydrate())
+          .catch((e: unknown) => {
+            toast.error(e instanceof Error ? e.message : 'Failed to delete agent');
+            void get().hydrate();
+          });
       },
     }),
-    { name: 'pos-users' },
+    // v2: drops cached demo staff accounts. `hydrate()` refills from `users.list`.
+    { name: 'pos-users', version: 2 },
   ),
 );
 

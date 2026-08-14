@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Search,
@@ -19,11 +19,11 @@ import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { Popover } from '@/components/ui/Popover';
 import { ColumnsPanel } from '@/components/ui/ColumnsPanel';
-import { useSales, type SaleRecord } from '@/stores/sales';
+import { Pagination } from '@/components/ui/Pagination';
+import { useSales, type SaleRecord, type SaleStatus } from '@/stores/sales';
 import { ALL_SALES_COLUMNS, SALES_COLUMN_META, useSalesUI, type SalesColumn } from '@/stores/salesUI';
-import { customers as mockCustomers } from '@/mocks/data';
 import { useCustomers } from '@/stores/contacts';
-import { hasBackend } from '@/lib/api';
+import { useUsers } from '@/stores/users';
 import { formatBDT, cn } from '@/lib/utils';
 import { SkeletonTable } from '@/components/ui/Skeleton';
 import { SaleDetail } from '@/components/sales/SaleDetail';
@@ -33,29 +33,53 @@ import { CreateShipmentModal } from '@/components/sales/CreateShipmentModal';
 type DateFilter = 'today' | 'week' | 'month' | 'all' | 'custom';
 type StatusFilter = 'all' | 'paid' | 'partial' | 'due' | 'voided';
 
+/** Statuses this screen lists when the "voided only" chip is NOT active. */
+const LIST_STATUSES: SaleStatus[] = ['final', 'void'];
+
+/**
+ * Turn a date preset into inclusive ISO bounds for the server query.
+ * Day boundaries are local (same convention as the Reports toolbar) and sale
+ * dates are stored as ISO UTC, so the SQL string comparison still orders
+ * correctly. 'all' clears both bounds; 'custom' clears them too until the user
+ * picks explicit dates.
+ */
+function presetToRange(preset: DateFilter): { from?: string; to?: string } {
+  if (preset === 'all' || preset === 'custom') return { from: undefined, to: undefined };
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  if (preset === 'week') {
+    // Week starts Monday, matching resolveRange() in the Reports toolbar.
+    const dow = (start.getDay() + 6) % 7;
+    start.setDate(start.getDate() - dow);
+  }
+  if (preset === 'month') start.setDate(1);
+  return { from: start.toISOString(), to: end.toISOString() };
+}
+
 export default function Sales() {
   const nav = useNavigate();
   const [searchParams] = useSearchParams();
   const sales = useSales((s) => s.sales);
   const loading = useSales((s) => s.loading);
-  const hydrate = useSales((s) => s.hydrate);
+  const total = useSales((s) => s.total);
+  const query = useSales((s) => s.query);
+  const loadPage = useSales((s) => s.loadPage);
   const { columns, toggle, move, reset } = useSalesUI();
 
-  // Customer filter options: under backend, source from the hydrated contacts
-  // store so the dropdown lists REAL customers that match the sale rows'
-  // customerIds (the mock demo customers never match). Falls back to mock data
-  // in browser dev.
-  const backend = hasBackend();
-  const customerItems = useCustomers((s) => s.items);
-  const hydrateCustomers = useCustomers((s) => s.hydrate);
-  const customers = backend ? customerItems : mockCustomers;
+  // Customer filter options come from the contacts store's UNPAGED `options`
+  // list (id+name) so the dropdown lists every REAL customer, not just the 50
+  // rows of the customers page. Reading `items` here would silently cap this
+  // filter at one page. (Before loadOptions resolves it just shows
+  // "All customers".)
+  const customers = useCustomers((s) => s.options);
+  const loadCustomerOptions = useCustomers((s) => s.loadOptions);
 
-  // Hydrate from the backend on mount so the store is populated when this page
-  // is the entry point (mirrors Purchases.tsx). No-op outside Electron.
-  useEffect(() => {
-    void hydrate();
-    void hydrateCustomers();
-  }, [hydrate, hydrateCustomers]);
+  // Cashier options come from the users store: the query filters on `userId`,
+  // so the option VALUES have to be real backend user ids. The sale rows only
+  // carry the display name, which is why this no longer reads off `sales`.
+  const users = useUsers((s) => s.users);
+  const hydrateUsers = useUsers((s) => s.hydrate);
 
   const [q, setQ] = useState(() => searchParams.get('q') ?? '');
   const [date, setDate] = useState<DateFilter>('all');
@@ -68,33 +92,72 @@ export default function Sales() {
   const [returnFor, setReturnFor] = useState<string | null>(null);
   const [shipmentFor, setShipmentFor] = useState<string | null>(null);
 
-  // Only final & void sales here. Drafts/quotations have their own page.
-  const baseList = useMemo(() => sales.filter((s) => s.status === 'final' || s.status === 'void'), [sales]);
-
-  const filtered = useMemo(() => {
-    return baseList.filter((s) => {
-      if (q) {
-        const t = q.toLowerCase();
-        if (!`${s.invoiceNo} ${s.customerName}`.toLowerCase().includes(t)) return false;
-      }
-      if (status !== 'all') {
-        if (status === 'voided') {
-          if (s.status !== 'void') return false;
-        } else if (s.status === 'void') {
-          return false;
-        } else if (status === 'paid' && s.due !== 0) return false;
-        else if (status === 'partial' && (s.paid === 0 || s.due === 0)) return false;
-        else if (status === 'due' && s.paid !== 0) return false;
-      }
-      if (customerId !== 'all' && s.customerId !== customerId) return false;
-      if (cashier !== 'all' && s.user !== cashier) return false;
-      if (method !== 'all' && !s.payments.some((p) => p.method === method)) return false;
-      return true;
+  // Load ONE page on mount. This screen owns `statuses: ['final','void']` —
+  // drafts and quotations have their own pages with their own query. An initial
+  // ?q= is folded into the same call so mounting costs a single round-trip.
+  const initialQ = useRef(q);
+  useEffect(() => {
+    // Every filter this screen owns is stated explicitly, so a query left behind
+    // by Drafts/Quotations (they share this store) can't silently narrow the list
+    // while the controls below all read "all".
+    void loadPage({
+      statuses: LIST_STATUSES,
+      page: 1,
+      q: initialQ.current.trim() || undefined,
+      customerId: undefined,
+      userId: undefined,
+      method: undefined,
+      from: undefined,
+      to: undefined,
     });
-  }, [baseList, q, status, customerId, cashier, method]);
+    void loadCustomerOptions();
+    void hydrateUsers();
+  }, [loadPage, loadCustomerOptions, hydrateUsers]);
 
+  // Free-text search now hits the DATABASE (invoice no + customer name), so it
+  // is debounced ~300ms — a query per keystroke would be its own performance
+  // problem. The first run is skipped because the mount effect already loaded.
+  const searchMounted = useRef(false);
+  useEffect(() => {
+    if (!searchMounted.current) {
+      searchMounted.current = true;
+      return;
+    }
+    const handle = setTimeout(() => {
+      void loadPage({ q: q.trim() || undefined });
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [q, loadPage]);
+
+  /**
+   * Paid / Partial / Due are DERIVED from `paid` / `due`, not from a DB status
+   * column, so they cannot be pushed into SQL — they stay CLIENT-side over the
+   * rows of the current page (the UI states that next to the chips). Only
+   * 'voided' maps to a real lifecycle status, so that one goes into the query.
+   */
+  const onStatus = (next: StatusFilter) => {
+    setStatus(next);
+    const statuses: SaleStatus[] = next === 'voided' ? ['void'] : LIST_STATUSES;
+    if (statuses.join() !== query.statuses.join()) void loadPage({ statuses });
+  };
+
+  // Server already narrowed by status / customer / user / method / date / text.
+  // Only the derived payment chips are applied here, over this page's rows.
+  const pageRows = useMemo(() => {
+    if (status === 'all' || status === 'voided') return sales;
+    return sales.filter((s) => {
+      if (s.status === 'void') return false;
+      if (status === 'paid') return s.due === 0;
+      if (status === 'partial') return s.paid > 0 && s.due > 0;
+      return s.paid === 0; // 'due'
+    });
+  }, [sales, status]);
+
+  // These sums cover the LOADED PAGE only — the rest of the range was never
+  // fetched. Labelled "this page" in the UI so they can't read as range totals;
+  // Reports is the place for full-range figures.
   const totals = useMemo(() => {
-    const arr = filtered.filter((s) => s.status !== 'void');
+    const arr = pageRows.filter((s) => s.status !== 'void');
     return {
       count: arr.length,
       revenue: arr.reduce((s, x) => s + x.total, 0),
@@ -103,9 +166,7 @@ export default function Sales() {
       tax: arr.reduce((s, x) => s + x.tax, 0),
       discount: arr.reduce((s, x) => s + x.orderDiscount + x.totalLineDiscount, 0),
     };
-  }, [filtered]);
-
-  const cashiers = Array.from(new Set(sales.map((s) => s.user)));
+  }, [pageRows]);
 
   return (
     <div>
@@ -131,14 +192,20 @@ export default function Sales() {
       />
 
       <div className="p-6 space-y-4">
-        {/* KPI strip */}
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-          <Stat label="Sales" value={String(totals.count)} />
-          <Stat label="Revenue" value={formatBDT(totals.revenue)} tone="primary" />
-          <Stat label="Paid" value={formatBDT(totals.paid)} tone="success" />
-          <Stat label="Due" value={formatBDT(totals.due)} tone="destructive" />
-          <Stat label="Tax" value={formatBDT(totals.tax)} />
-          <Stat label="Discount" value={formatBDT(totals.discount)} />
+        {/* KPI strip — PAGE-SCOPED. Only the current page is in memory, so these
+            are explicitly labelled instead of masquerading as range totals. */}
+        <div>
+          <div className="text-[11px] text-muted-foreground mb-1.5">
+            Totals for this page only. Use Reports for full-range figures.
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+            <Stat label="Sales (this page)" value={String(totals.count)} />
+            <Stat label="Revenue (this page)" value={formatBDT(totals.revenue)} tone="primary" />
+            <Stat label="Paid (this page)" value={formatBDT(totals.paid)} tone="success" />
+            <Stat label="Due (this page)" value={formatBDT(totals.due)} tone="destructive" />
+            <Stat label="Tax (this page)" value={formatBDT(totals.tax)} />
+            <Stat label="Discount (this page)" value={formatBDT(totals.discount)} />
+          </div>
         </div>
 
         {/* Filters */}
@@ -154,7 +221,11 @@ export default function Sales() {
           </div>
           <select
             value={date}
-            onChange={(e) => setDate(e.target.value as DateFilter)}
+            onChange={(e) => {
+              const preset = e.target.value as DateFilter;
+              setDate(preset);
+              void loadPage(presetToRange(preset));
+            }}
             className="h-9 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="all">All dates</option>
@@ -165,7 +236,10 @@ export default function Sales() {
           </select>
           <select
             value={customerId}
-            onChange={(e) => setCustomerId(e.target.value)}
+            onChange={(e) => {
+              setCustomerId(e.target.value);
+              void loadPage({ customerId: e.target.value });
+            }}
             className="h-9 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="all">All customers</option>
@@ -177,19 +251,25 @@ export default function Sales() {
           </select>
           <select
             value={cashier}
-            onChange={(e) => setCashier(e.target.value)}
+            onChange={(e) => {
+              setCashier(e.target.value);
+              void loadPage({ userId: e.target.value });
+            }}
             className="h-9 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="all">All users</option>
-            {cashiers.map((u) => (
-              <option key={u} value={u}>
-                {u}
+            {users.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.name}
               </option>
             ))}
           </select>
           <select
             value={method}
-            onChange={(e) => setMethod(e.target.value)}
+            onChange={(e) => {
+              setMethod(e.target.value);
+              void loadPage({ method: e.target.value });
+            }}
             className="h-9 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="all">All methods</option>
@@ -199,26 +279,31 @@ export default function Sales() {
               </option>
             ))}
           </select>
-          <div className="flex items-center gap-0.5 p-0.5 bg-secondary rounded-md text-xs">
-            {(['all', 'paid', 'partial', 'due', 'voided'] as StatusFilter[]).map((s) => (
-              <button
-                key={s}
-                onClick={() => setStatus(s)}
-                className={cn(
-                  'px-3 py-1 rounded capitalize font-medium transition',
-                  status === s
-                    ? 'bg-card text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground',
-                )}
-              >
-                {s}
-              </button>
-            ))}
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-0.5 p-0.5 bg-secondary rounded-md text-xs">
+              {(['all', 'paid', 'partial', 'due', 'voided'] as StatusFilter[]).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => onStatus(s)}
+                  className={cn(
+                    'px-3 py-1 rounded capitalize font-medium transition',
+                    status === s
+                      ? 'bg-card text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+            <span className="text-[11px] text-muted-foreground">
+              Paid / Partial / Due filter this page
+            </span>
           </div>
         </Card>
 
         {/* Table */}
-        {backend && loading && sales.length === 0 ? (
+        {loading && sales.length === 0 ? (
           <SkeletonTable count={8} />
         ) : (
         <Card className="overflow-hidden">
@@ -241,7 +326,7 @@ export default function Sales() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((s) => (
+                {pageRows.map((s) => (
                   <tr
                     key={s.id}
                     className={cn(
@@ -279,7 +364,7 @@ export default function Sales() {
                     </td>
                   </tr>
                 ))}
-                {filtered.length === 0 && (
+                {pageRows.length === 0 && (
                   <tr>
                     <td colSpan={columns.length + 1} className="px-4 py-12 text-center text-muted-foreground">
                       No sales match these filters.
@@ -289,6 +374,15 @@ export default function Sales() {
               </tbody>
             </table>
           </div>
+          <Pagination
+            page={query.page}
+            pageSize={query.pageSize}
+            total={total}
+            onPageChange={(page) => void loadPage({ page })}
+            onPageSizeChange={(pageSize) => void loadPage({ pageSize })}
+            label="sales"
+            busy={loading}
+          />
         </Card>
         )}
       </div>

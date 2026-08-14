@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Search,
@@ -11,7 +11,6 @@ import {
   Edit2,
   Trash2,
   HandCoins,
-  MessageSquare,
   Eye,
   AlertTriangle,
   Phone,
@@ -24,17 +23,18 @@ import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { Drawer } from '@/components/ui/Drawer';
 import { ColumnsPanel } from '@/components/ui/ColumnsPanel';
+import { Pagination } from '@/components/ui/Pagination';
 import { SkeletonTable } from '@/components/ui/Skeleton';
 import { useCustomers } from '@/stores/contacts';
+import { confirm } from '@/stores/confirm';
 import {
   ALL_CUSTOMER_COLUMNS,
   CUSTOMER_COLUMN_META,
   useContactsUI,
   type CustomerColumn,
 } from '@/stores/contactsUI';
-import type { Customer } from '@/mocks/data';
-import { formatBDT, cn, relativeTime } from '@/lib/utils';
-import { hasBackend } from '@/lib/api';
+import type { Customer } from '@/types/domain';
+import { formatBDT, formatNumber, cn, relativeTime } from '@/lib/utils';
 import { Avatar } from '@/components/contacts/Avatar';
 import { CustomerForm } from '@/components/contacts/CustomerForm';
 import { ReceivePaymentModal } from '@/components/contacts/ReceivePaymentModal';
@@ -43,13 +43,9 @@ export default function Customers() {
   const nav = useNavigate();
   const { items, add, update, remove } = useCustomers();
   const loading = useCustomers((s) => s.loading);
-  const hydrate = useCustomers((s) => s.hydrate);
-  const backend = hasBackend();
-  // Mirror Purchases.tsx: hydrate from the backend on mount so the store is
-  // populated when this page is the entry point.
-  useEffect(() => {
-    void hydrate();
-  }, [hydrate]);
+  const total = useCustomers((s) => s.total);
+  const query = useCustomers((s) => s.query);
+  const loadPage = useCustomers((s) => s.loadPage);
   const {
     customerView,
     setCustomerView,
@@ -69,31 +65,62 @@ export default function Customers() {
   const [payFor, setPayFor] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
+  // Load ONE page on mount (replaces the old full-table hydrate). Every filter
+  // this screen owns is stated explicitly so a query left behind by an earlier
+  // visit can't silently narrow the list while the controls all read "all".
+  const initialQ = useRef(q);
+  useEffect(() => {
+    void loadPage({ page: 1, q: initialQ.current.trim() || undefined, group: undefined });
+  }, [loadPage]);
+
+  // Free-text search hits the DATABASE (name + phone + email), so it is debounced
+  // ~300ms. The first run is skipped because the mount effect already loaded.
+  const searchMounted = useRef(false);
+  useEffect(() => {
+    if (!searchMounted.current) {
+      searchMounted.current = true;
+      return;
+    }
+    const handle = setTimeout(() => {
+      void loadPage({ q: q.trim() || undefined });
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [q, loadPage]);
+
+  // Tags are a JSON column with no server-side filter, so the option list is
+  // built from THIS PAGE's rows (and the filter below applies to it too).
   const allTags = useMemo(() => {
     const set = new Set<string>();
     items.forEach((c) => c.tags?.forEach((t) => set.add(t)));
     return Array.from(set).sort();
   }, [items]);
 
+  /**
+   * Server already narrowed by text + group. Due state and tags are DERIVED
+   * (due/creditLimit are computed, tags are JSON), so they cannot be pushed into
+   * SQL — they stay CLIENT-side over the rows of the current page.
+   */
   const filtered = useMemo(() => {
     return items.filter((c) => {
-      if (q && !`${c.name} ${c.phone} ${c.email ?? ''}`.toLowerCase().includes(q.toLowerCase()))
-        return false;
-      if (group !== 'all' && c.group !== group) return false;
       if (dueFilter === 'has' && c.due === 0) return false;
       if (dueFilter === 'none' && c.due > 0) return false;
       if (dueFilter === 'over' && (!c.creditLimit || c.due < c.creditLimit)) return false;
       if (tag !== 'all' && !c.tags?.includes(tag)) return false;
       return true;
     });
-  }, [items, q, group, dueFilter, tag]);
+  }, [items, dueFilter, tag]);
 
-  const totals = {
-    customers: items.length,
-    revenue: items.reduce((s, c) => s + c.totalPurchase, 0),
-    paid: items.reduce((s, c) => s + (c.totalPaid ?? 0), 0),
-    due: items.reduce((s, c) => s + c.due, 0),
-  };
+  // These sums cover the LOADED PAGE only — the rest of the range was never
+  // fetched. Labelled "this page" in the UI; Reports has the full figures.
+  const totals = useMemo(
+    () => ({
+      customers: filtered.length,
+      revenue: filtered.reduce((s, c) => s + c.totalPurchase, 0),
+      paid: filtered.reduce((s, c) => s + (c.totalPaid ?? 0), 0),
+      due: filtered.reduce((s, c) => s + c.due, 0),
+    }),
+    [filtered],
+  );
 
   const allSelected = filtered.length > 0 && filtered.every((c) => selected.has(c.id));
   const toggleAll = () =>
@@ -121,7 +148,7 @@ export default function Customers() {
     <div>
       <PageHeader
         title="Customers"
-        subtitle={`${totals.customers} customers · ${formatBDT(totals.due)} outstanding`}
+        subtitle={`${formatNumber(total)} customers`}
         actions={
           <>
             <IconBtn title="Customize columns" onClick={() => setColsOpen(true)}>
@@ -142,11 +169,22 @@ export default function Customers() {
       />
 
       <div className="p-6 space-y-4">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <Stat label="Customers" value={String(totals.customers)} />
-          <Stat label="Total Sales" value={formatBDT(totals.revenue)} />
-          <Stat label="Total Paid" value={formatBDT(totals.paid)} tone="success" />
-          <Stat label="Outstanding" value={formatBDT(totals.due)} tone="destructive" />
+        {/* KPI strip — PAGE-SCOPED. Only the current page is in memory, so these
+            are explicitly labelled instead of masquerading as book-wide totals. */}
+        <div>
+          <div className="text-[11px] text-muted-foreground mb-1.5">
+            Totals for this page only. Use Reports for full-range figures.
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Stat label="Customers (this page)" value={String(totals.customers)} />
+            <Stat label="Total Sales (this page)" value={formatBDT(totals.revenue)} />
+            <Stat label="Total Paid (this page)" value={formatBDT(totals.paid)} tone="success" />
+            <Stat
+              label="Outstanding (this page)"
+              value={formatBDT(totals.due)}
+              tone="destructive"
+            />
+          </div>
         </div>
 
         <Card className="p-3 flex flex-wrap items-center gap-2">
@@ -161,7 +199,10 @@ export default function Customers() {
           </div>
           <select
             value={group}
-            onChange={(e) => setGroup(e.target.value)}
+            onChange={(e) => {
+              setGroup(e.target.value);
+              void loadPage({ group: e.target.value });
+            }}
             className="h-9 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="all">All groups</option>
@@ -205,23 +246,26 @@ export default function Customers() {
               </button>
             ))}
           </div>
+          <span className="text-[11px] text-muted-foreground">Due and tag filter this page</span>
         </Card>
 
         {selected.size > 0 && (
           <div className="rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 flex items-center gap-2">
             <Badge variant="info">{selected.size} selected</Badge>
             <div className="flex-1" />
-            <Button variant="outline" size="sm">
-              <MessageSquare className="size-3.5" /> Send SMS
-            </Button>
+            {/* "Send SMS" removed with the SMS feature — it had no handler. */}
             <Button variant="outline" size="sm">
               <Download className="size-3.5" /> Export
             </Button>
             <Button
               variant="destructive"
               size="sm"
-              onClick={() => {
-                if (!confirm(`Delete ${selected.size} customer(s)?`)) return;
+              onClick={async () => {
+                const ok = await confirm({
+                  title: `Delete ${selected.size} customer(s)?`,
+                  variant: 'destructive',
+                });
+                if (!ok) return;
                 Array.from(selected).forEach(remove);
                 setSelected(new Set());
               }}
@@ -234,7 +278,8 @@ export default function Customers() {
           </div>
         )}
 
-        {backend && loading && items.length === 0 ? (
+        {/* Skeleton while the backend list loads; empty state handles no rows. */}
+        {loading && items.length === 0 ? (
           <SkeletonTable count={8} />
         ) : customerView === 'table' ? (
           <Card className="overflow-hidden">
@@ -320,8 +365,18 @@ export default function Customers() {
                 </tbody>
               </table>
             </div>
+            <Pagination
+              page={query.page}
+              pageSize={query.pageSize}
+              total={total}
+              onPageChange={(page) => void loadPage({ page })}
+              onPageSizeChange={(pageSize) => void loadPage({ pageSize })}
+              label="customers"
+              busy={loading}
+            />
           </Card>
         ) : (
+          <div className="space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
             {filtered.map((c) => (
               <Card
@@ -387,6 +442,23 @@ export default function Customers() {
                 </div>
               </Card>
             ))}
+            {filtered.length === 0 && (
+              <Card className="p-12 text-center text-muted-foreground md:col-span-2 xl:col-span-3">
+                No customers match these filters.
+              </Card>
+            )}
+          </div>
+          <Card className="overflow-hidden">
+            <Pagination
+              page={query.page}
+              pageSize={query.pageSize}
+              total={total}
+              onPageChange={(page) => void loadPage({ page })}
+              onPageSizeChange={(pageSize) => void loadPage({ pageSize })}
+              label="customers"
+              busy={loading}
+            />
+          </Card>
           </div>
         )}
       </div>
@@ -421,8 +493,8 @@ export default function Customers() {
           onCancel={() => setDrawerId(null)}
           onDelete={
             editing
-              ? () => {
-                  if (confirm(`Delete "${editing.name}"?`)) {
+              ? async () => {
+                  if (await confirm({ title: `Delete "${editing.name}"?`, variant: 'destructive' })) {
                     remove(editing.id);
                     setDrawerId(null);
                   }

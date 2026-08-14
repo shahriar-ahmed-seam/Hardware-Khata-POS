@@ -17,9 +17,14 @@ import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { Drawer } from '@/components/ui/Drawer';
 import { useSuppliers } from '@/stores/contacts';
-import { usePurchases } from '@/stores/purchases';
+import { usePurchases, type PurchaseRecord } from '@/stores/purchases';
+import { api } from '@/lib/api';
+import { toSupplier, type BackendSupplier } from '@/hooks/contactAdapter';
+import { toPurchaseRecord, type BackendPurchase } from '@/hooks/purchaseAdapter';
+import type { Supplier } from '@/types/domain';
 import { Avatar } from '@/components/contacts/Avatar';
 import { SupplierForm } from '@/components/contacts/SupplierForm';
+import { confirm } from '@/stores/confirm';
 import { PaySupplierModal } from '@/components/contacts/PaySupplierModal';
 import { formatBDT, cn } from '@/lib/utils';
 
@@ -28,34 +33,128 @@ type Tab = 'overview' | 'ledger' | 'purchases' | 'notes';
 export default function SupplierDetail() {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
-  const supplier = useSuppliers((s) => s.items.find((x) => x.id === id));
+  const storeSupplier = useSuppliers((s) => s.items.find((x) => x.id === id)) ?? null;
   const update = useSuppliers((s) => s.update);
   const remove = useSuppliers((s) => s.remove);
-  const hydrate = useSuppliers((s) => s.hydrate);
-  const purchases = usePurchases((s) => s.purchases);
+  // Purchase RETURNS come from the purchases store (that list is NOT paged), so
+  // hydrate it on mount. `purchases` there IS one page, which is why this
+  // supplier's bills are fetched separately below.
   const purchaseReturns = usePurchases((s) => s.returns);
-  // Hydrate from the backend on mount so deep-link entry populates the store.
-  // Purchases power the ledger + purchases tabs, so hydrate that store too
-  // (cheap no-op without a backend).
   useEffect(() => {
-    void hydrate();
     void usePurchases.getState().hydrate();
-  }, [hydrate]);
+  }, []);
+
+  // The contacts store holds ONE PAGE of suppliers, so a deep-linked supplier is
+  // usually NOT in `items` — hydrating and doing items.find() would render
+  // "not found" for anyone past page 1. Prefer the store row when it IS there
+  // (Edit / Pay Supplier rehydrate the store, so the page reflects them
+  // instantly) and fall back to a single-record read.
+  const hasStoreSupplier = !!storeSupplier;
+  const [fetched, setFetched] = useState<Supplier | null>(null);
+  const [fetching, setFetching] = useState(false);
+  const [notFound, setNotFound] = useState(false);
+  // Bumped after a payment: store rows refresh via the store's rehydrate, but a
+  // row read directly has to be re-read to pick up the new payable. IPC calls are
+  // FIFO on one channel, so this lands after the payment writes.
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    if (!id || hasStoreSupplier) {
+      setFetched(null);
+      setFetching(false);
+      setNotFound(false);
+      return;
+    }
+    let alive = true;
+    setFetching(true);
+    setNotFound(false);
+    void api<BackendSupplier | null>('suppliers.get', { id })
+      .then((row) => {
+        if (!alive) return;
+        if (row) setFetched(toSupplier(row));
+        else setNotFound(true);
+        setFetching(false);
+      })
+      .catch(() => {
+        if (!alive) return;
+        // Channel error or running outside Electron — treat as unavailable.
+        setNotFound(true);
+        setFetching(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [id, hasStoreSupplier, reloadKey]);
+
+  const supplier = storeSupplier ?? fetched;
+
+  /**
+   * Persist a patch and keep the on-screen copy in step. Store rows refresh via
+   * `update()`'s rehydrate; a row that came from the single-record fetch is not
+   * on the store's page, so the same patch is merged locally (the Notes textarea
+   * is a controlled input and needs this to stay editable).
+   */
+  const savePatch = (patch: Partial<Supplier>) => {
+    if (!supplier) return;
+    update(supplier.id, patch);
+    setFetched((prev) => (prev ? { ...prev, ...patch } : prev));
+  };
 
   const [tab, setTab] = useState<Tab>('overview');
   const [editOpen, setEditOpen] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
 
-  // This supplier's purchases (newest first for the Purchases tab).
+  /**
+   * This supplier's bills. `usePurchases().purchases` is ONE PAGE of the GLOBAL
+   * purchases list, so the payable ledger and the Purchases tab would only show
+   * the bills that happen to sit on that page. Instead every page of
+   * `purchases.listPage` FILTERED TO THIS SUPPLIER is pulled — that channel is
+   * also the one that attaches each bill's payments, which the ledger needs for
+   * its credit rows. The ledger arithmetic below is untouched.
+   */
+  const [supplierBills, setSupplierBills] = useState<PurchaseRecord[]>([]);
+
+  useEffect(() => {
+    if (!id) {
+      setSupplierBills([]);
+      return;
+    }
+    let alive = true;
+    void (async () => {
+      try {
+        const rows: BackendPurchase[] = [];
+        // The backend caps pageSize at 200, so walk the pages for this supplier.
+        for (let page = 1; page <= 50; page += 1) {
+          const res = await api<{ rows: BackendPurchase[]; total: number }>('purchases.listPage', {
+            page,
+            pageSize: 200,
+            supplierId: id,
+          });
+          rows.push(...res.rows);
+          if (res.rows.length === 0 || rows.length >= res.total) break;
+        }
+        if (alive) setSupplierBills(rows.map(toPurchaseRecord));
+      } catch {
+        // Channel error or running outside Electron — leave the tabs empty
+        // rather than showing a partial payable.
+        if (alive) setSupplierBills([]);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [id, reloadKey]);
+
+  // Newest first for the Purchases tab.
   const supplierPurchases = useMemo(
     () =>
       supplier
-        ? purchases
+        ? supplierBills
             .filter((p) => p.supplierId === supplier.id)
             .slice()
             .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
         : [],
-    [purchases, supplier],
+    [supplierBills, supplier],
   );
 
   const supplierReturns = useMemo(
@@ -145,6 +244,11 @@ export default function SupplierDetail() {
   }, [supplier, supplierPurchases, supplierReturns]);
 
   if (!supplier) {
+    // Loading and "not found" are DISTINCT states — the single-record fetch
+    // above resolves asynchronously.
+    if (id && (fetching || !notFound)) {
+      return <div className="p-8 text-sm text-muted-foreground">Loading supplier…</div>;
+    }
     return (
       <div className="p-8 text-sm text-muted-foreground">
         Supplier not found.{' '}
@@ -389,7 +493,7 @@ export default function SupplierDetail() {
           <Card className="p-4">
             <textarea
               value={supplier.notes ?? ''}
-              onChange={(e) => update(supplier.id, { notes: e.target.value })}
+              onChange={(e) => savePatch({ notes: e.target.value })}
               rows={6}
               placeholder="Internal notes (saved automatically)…"
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 resize-y"
@@ -409,12 +513,12 @@ export default function SupplierDetail() {
           asDrawer
           initial={supplier}
           onSave={(s) => {
-            update(s.id, s);
+            savePatch(s);
             setEditOpen(false);
           }}
           onCancel={() => setEditOpen(false)}
-          onDelete={() => {
-            if (confirm(`Delete "${supplier.name}"?`)) {
+          onDelete={async () => {
+            if (await confirm({ title: `Delete "${supplier.name}"?`, variant: 'destructive' })) {
               remove(supplier.id);
               nav('/contacts/suppliers');
             }
@@ -424,7 +528,10 @@ export default function SupplierDetail() {
 
       <PaySupplierModal
         open={payOpen}
-        onClose={() => setPayOpen(false)}
+        onClose={() => {
+          setPayOpen(false);
+          setReloadKey((k) => k + 1);
+        }}
         supplierId={supplier.id}
       />
     </div>

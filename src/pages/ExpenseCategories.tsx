@@ -4,21 +4,54 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
-import { useExpenses, type ExpenseCategory } from '@/stores/expenses';
+import { useExpenses, type ExpenseCategory, type ExpenseRecord } from '@/stores/expenses';
+import { api } from '@/lib/api';
+import { toExpense, type BackendExpense } from '@/hooks/expenseAdapter';
 import { NewExpenseCategoryModal } from '@/components/expenses/NewExpenseCategoryModal';
+import { confirm } from '@/stores/confirm';
 import { formatBDT, cn } from '@/lib/utils';
 
 export default function ExpenseCategories() {
-  const { categories, removeCategory, expenses } = useExpenses();
-  const hydrate = useExpenses((s) => s.hydrate);
+  const { categories, removeCategory } = useExpenses();
+  const loadCategories = useExpenses((s) => s.loadCategories);
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState<ExpenseCategory | 'new' | null>(null);
 
-  // Mirror PurchaseReturns.tsx: hydrate from the backend on mount so the store
-  // is populated when this page is the entry point. No-op without a backend.
+  /**
+   * WHOLE-LIST AGGREGATE — the per-category expense count and this month's spend
+   * roll up over EVERY expense. `useExpenses().expenses` is ONE PAGE (50), so
+   * reading it would report "of the 50 most recent expenses" and the delete
+   * confirmation would under-report how many rows use a category. Both now come
+   * from the UNPAGED `expenses.list`. The arithmetic below is unchanged.
+   *
+   * Only the (small, never paged) category list is still read from the store, so
+   * `loadCategories()` replaces the old `hydrate()` — no wasted page fetch.
+   */
+  const [expenses, setExpenses] = useState<ExpenseRecord[]>([]);
+  const [loadingRollups, setLoadingRollups] = useState(true);
+
   useEffect(() => {
-    void hydrate();
-  }, [hydrate]);
+    void loadCategories();
+  }, [loadCategories]);
+
+  useEffect(() => {
+    let alive = true;
+    setLoadingRollups(true);
+    void api<BackendExpense[]>('expenses.list', {})
+      .then((rows) => {
+        if (!alive) return;
+        setExpenses(rows.map(toExpense));
+        setLoadingRollups(false);
+      })
+      .catch(() => {
+        // Channel error or running outside Electron — no rollups rather than
+        // page-scoped ones.
+        if (alive) setLoadingRollups(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const tree = useMemo(() => {
     const t = q.trim().toLowerCase();
@@ -45,14 +78,19 @@ export default function ExpenseCategories() {
       .reduce((s, e) => s + e.amount, 0);
   };
 
-  const onDelete = (c: ExpenseCategory) => {
+  const onDelete = async (c: ExpenseCategory) => {
     const used = expenseCount(c.id);
     const childCount = categories.filter((x) => x.parentId === c.id).length;
-    let msg = `Delete "${c.name}"?`;
-    if (used > 0) msg += ` ${used} expense(s) use this category.`;
+    const notes: string[] = [];
+    if (used > 0) notes.push(`${used} expense(s) use this category.`);
     if (childCount > 0)
-      msg += ` ${childCount} subcategor${childCount === 1 ? 'y' : 'ies'} will be detached.`;
-    if (!confirm(msg)) return;
+      notes.push(`${childCount} subcategor${childCount === 1 ? 'y' : 'ies'} will be detached.`);
+    const ok = await confirm({
+      title: `Delete "${c.name}"?`,
+      message: notes.length > 0 ? notes.join(' ') : undefined,
+      variant: 'destructive',
+    });
+    if (!ok) return;
     removeCategory(c.id);
   };
 
@@ -60,7 +98,9 @@ export default function ExpenseCategories() {
     <div>
       <PageHeader
         title="Expense Categories"
-        subtitle={`${categories.length} categories · subcategories supported`}
+        subtitle={`${categories.length} categories · subcategories supported${
+          loadingRollups ? ' · loading totals…' : ''
+        }`}
         actions={
           <Button onClick={() => setEditing('new')}>
             <Plus className="size-4" /> Add Category

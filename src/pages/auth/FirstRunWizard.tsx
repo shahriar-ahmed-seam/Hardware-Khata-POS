@@ -35,34 +35,28 @@ const STEPS: { id: StepId; label: string; icon: any }[] = [
 ];
 
 export default function FirstRunWizard() {
-  const setBusiness = useSettings((s) => s.setBusiness);
   const taxRates = useSettings((s) => s.taxRates);
-  const updateTaxRate = useSettings((s) => s.updateTaxRate);
-  const addPrinter = useSettings((s) => s.addPrinter);
-  const setBackup = useSettings((s) => s.setBackup);
   const branches = useBranches((s) => s.items);
-  const updateBranch = useBranches((s) => s.update);
-  const users = useUsers((s) => s.users);
-  const updateUser = useUsers((s) => s.updateUser);
-  const completeSetup = useAuth((s) => s.completeSetup);
   const completeSetupBackend = useAuth((s) => s.completeSetupBackend);
 
   const [step, setStep] = useState<StepId>('welcome');
   const [submitting, setSubmitting] = useState(false);
 
-  // Shop
-  const [shopName, setShopName] = useState('Hardware POS');
-  const [tagline, setTagline] = useState('Built for the shop floor');
+  // Shop — deliberately BLANK. These strings print on the customer's receipt, so
+  // a prefilled "Hardware POS / Mirpur 10, Dhaka" would ship as a real shop's
+  // identity if the owner clicked straight through.
+  const [shopName, setShopName] = useState('');
+  const [tagline, setTagline] = useState('');
   const [phone, setPhone] = useState('');
-  const [address, setAddress] = useState('Mirpur 10, Dhaka');
+  const [address, setAddress] = useState('');
 
   // Money
   const [currencySymbol, setCurrencySymbol] = useState('৳');
   const [defaultTaxId, setDefaultTaxId] = useState(taxRates.find((t) => t.isDefault)?.id ?? taxRates[0]?.id ?? '');
 
-  // Admin
-  const [adminName, setAdminName] = useState('Shop Owner');
-  const [adminUsername, setAdminUsername] = useState('owner');
+  // Admin — also blank; this becomes the real owner login.
+  const [adminName, setAdminName] = useState('');
+  const [adminUsername, setAdminUsername] = useState('');
   const [adminPin, setAdminPin] = useState('');
 
   // Branch
@@ -98,11 +92,59 @@ export default function FirstRunWizard() {
     return true;
   };
 
+  /**
+   * Pick a backup location and take the FIRST snapshot, immediately after setup.
+   *
+   * This runs after `setup.complete` on purpose: the backup channels are
+   * permission-gated, and it is `setup.complete` that establishes the owner
+   * session. Before that call there is no session, so these writes would be
+   * refused.
+   *
+   * If the owner asked for cloud we point the folder at a cloud root that
+   * actually exists on this machine; otherwise the local default that the main
+   * process already resolved stays. Either way we take one snapshot right now,
+   * so a brand-new shop is never in the state of "backup is configured but no
+   * backup exists".
+   */
+  const configureBackup = async () => {
+    try {
+      if (enableCloud) {
+        const options = await api<{ path: string; cloud: boolean }[]>('backup.folderOptions', {});
+        const cloudRoot = options.find((o) => o.cloud);
+        if (cloudRoot) {
+          await api('backup.setFolder', { folder: cloudRoot.path });
+        } else {
+          toast.info('No cloud folder found on this computer', {
+            description:
+              'Backups are saved to your Documents folder. You can point them at OneDrive or Google Drive later in Settings → Backup.',
+          });
+        }
+      }
+      await api('backup.run', {});
+    } catch (e) {
+      // A failed first backup must not block a completed setup — the shop is
+      // already usable. Surface it so the owner can fix the folder in Settings.
+      toast.warning('Could not take the first backup', {
+        description: e instanceof Error ? e.message : 'Check Settings → Backup.',
+      });
+    }
+  };
+
   const finish = async () => {
     if (submitting) return;
 
-    // ---- BACKEND PATH: persist everything through the single run-once channel ----
-    if (hasBackend()) {
+    // The wizard writes a real shop through the run-once `setup.complete`
+    // channel, which only exists in the desktop app. There is deliberately no
+    // browser fallback: it could only write to localStorage, producing a shop
+    // that looks configured but has no database behind it.
+    if (!hasBackend()) {
+      toast.error('Setup needs the desktop app', {
+        description: 'Open Hardware Khata POS on the shop computer to create your shop.',
+      });
+      return;
+    }
+
+    {
       setSubmitting(true);
       try {
         const result = await api<{ user: { id: string }; permissions: string[] }>('setup.complete', {
@@ -139,63 +181,15 @@ export default function FirstRunWizard() {
           useUsers.getState().hydrate(),
         ]);
 
+        // Needs the session that setup.complete just created — see above.
+        await configureBackup();
+
         toast.success('Setup complete — welcome!', { description: `${shopName} is ready to go.` });
       } catch (e) {
         setSubmitting(false);
         toast.error(e instanceof Error ? e.message : 'Setup failed — please try again.');
       }
-      return;
     }
-
-    // ---- MOCK PATH (no backend): unchanged local store writes ----
-    // Persist shop info
-    setBusiness({
-      name: shopName.trim(),
-      tagline: tagline.trim() || undefined,
-      phonePrimary: phone.trim() || undefined,
-      address: address.trim() || undefined,
-      currencySymbol,
-      defaultBranch: branchName.trim(),
-    });
-    // Default tax
-    if (defaultTaxId) {
-      taxRates.forEach((t) => updateTaxRate(t.id, { isDefault: t.id === defaultTaxId }));
-    }
-    // Branch (rename the first seed branch as the main one)
-    if (branches[0]) {
-      updateBranch(branches[0].id, {
-        name: branchName.trim(),
-        address: branchAddress.trim() || undefined,
-        isDefault: true,
-      });
-    }
-    // Admin user — reuse the seed admin (u_admin) so it stays the owner account
-    const adminUser = users.find((u) => u.id === 'u_admin') ?? users[0];
-    if (adminUser) {
-      updateUser(adminUser.id, {
-        name: adminName.trim(),
-        username: adminUsername.trim().toLowerCase(),
-        pin: adminPin,
-        status: 'active',
-      });
-    }
-    // Printer
-    if (!skipPrinter) {
-      addPrinter({
-        name: printerName.trim() || 'Counter Printer',
-        connection: 'USB',
-        paperWidth: printerWidth,
-        encoding: 'UTF-8',
-        isDefault: true,
-      });
-    }
-    // Cloud
-    if (enableCloud) {
-      setBackup({ cloudProvider: 'supabase', autoBackup: 'on-shift-close' });
-    }
-    // Complete + log the admin in
-    completeSetup(adminUser?.id ?? 'u_admin');
-    toast.success('Setup complete — welcome!', { description: `${shopName} is ready to go.` });
   };
 
   return (
@@ -403,7 +397,7 @@ export default function FirstRunWizard() {
             )}
 
             {step === 'cloud' && (
-              <Step title="Cloud backup" subtitle="Optional — sync and back up online">
+              <Step title="Backup" subtitle="Keep a safe copy of your shop data">
                 <label
                   className={cn(
                     'flex items-start gap-3 rounded-md border p-4 cursor-pointer transition',
@@ -417,15 +411,18 @@ export default function FirstRunWizard() {
                     className="mt-1"
                   />
                   <div>
-                    <div className="font-medium text-sm">Enable cloud backup</div>
-                    <div className="text-[12px] text-muted-foreground mt-0.5">
-                      Automatically back up to the cloud after each shift close. You'll connect your
-                      provider later in Settings → Backup & Sync.
+                    <div className="font-medium text-sm">Save backups to a cloud folder</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      If OneDrive, Google Drive or Dropbox is installed on this computer, backups
+                      are saved into that folder so a copy is kept online. No account or password is
+                      needed here — your cloud app does the uploading.
                     </div>
                   </div>
                 </label>
-                <div className="text-[12px] text-muted-foreground mt-3">
-                  The app works fully offline. Cloud is optional and can be enabled any time.
+                <div className="text-xs text-muted-foreground mt-3">
+                  Either way a backup is taken now, and then automatically. Without a cloud folder
+                  the copy is saved to your Documents folder on this computer. You can change this
+                  any time in Settings → Backup &amp; Cloud.
                 </div>
               </Step>
             )}

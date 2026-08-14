@@ -15,7 +15,6 @@ import {
 } from 'lucide-react';
 import type { KpiId } from '@/stores/dashboard';
 import { Kpi } from './Kpi';
-import { todayStats, dashboardMock, lowStock } from '@/mocks/data';
 import { useDashboardData } from '@/hooks/useDashboardData';
 import { formatBDT, formatNumber } from '@/lib/utils';
 
@@ -58,8 +57,11 @@ export function renderKpi(id: KpiId, args: RenderArgs) {
 }
 
 function KpiRenderer({ id, args }: { id: KpiId; args: RenderArgs }) {
-  const { data, backend } = useDashboardData();
-  const live = backend && data ? data.stats : null;
+  const { data } = useDashboardData();
+  // Backend-only: no fallback data source. While the first fetch is in flight
+  // (or after a failure) `stats` is null and every KPI renders a neutral zero
+  // with no delta rather than a fabricated number.
+  const live = data ? data.stats : null;
   const m = KPI_META[id];
   const common = {
     icon: m.icon,
@@ -74,8 +76,8 @@ function KpiRenderer({ id, args }: { id: KpiId; args: RenderArgs }) {
       return (
         <Kpi
           {...common}
-          value={formatBDT(live ? live.sales.total : todayStats.sales)}
-          delta={live ? live.sales.deltaPct : 12.4}
+          value={formatBDT(live?.sales.total ?? 0)}
+          delta={live?.sales.deltaPct}
           tone="primary"
           to="/sales"
         />
@@ -84,8 +86,8 @@ function KpiRenderer({ id, args }: { id: KpiId; args: RenderArgs }) {
       return (
         <Kpi
           {...common}
-          value={formatBDT(live ? live.profit.netProfit : dashboardMock.todayProfit.netProfit)}
-          delta={live ? live.profit.deltaPct : dashboardMock.todayProfit.deltaVsYesterday}
+          value={formatBDT(live?.profit.netProfit ?? 0)}
+          delta={live?.profit.deltaPct}
           tone="success"
           onClick={args.onOpenProfit}
         />
@@ -94,8 +96,8 @@ function KpiRenderer({ id, args }: { id: KpiId; args: RenderArgs }) {
       return (
         <Kpi
           {...common}
-          value={formatNumber(live ? live.transactions.count : todayStats.transactions)}
-          delta={live ? live.transactions.deltaPct : 4.1}
+          value={formatNumber(live?.transactions.count ?? 0)}
+          delta={live?.transactions.deltaPct}
           tone="success"
           to="/sales"
         />
@@ -104,8 +106,8 @@ function KpiRenderer({ id, args }: { id: KpiId; args: RenderArgs }) {
       return (
         <Kpi
           {...common}
-          value={formatNumber(live ? live.itemsSold.count : todayStats.itemsSold)}
-          delta={live ? live.itemsSold.deltaPct : -2.6}
+          value={formatNumber(live?.itemsSold.count ?? 0)}
+          delta={live?.itemsSold.deltaPct}
           tone="warning"
         />
       );
@@ -113,8 +115,8 @@ function KpiRenderer({ id, args }: { id: KpiId; args: RenderArgs }) {
       return (
         <Kpi
           {...common}
-          value={String(live ? live.newCustomers.count : todayStats.newCustomers)}
-          delta={live ? live.newCustomers.deltaPct : 50}
+          value={String(live?.newCustomers.count ?? 0)}
+          delta={live?.newCustomers.deltaPct}
           tone="info"
           to="/contacts/customers"
         />
@@ -124,7 +126,7 @@ function KpiRenderer({ id, args }: { id: KpiId; args: RenderArgs }) {
       return (
         <Kpi
           {...common}
-          value={formatBDT(live ? live.cashInDrawer : dashboardMock.cashInDrawer)}
+          value={formatBDT(live?.cashInDrawer ?? 0)}
           tone="primary"
           to="/cash-register"
         />
@@ -133,7 +135,7 @@ function KpiRenderer({ id, args }: { id: KpiId; args: RenderArgs }) {
       return (
         <Kpi
           {...common}
-          value={formatBDT(live ? live.customerDuesTotal : dashboardMock.customerDuesTotal)}
+          value={formatBDT(live?.customerDuesTotal ?? 0)}
           tone="destructive"
           to="/contacts/dues"
         />
@@ -142,7 +144,7 @@ function KpiRenderer({ id, args }: { id: KpiId; args: RenderArgs }) {
       return (
         <Kpi
           {...common}
-          value={formatBDT(live ? live.supplierDuesTotal : dashboardMock.supplierDuesTotal)}
+          value={formatBDT(live?.supplierDuesTotal ?? 0)}
           tone="warning"
           to="/contacts/suppliers"
         />
@@ -151,7 +153,7 @@ function KpiRenderer({ id, args }: { id: KpiId; args: RenderArgs }) {
       return (
         <Kpi
           {...common}
-          value={String(live ? live.lowStockCount : lowStock.length)}
+          value={String(live?.lowStockCount ?? 0)}
           tone="warning"
           to="/stock/alerts"
         />
@@ -160,7 +162,7 @@ function KpiRenderer({ id, args }: { id: KpiId; args: RenderArgs }) {
       return (
         <Kpi
           {...common}
-          value={String(live ? live.outOfStockCount : dashboardMock.outOfStockCount)}
+          value={String(live?.outOfStockCount ?? 0)}
           tone="destructive"
           to="/stock/alerts"
         />
@@ -169,7 +171,7 @@ function KpiRenderer({ id, args }: { id: KpiId; args: RenderArgs }) {
       return (
         <Kpi
           {...common}
-          value={formatBDT(live ? live.todayExpenses : dashboardMock.todayExpenses)}
+          value={formatBDT(live?.todayExpenses ?? 0)}
           tone="warning"
           to="/expenses"
         />
@@ -178,7 +180,7 @@ function KpiRenderer({ id, args }: { id: KpiId; args: RenderArgs }) {
       return (
         <Kpi
           {...common}
-          value={formatBDT(live ? live.todayPurchases : dashboardMock.todayPurchases)}
+          value={formatBDT(live?.todayPurchases ?? 0)}
           tone="info"
           to="/purchases"
         />
@@ -187,7 +189,7 @@ function KpiRenderer({ id, args }: { id: KpiId; args: RenderArgs }) {
       return (
         <Kpi
           {...common}
-          value={String(live ? live.returnsToday : dashboardMock.returnsToday)}
+          value={String(live?.returnsToday ?? 0)}
           tone="destructive"
           to="/sales/returns"
         />

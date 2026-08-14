@@ -12,15 +12,10 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { ProductImage } from './ProductImage';
-import {
-  brands as mockBrands,
-  categories as mockCategories,
-  units as mockUnits,
-  type Product,
-} from '@/mocks/data';
+import type { Product } from '@/types/domain';
 import { useCategories, useBrands, useUnits } from '@/hooks/useCatalog';
-import { hasBackend } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { NumberField } from '@/components/ui/NumberField';
 
@@ -61,16 +56,14 @@ export function ProductForm({ initial, onSave, onDelete, asDrawer, onCancel }: P
   const [p, setP] = useState<Product>(initial ?? EMPTY);
   const [imgPreview, setImgPreview] = useState<string | undefined>(initial?.image);
 
-  // Source dropdown options from the backend when available so editing a product
-  // writes REAL category/brand/unit ids (not mock ids like `c1`). Falls back to
-  // the mock master data outside Electron.
-  const backend = hasBackend();
+  // Dropdown options come from the backend so editing a product always writes
+  // REAL category/brand/unit ids.
   const categoriesQuery = useCategories();
   const brandsQuery = useBrands();
   const unitsQuery = useUnits();
-  const categories = backend ? (categoriesQuery.data ?? []) : mockCategories;
-  const brands = backend ? (brandsQuery.data ?? []) : mockBrands;
-  const units = backend ? (unitsQuery.data ?? []) : mockUnits;
+  const categories = categoriesQuery.data ?? [];
+  const brands = brandsQuery.data ?? [];
+  const units = unitsQuery.data ?? [];
 
   const set = <K extends keyof Product>(k: K, v: Product[K]) => setP((x) => ({ ...x, [k]: v }));
 
@@ -114,42 +107,54 @@ export function ProductForm({ initial, onSave, onDelete, asDrawer, onCancel }: P
     onSave(finalProduct);
   };
 
-  const isValid = p.name.trim() && p.sku.trim() && p.price > 0 && p.categoryId && p.brandId;
+  const isValid = p.name.trim() && p.sku.trim() && p.price > 0;
 
   return (
-    <div className={cn('flex flex-col', asDrawer ? '' : 'min-h-full')}>
+    /**
+     * LAYOUT — two modes, one rule: exactly ONE scroll container.
+     *
+     * Drawer mode: `Drawer` gives its body `flex-1 min-h-0 flex flex-col`, so a
+     * child that wants to scroll must claim `flex-1 min-h-0` itself. This root
+     * previously had only `flex flex-col`, so it grew to its content height, the
+     * inner scroller never got a bounded height, and the form could not be
+     * scrolled at all — which also pushed the Save button off the bottom of the
+     * screen, making the drawer a dead end.
+     *
+     * Page mode: `AppShell`'s <main> is already the scroller, so this must NOT
+     * add a nested one. `min-h-full` lets short forms still fill the viewport.
+     */
+    <div className={cn('flex flex-col', asDrawer ? 'flex-1 min-h-0' : 'min-h-full')}>
       {!asDrawer && (
-        <div className="flex items-center justify-between gap-3 px-6 py-4 border-b border-border bg-card/50 sticky top-0 z-10">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" onClick={() => nav(-1)} title="Back">
-              <ArrowLeft className="size-4" />
-            </Button>
-            <div>
-              <h1 className="text-xl font-semibold tracking-tight">
-                {initial ? 'Edit Product' : 'Add Product'}
-              </h1>
-              <p className="text-xs text-muted-foreground">
-                {initial ? p.name : 'Create a new product in your catalogue'}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {onDelete && initial && (
-              <Button variant="outline" onClick={onDelete}>
-                <Trash2 className="size-4" /> Delete
-              </Button>
-            )}
-            <Button variant="outline" onClick={() => setP(initial ?? EMPTY)}>
-              <RotateCcw className="size-4" /> Reset
-            </Button>
-            <Button onClick={submit} disabled={!isValid}>
-              <Save className="size-4" /> {initial ? 'Save Changes' : 'Save Product'}
-            </Button>
-          </div>
+        // Sticky so Save stays reachable on a long form, and the shared
+        // PageHeader so this looks like every other page instead of a bespoke
+        // screen with its own title bar.
+        <div className="sticky top-0 z-20 bg-background">
+          <PageHeader
+            title={initial ? 'Edit Product' : 'Add Product'}
+            subtitle={initial ? p.name : 'Create a new product in your catalogue'}
+            actions={
+              <>
+                <Button variant="outline" onClick={() => nav(-1)}>
+                  <ArrowLeft className="size-4" /> Back
+                </Button>
+                {onDelete && initial && (
+                  <Button variant="outline" onClick={onDelete}>
+                    <Trash2 className="size-4" /> Delete
+                  </Button>
+                )}
+                <Button variant="outline" onClick={() => setP(initial ?? EMPTY)}>
+                  <RotateCcw className="size-4" /> Reset
+                </Button>
+                <Button onClick={submit} disabled={!isValid}>
+                  <Save className="size-4" /> {initial ? 'Save Changes' : 'Save Product'}
+                </Button>
+              </>
+            }
+          />
         </div>
       )}
 
-      <div className="flex-1 overflow-auto">
+      <div className={cn(asDrawer && 'flex-1 min-h-0 overflow-auto')}>
         <div className={cn('mx-auto max-w-5xl', asDrawer ? 'p-4' : 'p-6')}>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* LEFT (image + basic) */}
@@ -265,7 +270,7 @@ export function ProductForm({ initial, onSave, onDelete, asDrawer, onCancel }: P
                   >
                     <Input value={p.barcode} onChange={(e) => set('barcode', e.target.value)} placeholder="8801XXXXXXXXX" />
                   </Field>
-                  <Field label="Category" required>
+                  <Field label="Category">
                     <Select value={p.categoryId} onChange={(v) => set('categoryId', v)}>
                       <option value="">Select category…</option>
                       {categories.map((c) => (
@@ -275,7 +280,7 @@ export function ProductForm({ initial, onSave, onDelete, asDrawer, onCancel }: P
                       ))}
                     </Select>
                   </Field>
-                  <Field label="Brand" required>
+                  <Field label="Brand">
                     <Select value={p.brandId} onChange={(v) => set('brandId', v)}>
                       <option value="">Select brand…</option>
                       {brands.map((b) => (
@@ -371,11 +376,37 @@ export function ProductForm({ initial, onSave, onDelete, asDrawer, onCancel }: P
                 </div>
               </Section>
 
-              <Section title="Stock" subtitle="Per branch · for first-time setup, use Opening Stock import">
+              {/*
+                Opening stock is writable only while CREATING. On an existing
+                product it used to be an editable box that did nothing: on-hand is
+                SUM(stock_movements.qty), so `products.update` has no stock column
+                to write — the form reported "Product saved" and the quantity never
+                moved. Now the current figure is shown read-only, with a pointer to
+                the operation that actually records a change.
+              */}
+              <Section
+                title="Stock"
+                subtitle={
+                  initial
+                    ? 'Counted from stock movements — not typed here'
+                    : 'Opening quantity for this product'
+                }
+              >
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <Field label="Opening stock">
-                    <NumberInput value={p.stock} onChange={(v) => set('stock', v)} placeholder="0" />
-                  </Field>
+                  {initial ? (
+                    <Field
+                      label="In stock now"
+                      hint="To change it, use Update Price & Stock on the Products or Stock screen. That records a stock correction, so your history stays right."
+                    >
+                      <div className="h-9 flex items-center px-3 rounded-md border border-input bg-muted/40 font-mono tabular text-sm">
+                        {p.stock} {p.unit}
+                      </div>
+                    </Field>
+                  ) : (
+                    <Field label="Opening stock" hint="How many you have right now">
+                      <NumberInput value={p.stock} onChange={(v) => set('stock', v)} placeholder="0" />
+                    </Field>
+                  )}
                   <Field label="Reorder level" hint="Trigger Low Stock alert when stock ≤ this">
                     <NumberInput
                       value={p.reorderLevel}

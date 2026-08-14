@@ -16,11 +16,13 @@ import { Input } from '@/components/ui/Input';
 import { NumberField } from '@/components/ui/NumberField';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
-import { products as mockProducts } from '@/mocks/data';
-import { hasBackend } from '@/lib/api';
 import { useProducts } from '@/hooks/useProducts';
 import { useBranches } from '@/stores/branches';
 import { useSuppliers } from '@/stores/contacts';
+import { api } from '@/lib/api';
+import { toSupplier, type BackendSupplier } from '@/hooks/contactAdapter';
+import type { Supplier } from '@/types/domain';
+import { confirm } from '@/stores/confirm';
 import { toast } from '@/stores/toast';
 import {
   computeTotals,
@@ -43,26 +45,35 @@ export default function AddPurchase() {
   const [searchParams] = useSearchParams();
   const purchases = usePurchases((s) => s.purchases);
   const addPurchase = usePurchases((s) => s.addPurchase);
-  const suppliers = useSuppliers((s) => s.items);
+  // The supplier SELECT reads the contacts store's UNPAGED `options` (id+name).
+  // `items` is one page of suppliers, so building the select from it would hide
+  // every supplier past the first page. The chosen supplier's address / pay
+  // terms / payable are NOT in `options`, so that one record is read directly
+  // (see the suppliers.get effect below).
+  const supplierOptions = useSuppliers((s) => s.options);
+  const loadSupplierOptions = useSuppliers((s) => s.loadOptions);
+  const storeSuppliers = useSuppliers((s) => s.items);
 
-  // Data source: live backend when available, else mock seed (mirrors POS.tsx).
-  const backend = hasBackend();
+  // Data source: the SQLite backend only (mirrors POS.tsx). The mock product
+  // seed fallback was removed — an empty query means an empty item picker.
   const productsQuery = useProducts('br_mp');
-  const products = backend ? (productsQuery.data ?? []) : mockProducts;
+  const products = productsQuery.data ?? [];
   const branches = useBranches((s) => s.items);
 
-  // Hydrate branches on mount (cheap no-op without a backend).
+  // Hydrate branches + load the full supplier option list on mount (cheap
+  // no-ops without a backend).
   const hydrateBranches = useBranches((s) => s.hydrate);
   useEffect(() => {
     void hydrateBranches();
-  }, [hydrateBranches]);
+    void loadSupplierOptions();
+  }, [hydrateBranches, loadSupplierOptions]);
 
   const editing = id ? purchases.find((p) => p.id === id) : undefined;
 
-  // Default branch: edit value wins; otherwise the default branch name, else first.
+  // Default branch: edit value wins; otherwise the default branch name, else
+  // first. No hardcoded branch-name fallback (see the hydrate effect below).
   const defaultBranchName =
-    editing?.branch ??
-    (branches.find((b) => b.isDefault)?.name ?? branches[0]?.name ?? 'Mirpur Branch');
+    editing?.branch ?? (branches.find((b) => b.isDefault)?.name ?? branches[0]?.name ?? '');
 
   // Header
   const [supplierId, setSupplierId] = useState(editing?.supplierId ?? '');
@@ -72,6 +83,15 @@ export default function AddPurchase() {
   const [status, setStatus] = useState<PurchaseStatus>(editing?.status ?? 'received');
   const [payTerms, setPayTerms] = useState<string>(editing?.payTerms ?? '');
   const [attachmentName, setAttachmentName] = useState<string | undefined>(editing?.attachmentName);
+
+  // Branches arrive asynchronously from the backend, so adopt the default branch
+  // once the list lands (a hardcoded branch name used to fill this gap).
+  useEffect(() => {
+    if (editing || branch) return;
+    const next = branches.find((b) => b.isDefault)?.name ?? branches[0]?.name;
+    if (next) setBranch(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branches]);
 
   // Totals
   const [orderDiscountType, setOrderDiscountType] = useState<'flat' | 'percent'>(editing?.orderDiscountType ?? 'flat');
@@ -86,8 +106,39 @@ export default function AddPurchase() {
   const [lines, setLines] = useState<PurchaseLine[]>(editing?.lines ?? []);
   const [searchQ, setSearchQ] = useState('');
 
-  // Auto-fill from supplier
-  const supplier = suppliers.find((s) => s.id === supplierId);
+  // Auto-fill from supplier. `options` only carries id+name, so the FULL record
+  // for the chosen supplier (address, pay terms, payable) is read one row at a
+  // time — the store page is preferred when it happens to hold that supplier, so
+  // an edit elsewhere is reflected without a refetch.
+  const storeSupplier = storeSuppliers.find((s) => s.id === supplierId);
+  const [fetchedSupplier, setFetchedSupplier] = useState<Supplier | null>(null);
+  const hasStoreSupplier = !!storeSupplier;
+
+  useEffect(() => {
+    if (!supplierId || hasStoreSupplier) {
+      setFetchedSupplier(null);
+      return;
+    }
+    let alive = true;
+    void api<BackendSupplier | null>('suppliers.get', { id: supplierId })
+      .then((row) => {
+        if (alive && row) setFetchedSupplier(toSupplier(row));
+      })
+      .catch(() => {
+        // Channel error or running outside Electron — no autofill, fields stay
+        // editable.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [supplierId, hasStoreSupplier]);
+
+  const supplier =
+    storeSupplier ?? (fetchedSupplier?.id === supplierId ? fetchedSupplier : undefined);
+  // The name is available from `options` straight away, so the record being built
+  // is never left with a blank supplier name while the detail read is in flight.
+  const supplierName =
+    supplier?.name ?? supplierOptions.find((o) => o.id === supplierId)?.name ?? '';
   const supplierAddress = supplier?.address ?? '';
   const supplierPayTerms = supplier?.paymentTerms ?? '';
 
@@ -189,7 +240,7 @@ export default function AddPurchase() {
     status,
     date,
     supplierId,
-    supplierName: supplier?.name ?? '',
+    supplierName,
     supplierAddress,
     branch,
     user: 'Seam',
@@ -225,18 +276,20 @@ export default function AddPurchase() {
     // Re-creating it would duplicate the record and double-count stock/cash, so
     // editing an existing backend purchase in place is blocked — the user should
     // Cancel it (which reverses stock + cash) and add a new one.
-    if (backend && editing) {
-      alert(
-        'A saved purchase cannot be edited in place (it may have already affected stock and cash). ' +
-          'Cancel it from the purchase detail, then add a new purchase.',
-      );
+    if (editing) {
+      toast.error('A saved purchase cannot be edited in place', {
+        description:
+          'It may have already affected stock and cash. Cancel it from the purchase detail, then add a new purchase.',
+      });
       return;
     }
     if (lowMarginLines.length > 0) {
-      if (!confirm(
-        `${lowMarginLines.length} item(s) will have margin under 10%. Save anyway?`,
-      ))
-        return;
+      const ok = await confirm({
+        title: `${lowMarginLines.length} item(s) will have margin under 10%.`,
+        message: 'Save anyway?',
+        confirmLabel: 'Save',
+      });
+      if (!ok) return;
     }
     const rec = buildRecord(0);
     await addPurchase(rec);
@@ -247,24 +300,25 @@ export default function AddPurchase() {
     if (!isValid) return;
     // EDIT-MODE INTEGRITY (backend): same rule as saveUnpaid — never re-create an
     // existing purchase, it would duplicate stock-in and cash-out.
-    if (backend && editing) {
-      alert(
-        'A saved purchase cannot be edited in place (it may have already affected stock and cash). ' +
-          'Cancel it from the purchase detail, then add a new purchase.',
-      );
+    if (editing) {
+      toast.error('A saved purchase cannot be edited in place', {
+        description:
+          'It may have already affected stock and cash. Cancel it from the purchase detail, then add a new purchase.',
+      });
       return;
     }
-    // Save & Pay (now wired to the persisted purchase): under a backend,
-    // addPurchase() awaits api('purchases.create') (which returns the new backend
-    // id) and rehydrates, resolving to that real id. We then look the rehydrated
-    // record up by that id and open the payment modal on it, so the payment posts
-    // to the persisted purchase — not the optimistic local-id record. Without a
-    // backend we keep opening the modal on the optimistic `rec`.
+    // Save & Pay is always wired to the persisted purchase: addPurchase() awaits
+    // api('purchases.create') (which returns the new backend id) and rehydrates,
+    // resolving to that real id. We then look the rehydrated record up by that
+    // id and open the payment modal on it, so the payment posts to the persisted
+    // purchase. The optimistic local-id fallback was removed.
     if (lowMarginLines.length > 0) {
-      if (!confirm(
-        `${lowMarginLines.length} item(s) will have margin under 10%. Save anyway?`,
-      ))
-        return;
+      const ok = await confirm({
+        title: `${lowMarginLines.length} item(s) will have margin under 10%.`,
+        message: 'Save anyway?',
+        confirmLabel: 'Save',
+      });
+      if (!ok) return;
     }
     const rec = buildRecord(0);
     let newId: string;
@@ -274,18 +328,14 @@ export default function AddPurchase() {
       // addPurchase already surfaced the error toast + rehydrated.
       return;
     }
-    if (backend) {
-      const persisted = usePurchases.getState().purchases.find((p) => p.id === newId);
-      if (persisted) {
-        setPendingPayment(persisted);
-      } else {
-        // Couldn't locate the rehydrated purchase — don't attach to a stale id.
-        toast.error('Purchase saved, but could not open payment. Open it from the Purchases list.');
-        nav('/purchases');
-      }
-      return;
+    const persisted = usePurchases.getState().purchases.find((p) => p.id === newId);
+    if (persisted) {
+      setPendingPayment(persisted);
+    } else {
+      // Couldn't locate the rehydrated purchase — don't attach to a stale id.
+      toast.error('Purchase saved, but could not open payment. Open it from the Purchases list.');
+      nav('/purchases');
     }
-    setPendingPayment(rec);
   };
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -328,7 +378,7 @@ export default function AddPurchase() {
                     className="h-9 flex-1 min-w-0 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
                   >
                     <option value="">Please Select</option>
-                    {suppliers.map((s) => (
+                    {supplierOptions.map((s) => (
                       <option key={s.id} value={s.id}>
                         {s.name}
                       </option>
@@ -368,7 +418,7 @@ export default function AddPurchase() {
                   onChange={(e) => setBranch(e.target.value)}
                   className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
                 >
-                  {(branches.length > 0 ? branches.map((b) => b.name) : [branch]).map((b) => (
+                  {(branches.length > 0 ? branches.map((b) => b.name) : branch ? [branch] : []).map((b) => (
                     <option key={b} value={b}>
                       {b}
                     </option>
@@ -671,7 +721,11 @@ export default function AddPurchase() {
       <NewSupplierModal
         open={newSupplierOpen}
         onClose={() => setNewSupplierOpen(false)}
-        onCreated={(id) => setSupplierId(id)}
+        onCreated={(id) => {
+          setSupplierId(id);
+          // Refresh the option list so the new supplier appears in the select.
+          void loadSupplierOptions();
+        }}
       />
     </div>
   );

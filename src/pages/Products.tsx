@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Search,
@@ -16,6 +16,7 @@ import {
   Eye,
   MoreHorizontal,
   ChevronDown,
+  Tags,
 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
@@ -24,12 +25,8 @@ import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { Popover } from '@/components/ui/Popover';
 import { Drawer } from '@/components/ui/Drawer';
-import {
-  products as seedProducts,
-  categories as seedCategories,
-  brands as seedBrands,
-  type Product,
-} from '@/mocks/data';
+import { Pagination } from '@/components/ui/Pagination';
+import type { Product } from '@/types/domain';
 import { formatBDT, formatNumber, cn, relativeTime } from '@/lib/utils';
 import {
   COLUMN_META,
@@ -39,14 +36,18 @@ import {
 import { ProductImage } from '@/components/products/ProductImage';
 import { ColumnsCustomize } from '@/components/products/ColumnsCustomize';
 import { ProductForm } from '@/components/products/ProductForm';
-import { hasBackend } from '@/lib/api';
+import { QuickUpdateModal } from '@/components/products/QuickUpdateModal';
 import {
-  useProducts,
+  useProductsPage,
   useCreateProduct,
   useUpdateProduct,
   useDeleteProduct,
+  useArchiveProduct,
+  useProductUsage,
+  type ProductUsage,
 } from '@/hooks/useProducts';
 import { useCategories, useBrands } from '@/hooks/useCatalog';
+import { useCanAll } from '@/hooks/useCan';
 import { confirm } from '@/stores/confirm';
 import { toast } from '@/stores/toast';
 import { SkeletonTable } from '@/components/ui/Skeleton';
@@ -54,28 +55,30 @@ import { SkeletonTable } from '@/components/ui/Skeleton';
 export default function Products() {
   const nav = useNavigate();
   const { view, setView, columns } = useProductsUI();
-  const backend = hasBackend();
 
-  // ----- Data source: backend when available, else mock seed -----
-  const productsQuery = useProducts();
   const categoriesQuery = useCategories();
   const brandsQuery = useBrands();
   const createProduct = useCreateProduct();
   const updateProduct = useUpdateProduct();
   const deleteProduct = useDeleteProduct();
+  const archiveProduct = useArchiveProduct();
+  const productUsage = useProductUsage();
+  // Removing a product from the catalogue for good is owner-only; archiving is a
+  // reversible catalogue edit. The IPC boundary enforces both — see useCan.ts.
+  const perms = useCanAll(['products.delete', 'products.edit', 'products.create'] as const);
+  const canDelete = perms['products.delete'];
+  const canArchive = perms['products.edit'];
+  const canEdit = perms['products.edit'];
+  const canCreate = perms['products.create'];
 
-  const [mockList, setMockList] = useState<Product[]>(seedProducts);
-
-  const list: Product[] = backend ? (productsQuery.data ?? []) : mockList;
-  const categories = backend
-    ? (categoriesQuery.data ?? [])
-    : seedCategories;
-  const brands = backend ? (brandsQuery.data ?? []) : seedBrands;
+  const categories = categoriesQuery.data ?? [];
+  const brands = brandsQuery.data ?? [];
 
   const categoryName = (id: string) => categories.find((c) => c.id === id)?.name ?? '—';
   const brandName = (id: string) => brands.find((b) => b.id === id)?.name ?? '—';
 
-  // Filters
+  // Filters. Category / brand / stock state / text all go to the SERVER; only the
+  // price range has no backend field (see `filtered` below).
   const [searchParams] = useSearchParams();
   const [q, setQ] = useState(() => searchParams.get('q') ?? '');
   const [cat, setCat] = useState<string | 'all'>('all');
@@ -84,32 +87,76 @@ export default function Products() {
   const [priceMin, setPriceMin] = useState<number | ''>('');
   const [priceMax, setPriceMax] = useState<number | ''>('');
 
+  // Paging
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+
+  // The text search hits the DATABASE, so it is debounced ~300ms — a query per
+  // keystroke would be its own performance problem.
+  const [debouncedQ, setDebouncedQ] = useState(q);
+  useEffect(() => {
+    const handle = setTimeout(() => setDebouncedQ(q), 300);
+    return () => clearTimeout(handle);
+  }, [q]);
+
+  // ----- Data source: the SQLite backend, ONE PAGE at a time -----
+  const productsQuery = useProductsPage({
+    page,
+    pageSize,
+    q: debouncedQ || undefined,
+    categoryId: cat,
+    brandId: brand,
+    stockState: stockFilter === 'all' ? undefined : stockFilter,
+  });
+
+  const list: Product[] = productsQuery.data?.rows ?? [];
+  const total = productsQuery.data?.total ?? 0;
+
+  // Any filter change resets to page 1 — staying on page 9 of a narrower result
+  // set would show an empty table.
+  const firstFilterRun = useRef(true);
+  useEffect(() => {
+    if (firstFilterRun.current) {
+      firstFilterRun.current = false;
+      return;
+    }
+    setPage(1);
+  }, [debouncedQ, cat, brand, stockFilter, pageSize]);
+
   // UI state
   const [columnsOpen, setColumnsOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [quickEditId, setQuickEditId] = useState<string | null>(null);
+  // The everyday change (a new price, a re-count) gets its own small popup —
+  // the full form is 25 fields across seven sections, which is the wrong tool
+  // for "cement went up ten taka". See QuickUpdateModal.
+  const [quickUpdateId, setQuickUpdateId] = useState<string | null>(null);
 
+  /**
+   * Server already narrowed by text / category / brand / stock state. The price
+   * range has no server-side field, so it stays CLIENT-side over this page's rows.
+   */
   const filtered = useMemo(() => {
+    if (priceMin === '' && priceMax === '') return list;
     return list.filter((p) => {
-      if (cat !== 'all' && p.categoryId !== cat) return false;
-      if (brand !== 'all' && p.brandId !== brand) return false;
-      if (stockFilter === 'in' && p.stock <= 0) return false;
-      if (stockFilter === 'low' && (p.stock <= 0 || p.stock > p.reorderLevel)) return false;
-      if (stockFilter === 'out' && p.stock > 0) return false;
       if (priceMin !== '' && p.price < Number(priceMin)) return false;
       if (priceMax !== '' && p.price > Number(priceMax)) return false;
-      if (q && !`${p.name} ${p.sku} ${p.barcode}`.toLowerCase().includes(q.toLowerCase()))
-        return false;
       return true;
     });
-  }, [list, q, cat, brand, stockFilter, priceMin, priceMax]);
+  }, [list, priceMin, priceMax]);
 
-  const totals = {
-    products: list.length,
-    stockValue: list.reduce((s, p) => s + p.stock * p.cost, 0),
-    retailValue: list.reduce((s, p) => s + p.stock * p.price, 0),
-    low: list.filter((p) => p.stock <= p.reorderLevel).length,
-  };
+  // Stock/retail value sums cover the LOADED PAGE only — the rest of the
+  // catalogue was never fetched. Labelled "this page"; Reports has the full
+  // figures. Only the product COUNT is a real total (it comes from the query).
+  const totals = useMemo(
+    () => ({
+      products: total,
+      stockValue: filtered.reduce((s, p) => s + p.stock * p.cost, 0),
+      retailValue: filtered.reduce((s, p) => s + p.stock * p.price, 0),
+      low: filtered.filter((p) => p.stock <= p.reorderLevel).length,
+    }),
+    [filtered, total],
+  );
 
   const allSelectedOnPage = filtered.length > 0 && filtered.every((p) => selected.has(p.id));
   const toggleSelectAll = () => {
@@ -128,22 +175,118 @@ export default function Products() {
       return next;
     });
 
+  /**
+   * Remove products from the catalogue.
+   *
+   * This used to be a bare confirm followed by a delete that frequently failed
+   * with "Cannot delete: product has sales history" and left the owner stuck.
+   * Now the backend is ASKED FIRST (`products.usage`) and each product is routed
+   * to the only correct outcome:
+   *
+   *   - referenced by an invoice/purchase/transfer → ARCHIVE. Deleting it would
+   *     rewrite the shop's history, and SQLite refuses it anyway (the document
+   *     tables reference products(id) with no ON DELETE clause).
+   *   - never traded, but still has stock → DELETE with force, after saying so.
+   *   - never traded, no stock → plain DELETE.
+   *
+   * The two groups are confirmed separately, because they are genuinely
+   * different decisions and one of them is not reversible.
+   */
   const removeProducts = async (ids: string[]) => {
-    const ok = await confirm({
-      title: `Delete ${ids.length} product(s)?`,
-      variant: 'destructive',
-    });
-    if (!ok) return;
-    if (backend) {
-      try {
-        for (const id of ids) await deleteProduct.mutateAsync(id);
-        toast.success(`Deleted ${ids.length} product(s)`);
-      } catch (e) {
-        toast.error('Delete failed', { description: e instanceof Error ? e.message : undefined });
-      }
-    } else {
-      setMockList((cs) => cs.filter((p) => !ids.includes(p.id)));
+    if (ids.length === 0) return;
+
+    let usages: { id: string; usage: ProductUsage }[];
+    try {
+      usages = await Promise.all(
+        ids.map(async (id) => ({ id, usage: await productUsage.mutateAsync(id) })),
+      );
+    } catch (e) {
+      toast.error('Could not check what these products are used for', {
+        description: e instanceof Error ? e.message : undefined,
+      });
+      return;
     }
+
+    const nameOf = (id: string) => list.find((p) => p.id === id)?.name ?? id;
+    const deletable = usages.filter((u) => u.usage.deletable);
+    const mustArchive = usages.filter((u) => !u.usage.deletable);
+    const withStock = deletable.filter((u) => Math.abs(u.usage.stock) > 0.001);
+
+    let deleted = 0;
+    let archived = 0;
+
+    if (deletable.length > 0) {
+      if (!canDelete) {
+        toast.error('Only an admin can delete a product', {
+          description: 'Ask the owner to sign in, or mark the product “not for sale”.',
+        });
+      } else {
+        const stockNote =
+          withStock.length > 0
+            ? ` ${withStock.length} of them still ${withStock.length === 1 ? 'has' : 'have'} stock on hand, which will be discarded.`
+            : '';
+        const ok = await confirm({
+          title:
+            deletable.length === 1
+              ? `Delete "${nameOf(deletable[0].id)}" for good?`
+              : `Delete ${deletable.length} products for good?`,
+          message: `This cannot be undone.${stockNote}`,
+          confirmLabel: 'Delete',
+          variant: 'destructive',
+        });
+        if (ok) {
+          for (const u of deletable) {
+            try {
+              // force: the stock guard is a prompt, and we have just shown it.
+              await deleteProduct.mutateAsync({ id: u.id, force: true });
+              deleted++;
+            } catch (e) {
+              toast.error(`Could not delete "${nameOf(u.id)}"`, {
+                description: e instanceof Error ? e.message : undefined,
+              });
+            }
+          }
+        }
+      }
+    }
+
+    if (mustArchive.length > 0) {
+      const first = mustArchive[0];
+      const what = mustArchive.map((u) => u.usage.documents.map((d) => d.label)).flat();
+      const kinds = [...new Set(what)].join(', ');
+      if (!canArchive) {
+        toast.error('Only a manager or admin can retire a product', {
+          description: `${mustArchive.length} product(s) have ${kinds} and cannot be deleted.`,
+        });
+      } else {
+        const ok = await confirm({
+          title:
+            mustArchive.length === 1
+              ? `Archive "${nameOf(first.id)}" instead?`
+              : `Archive ${mustArchive.length} products instead?`,
+          message: `${mustArchive.length === 1 ? 'It appears' : 'They appear'} in your ${kinds}, so deleting would rewrite past records. Archiving hides ${mustArchive.length === 1 ? 'it' : 'them'} from the catalogue and the POS, keeps every past invoice intact, and can be undone.`,
+          confirmLabel: 'Archive',
+        });
+        if (ok) {
+          for (const u of mustArchive) {
+            try {
+              await archiveProduct.mutateAsync({ id: u.id });
+              archived++;
+            } catch (e) {
+              toast.error(`Could not archive "${nameOf(u.id)}"`, {
+                description: e instanceof Error ? e.message : undefined,
+              });
+            }
+          }
+        }
+      }
+    }
+
+    const done: string[] = [];
+    if (deleted > 0) done.push(`${deleted} deleted`);
+    if (archived > 0) done.push(`${archived} archived`);
+    if (done.length > 0) toast.success(done.join(' · '));
+
     setSelected(new Set());
   };
 
@@ -157,48 +300,33 @@ export default function Products() {
       sku: src.sku + '-CP' + Math.floor(Math.random() * 1000),
       barcode: '',
     };
-    if (backend) {
-      try {
-        await createProduct.mutateAsync(copy);
-        toast.success('Product duplicated');
-      } catch (e) {
-        toast.error('Duplicate failed', { description: e instanceof Error ? e.message : undefined });
-      }
-    } else {
-      setMockList((cs) => [copy, ...cs]);
+    try {
+      await createProduct.mutateAsync(copy);
+      toast.success('Product duplicated');
+    } catch (e) {
+      toast.error('Duplicate failed', { description: e instanceof Error ? e.message : undefined });
     }
   };
 
   const upsert = async (p: Product) => {
-    if (backend) {
-      try {
-        const exists = list.some((x) => x.id === p.id);
-        if (exists) await updateProduct.mutateAsync(p);
-        else await createProduct.mutateAsync(p);
-        toast.success('Product saved');
-      } catch (e) {
-        toast.error('Save failed', { description: e instanceof Error ? e.message : undefined });
-      }
-    } else {
-      setMockList((cs) => {
-        const idx = cs.findIndex((x) => x.id === p.id);
-        if (idx >= 0) {
-          const next = [...cs];
-          next[idx] = p;
-          return next;
-        }
-        return [p, ...cs];
-      });
+    try {
+      const exists = list.some((x) => x.id === p.id);
+      if (exists) await updateProduct.mutateAsync(p);
+      else await createProduct.mutateAsync(p);
+      toast.success('Product saved');
+    } catch (e) {
+      toast.error('Save failed', { description: e instanceof Error ? e.message : undefined });
     }
   };
 
   const editing = quickEditId ? list.find((p) => p.id === quickEditId) : undefined;
+  const quickUpdating = quickUpdateId ? list.find((p) => p.id === quickUpdateId) : undefined;
 
   return (
     <div>
       <PageHeader
         title="Products"
-        subtitle={`${formatNumber(totals.products)} products · ${formatBDT(totals.stockValue)} stock value`}
+        subtitle={`${formatNumber(totals.products)} products`}
         actions={
           <>
             <IconBtn title="Customize columns" onClick={() => setColumnsOpen(true)}>
@@ -214,19 +342,34 @@ export default function Products() {
             <Button variant="outline" size="sm">
               <Barcode className="size-4" /> Barcode
             </Button>
-            <Button onClick={() => nav('/products/new')}>
-              <Plus className="size-4" /> Add Product
-            </Button>
+            {/* Entering new stock is a stock-keeper's job, so this stays visible
+                for them; a cashier has `products.view` only and never sees it. */}
+            {canCreate && (
+              <Button onClick={() => nav('/products/new')}>
+                <Plus className="size-4" /> Add Product
+              </Button>
+            )}
           </>
         }
       />
 
       <div className="p-6 space-y-4">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <Stat label="Total Products" value={formatNumber(totals.products)} />
-          <Stat label="Stock Value (Cost)" value={formatBDT(totals.stockValue)} />
-          <Stat label="Retail Value" value={formatBDT(totals.retailValue)} tone="primary" />
-          <Stat label="Low Stock" value={String(totals.low)} tone="warning" />
+        {/* Product count is the real filtered total; the value sums are
+            PAGE-SCOPED, since only this page is in memory. */}
+        <div>
+          <div className="text-[11px] text-muted-foreground mb-1.5">
+            Totals for this page only. Use Reports for full-range figures.
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Stat label="Total Products" value={formatNumber(totals.products)} />
+            <Stat label="Stock Value (Cost, this page)" value={formatBDT(totals.stockValue)} />
+            <Stat
+              label="Retail Value (this page)"
+              value={formatBDT(totals.retailValue)}
+              tone="primary"
+            />
+            <Stat label="Low Stock (this page)" value={String(totals.low)} tone="warning" />
+          </div>
         </div>
 
         {/* Filters */}
@@ -288,6 +431,9 @@ export default function Products() {
                   <div className="text-[10px] uppercase text-muted-foreground font-semibold mb-1">
                     Price range (৳)
                   </div>
+                  <div className="text-[11px] text-muted-foreground mb-1.5">
+                    Price filters this page
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     <Input
                       type="number"
@@ -340,6 +486,12 @@ export default function Products() {
             <Button
               variant="destructive"
               size="sm"
+              disabled={!canDelete && !canArchive}
+              title={
+                canDelete || canArchive
+                  ? undefined
+                  : 'Only an admin can remove products from the catalogue'
+              }
               onClick={() => removeProducts(Array.from(selected))}
             >
               <Trash2 className="size-3.5" /> Delete
@@ -351,7 +503,7 @@ export default function Products() {
         )}
 
         {/* Body */}
-        {backend && productsQuery.isLoading ? (
+        {productsQuery.isLoading ? (
           <SkeletonTable count={8} />
         ) : view === 'table' ? (
           <Card className="overflow-hidden">
@@ -393,10 +545,15 @@ export default function Products() {
                       ))}
                       <td className="px-2 py-2.5">
                         <RowActions
-                          onEdit={() => setQuickEditId(p.id)}
+                          onQuickUpdate={canEdit ? () => setQuickUpdateId(p.id) : undefined}
+                          onEdit={canEdit ? () => setQuickEditId(p.id) : undefined}
                           onView={() => nav(`/products/${p.id}`)}
-                          onDuplicate={() => duplicate(p.id)}
-                          onDelete={() => removeProducts([p.id])}
+                          onDuplicate={canCreate ? () => duplicate(p.id) : undefined}
+                          // Hidden rather than disabled for a cashier: a row of
+                          // greyed-out buttons they can never use is just noise.
+                          onDelete={
+                            canDelete || canArchive ? () => removeProducts([p.id]) : undefined
+                          }
                         />
                       </td>
                     </tr>
@@ -411,24 +568,18 @@ export default function Products() {
                 </tbody>
               </table>
             </div>
-            <div className="flex items-center justify-between px-4 py-3 border-t border-border text-xs text-muted-foreground">
-              <div>
-                Showing {filtered.length} of {list.length} products
-              </div>
-              <div className="flex items-center gap-1">
-                <Button variant="ghost" size="sm" disabled>
-                  Prev
-                </Button>
-                <Button variant="outline" size="sm">
-                  1
-                </Button>
-                <Button variant="ghost" size="sm" disabled>
-                  Next
-                </Button>
-              </div>
-            </div>
+            <Pagination
+              page={page}
+              pageSize={pageSize}
+              total={total}
+              onPageChange={setPage}
+              onPageSizeChange={setPageSize}
+              label="products"
+              busy={productsQuery.isFetching}
+            />
           </Card>
         ) : (
+          <div className="space-y-3">
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
             {filtered.map((p) => {
               const oos = p.stock <= 0;
@@ -436,7 +587,10 @@ export default function Products() {
               return (
                 <button
                   key={p.id}
-                  onClick={() => setQuickEditId(p.id)}
+                  // Tapping a card opens the small price/stock popup, not the
+                  // 25-field form — that is what a tap on a product means here.
+                  onClick={() => setQuickUpdateId(p.id)}
+                  title="Update price & stock"
                   className="group text-left rounded-xl border border-border bg-card hover:border-primary hover:shadow-md transition overflow-hidden"
                 >
                   <div className="aspect-[4/3] bg-gradient-to-br from-secondary to-muted grid place-items-center relative">
@@ -469,18 +623,39 @@ export default function Products() {
                 </button>
               );
             })}
+            {filtered.length === 0 && (
+              <Card className="p-12 text-center text-muted-foreground col-span-2 md:col-span-3 lg:col-span-4 xl:col-span-5">
+                No products match these filters.
+              </Card>
+            )}
+          </div>
+          <Card className="overflow-hidden">
+            <Pagination
+              page={page}
+              pageSize={pageSize}
+              total={total}
+              onPageChange={setPage}
+              onPageSizeChange={setPageSize}
+              label="products"
+              busy={productsQuery.isFetching}
+            />
+          </Card>
           </div>
         )}
       </div>
 
       {columnsOpen && <ColumnsCustomize onClose={() => setColumnsOpen(false)} />}
 
+      {quickUpdating && (
+        <QuickUpdateModal product={quickUpdating} onClose={() => setQuickUpdateId(null)} />
+      )}
+
       <Drawer
         open={!!quickEditId}
         onClose={() => setQuickEditId(null)}
         width="max-w-3xl"
-        title={editing ? 'Quick Edit' : 'Quick Edit'}
-        subtitle="Use 'Open full editor' for more sections"
+        title="Edit Product"
+        subtitle={editing?.name}
       >
         {editing && (
           <ProductForm
@@ -593,8 +768,16 @@ function Cell({
       return <td className="px-2 py-2.5 text-xs">{p.unit}</td>;
     case 'cost':
       return (
-        <td className={`px-2 py-2.5 ${align} text-muted-foreground`}>
+        <td className={`px-2 py-2.5 ${align} tabular`}>
           {formatBDT(p.cost, { withSymbol: false })}
+        </td>
+      );
+    // Mean of every recorded buying price. '—' when nothing is on record rather
+    // than a misleading 0.
+    case 'avgCost':
+      return (
+        <td className={`px-2 py-2.5 ${align} tabular text-muted-foreground`}>
+          {p.avgCost && p.avgCost > 0 ? formatBDT(p.avgCost, { withSymbol: false }) : '—'}
         </td>
       );
     case 'price':
@@ -653,29 +836,45 @@ function Cell({
   }
 }
 
+/**
+ * Row actions, ordered by how often a shopkeeper needs them.
+ *
+ * The visible button is "Update price & stock" — the everyday job — with a real
+ * label rather than a bare pencil icon, and always at full opacity so it is not
+ * hidden until hover. Editing the other 23 fields is a rarer, deliberate act, so
+ * it moves into the overflow menu.
+ */
 function RowActions({
+  onQuickUpdate,
   onEdit,
   onView,
   onDuplicate,
   onDelete,
 }: {
-  onEdit: () => void;
+  // Each action is omitted rather than disabled when the signed-in user may not
+  // perform it: a row of permanently greyed-out buttons teaches a cashier to
+  // ignore the whole column.
+  onQuickUpdate?: () => void;
+  onEdit?: () => void;
   onView: () => void;
-  onDuplicate: () => void;
-  onDelete: () => void;
+  onDuplicate?: () => void;
+  onDelete?: () => void;
 }) {
   return (
-    <div className="flex items-center justify-end gap-0.5 opacity-60 group-hover:opacity-100 transition">
-      <button
-        onClick={onEdit}
-        className="size-7 grid place-items-center rounded hover:bg-secondary text-muted-foreground hover:text-foreground"
-        title="Quick edit"
-      >
-        <Edit2 className="size-3.5" />
-      </button>
+    <div className="flex items-center justify-end gap-1">
+      {onQuickUpdate && (
+        <button
+          onClick={onQuickUpdate}
+          className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-border bg-card text-xs font-medium hover:bg-secondary hover:border-primary/50 transition"
+          title="Update price & stock"
+        >
+          <Tags className="size-3.5" />
+          <span className="hidden xl:inline">Update</span>
+        </button>
+      )}
       <Popover
         align="right"
-        width="w-44"
+        width="w-52"
         trigger={(_o, set) => (
           <button
             onClick={() => set(true)}
@@ -688,32 +887,48 @@ function RowActions({
       >
         {(close) => (
           <div className="py-1">
+            {onEdit && (
+              <MenuItem
+                icon={Edit2}
+                label="Edit all details"
+                onClick={() => {
+                  close();
+                  onEdit();
+                }}
+              />
+            )}
             <MenuItem
               icon={Eye}
-              label="Open full editor"
+              label="Open full page"
               onClick={() => {
                 close();
                 onView();
               }}
             />
-            <MenuItem
-              icon={Copy}
-              label="Duplicate"
-              onClick={() => {
-                close();
-                onDuplicate();
-              }}
-            />
-            <div className="border-t border-border my-1" />
-            <MenuItem
-              icon={Trash2}
-              label="Delete"
-              danger
-              onClick={() => {
-                close();
-                onDelete();
-              }}
-            />
+            {onDuplicate && (
+              <MenuItem
+                icon={Copy}
+                label="Duplicate"
+                onClick={() => {
+                  close();
+                  onDuplicate();
+                }}
+              />
+            )}
+            {onDelete && (
+              <>
+                <div className="border-t border-border my-1" />
+                <MenuItem
+                  icon={Trash2}
+                  label="Delete"
+                  danger
+                  onClick={() => {
+                    close();
+                    onDelete();
+                  }}
+                />
+              </>
+            )}
           </div>
         )}
       </Popover>

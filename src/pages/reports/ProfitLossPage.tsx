@@ -1,21 +1,16 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import {
   TrendingUp,
   TrendingDown,
   ArrowUpRight,
   ArrowDownRight,
-  ChevronRight,
 } from 'lucide-react';
 import {
   ReportToolbar,
   DEFAULT_RANGE,
-  isInRange,
   type DateRange,
 } from '@/components/reports/ReportToolbar';
 import { Card } from '@/components/ui/Card';
-import { useSales } from '@/stores/sales';
-import { usePurchases } from '@/stores/purchases';
-import { useExpenses } from '@/stores/expenses';
 import { useReport, useBranchId } from '@/hooks/useReport';
 import { hasBackend } from '@/lib/api';
 import { formatBDT } from '@/lib/utils';
@@ -23,7 +18,8 @@ import { cn } from '@/lib/utils';
 
 interface PnLRow {
   label: string;
-  amount: number;
+  /** `null` = no backend source for this figure yet; renders '—' and is NOT summed. */
+  amount: number | null;
   hint?: string;
 }
 
@@ -48,185 +44,92 @@ interface BackendProfitLoss {
   totalPurchases: number;
 }
 
+const EMPTY_PNL = {
+  totalSalesExclTax: 0,
+  totalSellShipping: 0,
+  totalSellOther: 0,
+  totalSellTax: 0,
+  totalPurchaseReturn: 0,
+  totalCOGS: 0,
+  totalPurchases: 0,
+  totalPurchaseTax: 0,
+  totalSellReturn: 0,
+  totalExpense: 0,
+  stockAdjustment: 0,
+  grossProfit: 0,
+  marginPct: 0,
+  netProfit: 0,
+};
+
 export default function ProfitLossPage() {
   const [range, setRange] = useState<DateRange>(DEFAULT_RANGE);
   const [branch, setBranch] = useState('');
 
-  const sales = useSales((s) => s.sales);
-  const returns = useSales((s) => s.returns);
-  const purchases = usePurchases((s) => s.purchases);
-  const purchaseReturns = usePurchases((s) => s.returns);
-  const expenses = useExpenses((s) => s.expenses);
-
   // Backend wiring: pass the DateRange straight through (preset names + shape
   // match the backend RangeInput) and resolve the branch name → id.
   const branchId = useBranchId(branch);
-  const { data: be, loading, backend, error } = useReport<BackendProfitLoss>(
+  const { data: be, loading, error } = useReport<BackendProfitLoss>(
     'reports.profitLoss',
     hasBackend() ? { range, branchId } : null,
     [range, branchId],
   );
 
-  const mockPnl = useMemo(() => {
-    const fSales = sales.filter(
-      (s) => s.status === 'final' && isInRange(s.date, range) && (!branch || s.branch === branch),
-    );
-    const fSalesAll = sales.filter((s) => s.status !== 'draft' && s.status !== 'quotation');
-    const fReturns = returns.filter(
-      (r) => isInRange(r.date, range) && fSalesAll.find((s) => s.id === r.saleId),
-    );
-    const fPurchases = purchases.filter(
-      (p) => p.status !== 'cancelled' && isInRange(p.date, range) && (!branch || p.branch === branch),
-    );
-    const fPurchaseReturns = purchaseReturns.filter((r) => isInRange(r.date, range));
-    const fExpenses = expenses.filter(
-      (e) => !e.voided && isInRange(e.date, range) && (!branch || e.branch === branch),
-    );
-
-    // Money in (revenue side)
-    const totalSalesExclTax = fSales.reduce((acc, s) => acc + (s.subtotal - s.orderDiscount), 0);
-    const totalSellShipping = fSales.reduce((acc, s) => acc + (s.shipping || 0), 0);
-    const totalSellOther = fSales.reduce((acc, s) => acc + (s.other || 0), 0);
-    const totalSellTax = fSales.reduce((acc, s) => acc + s.tax, 0);
-    const totalPurchaseReturn = fPurchaseReturns.reduce((acc, r) => acc + r.total, 0);
-
-    // Money out (cost side)
-    const totalCOGS = fSales.reduce((acc, s) => {
-      // Approximate: revenue - profit (mock profit pre-computed in store inflate)
-      const rev = s.subtotal - s.orderDiscount;
-      const profit = s.profit ?? rev * 0.22;
-      return acc + (rev - profit);
-    }, 0);
-    const totalPurchases = fPurchases.reduce((acc, p) => acc + p.total, 0);
-    const totalPurchaseTax = fPurchases.reduce((acc, p) => acc + p.tax, 0);
-    const totalSellReturn = fReturns.reduce((acc, r) => acc + r.total, 0);
-    const totalExpense = fExpenses.reduce((acc, e) => acc + e.amount, 0);
-
-    // Stock movement (snapshots — mocked)
-    const openingStockByPurchase = 425000;
-    const closingStockByPurchase = 412000;
-    const openingStockBySale = 580000;
-    const closingStockBySale = 565000;
-
-    // Gross profit = revenue - COGS
-    const grossProfit = totalSalesExclTax - totalCOGS - totalSellReturn;
-    const marginPct = totalSalesExclTax > 0 ? (grossProfit / totalSalesExclTax) * 100 : 0;
-
-    // Net profit = gross profit + side income - expenses
-    const netProfit =
-      grossProfit + totalSellShipping + totalSellOther + totalPurchaseReturn - totalExpense;
-
-    return {
-      totalSalesExclTax,
-      totalSellShipping,
-      totalSellOther,
-      totalSellTax,
-      totalPurchaseReturn,
-      totalCOGS,
-      totalPurchases,
-      totalPurchaseTax,
-      totalSellReturn,
-      totalExpense,
-      openingStockByPurchase,
-      closingStockByPurchase,
-      openingStockBySale,
-      closingStockBySale,
-      grossProfit,
-      marginPct,
-      netProfit,
-    };
-  }, [sales, returns, purchases, purchaseReturns, expenses, range, branch]);
-
-  // Prefer backend figures when available; otherwise keep the mock computation.
-  // NOTE: the backend P/L omits opening/closing stock snapshots (the nightly
-  // stock-valuation job is deferred), so those snapshot rows stay as labeled
-  // mock placeholders even when backed.
-  const usingBackend = backend && !!be;
-  const pnl = usingBackend
+  // Backend-only figures. Until the query resolves (or if it fails) every number
+  // is an explicit zero — never an invented or client-recomputed value.
+  const pnl = be
     ? {
-        totalSalesExclTax: be!.moneyIn.totalSalesExclTaxDisc,
-        totalSellShipping: be!.moneyIn.sellShipping,
-        totalSellOther: be!.moneyIn.sellOther,
-        totalSellTax: be!.tax.salesTaxCollected,
-        totalPurchaseReturn: be!.moneyIn.purchaseReturns,
-        totalCOGS: be!.moneyOut.cogs,
-        totalPurchases: be!.totalPurchases,
-        totalPurchaseTax: be!.tax.purchaseTaxPaid,
-        totalSellReturn: be!.moneyOut.sellReturns,
-        totalExpense: be!.moneyOut.expenses,
-        stockAdjustment: be!.moneyOut.stockAdjustment,
-        // Snapshot placeholders — DEFERRED: backend does not produce these yet.
-        openingStockByPurchase: mockPnl.openingStockByPurchase,
-        closingStockByPurchase: mockPnl.closingStockByPurchase,
-        openingStockBySale: mockPnl.openingStockBySale,
-        closingStockBySale: mockPnl.closingStockBySale,
-        grossProfit: be!.grossProfit,
-        marginPct: be!.marginPct,
-        netProfit: be!.netProfit,
+        totalSalesExclTax: be.moneyIn.totalSalesExclTaxDisc,
+        totalSellShipping: be.moneyIn.sellShipping,
+        totalSellOther: be.moneyIn.sellOther,
+        totalSellTax: be.tax.salesTaxCollected,
+        totalPurchaseReturn: be.moneyIn.purchaseReturns,
+        totalCOGS: be.moneyOut.cogs,
+        totalPurchases: be.totalPurchases,
+        totalPurchaseTax: be.tax.purchaseTaxPaid,
+        totalSellReturn: be.moneyOut.sellReturns,
+        totalExpense: be.moneyOut.expenses,
+        stockAdjustment: be.moneyOut.stockAdjustment,
+        grossProfit: be.grossProfit,
+        marginPct: be.marginPct,
+        netProfit: be.netProfit,
       }
-    : backend && error
-      ? {
-          // Real backend error: show a zeroed P/L rather than mock numbers.
-          totalSalesExclTax: 0,
-          totalSellShipping: 0,
-          totalSellOther: 0,
-          totalSellTax: 0,
-          totalPurchaseReturn: 0,
-          totalCOGS: 0,
-          totalPurchases: 0,
-          totalPurchaseTax: 0,
-          totalSellReturn: 0,
-          totalExpense: 0,
-          stockAdjustment: 0,
-          openingStockByPurchase: 0,
-          closingStockByPurchase: 0,
-          openingStockBySale: 0,
-          closingStockBySale: 0,
-          grossProfit: 0,
-          marginPct: 0,
-          netProfit: 0,
-        }
-      : { ...mockPnl, stockAdjustment: 0 };
+    : EMPTY_PNL;
 
-  // Under the backend the figures are COGS-based and exact, so the block rows
-  // (and therefore the block totals) must contain ONLY real values. The
-  // opening/closing stock snapshots are deferred (nightly valuation job), so we
-  // omit those rows entirely when backed rather than show mock placeholders that
-  // would inflate the displayed "Money in/out" totals. We instead surface the
-  // real signed stock-adjustment value the backend already returns.
+  // Every displayed row comes from `reports.profitLoss`. The opening/closing
+  // stock-valuation snapshots have NO backend source (the nightly stock
+  // valuation job is deferred), so they render '—' and carry `amount: null` so
+  // they are excluded from the block totals rather than fabricated.
+  // BACKEND WORK NEEDED: a nightly stock-valuation snapshot table (value at
+  // purchase cost + at sell price, per branch per day) exposed on
+  // `reports.profitLoss`.
   const moneyIn: PnLBlock = {
     title: 'Money in',
-    rows: usingBackend
-      ? [
-          { label: 'Total sales (excl. tax & disc.)', amount: pnl.totalSalesExclTax },
-          { label: 'Sell shipping recovered', amount: pnl.totalSellShipping },
-          { label: 'Other charges', amount: pnl.totalSellOther },
-          { label: 'Purchase returns', amount: pnl.totalPurchaseReturn },
-        ]
-      : [
-          { label: 'Total sales (excl. tax & disc.)', amount: pnl.totalSalesExclTax },
-          { label: 'Sell shipping recovered', amount: pnl.totalSellShipping },
-          { label: 'Other charges', amount: pnl.totalSellOther },
-          { label: 'Purchase returns', amount: pnl.totalPurchaseReturn },
-          { label: 'Closing stock (by sell price)', amount: pnl.closingStockBySale, hint: 'Snapshot' },
-        ],
+    rows: [
+      { label: 'Total sales (excl. tax & disc.)', amount: pnl.totalSalesExclTax },
+      { label: 'Sell shipping recovered', amount: pnl.totalSellShipping },
+      { label: 'Other charges', amount: pnl.totalSellOther },
+      { label: 'Purchase returns', amount: pnl.totalPurchaseReturn },
+      {
+        label: 'Closing stock (by sell price)',
+        amount: null,
+        hint: 'No stock-valuation snapshot yet — excluded from the total',
+      },
+    ],
   };
   const moneyOut: PnLBlock = {
     title: 'Money out',
-    rows: usingBackend
-      ? [
-          { label: 'Cost of goods sold (COGS)', amount: pnl.totalCOGS },
-          { label: 'Sell returns', amount: pnl.totalSellReturn },
-          { label: 'Expenses', amount: pnl.totalExpense },
-          // Signed: a stock loss (negative adjustment) increases money-out.
-          { label: 'Stock adjustments (loss)', amount: -('stockAdjustment' in pnl ? pnl.stockAdjustment : 0) },
-        ]
-      : [
-          { label: 'Cost of goods sold (COGS)', amount: pnl.totalCOGS },
-          { label: 'Sell returns', amount: pnl.totalSellReturn },
-          { label: 'Expenses', amount: pnl.totalExpense },
-          { label: 'Opening stock (by purchase)', amount: pnl.openingStockByPurchase, hint: 'Snapshot' },
-        ],
+    rows: [
+      { label: 'Cost of goods sold (COGS)', amount: pnl.totalCOGS },
+      { label: 'Sell returns', amount: pnl.totalSellReturn },
+      { label: 'Expenses', amount: pnl.totalExpense },
+      // Signed: a stock loss (negative adjustment) increases money-out.
+      { label: 'Stock adjustments (loss)', amount: -pnl.stockAdjustment },
+      {
+        label: 'Opening stock (by purchase price)',
+        amount: null,
+        hint: 'No stock-valuation snapshot yet — excluded from the total',
+      },
+    ],
   };
 
   return (
@@ -241,13 +144,14 @@ export default function ProfitLossPage() {
       />
 
       <div className="p-6 space-y-6 max-w-5xl">
-        {backend && loading && !be && (
-          <div className="text-sm text-muted-foreground">Loading…</div>
-        )}
-        {backend && error && (
+        {loading && !be && <div className="text-sm text-muted-foreground">Loading…</div>}
+        {error && (
           <div className="text-sm text-muted-foreground">
             Couldn’t load — backend error. Check connection and retry.
           </div>
+        )}
+        {!loading && !error && !be && (
+          <div className="text-sm text-muted-foreground">No data in this range.</div>
         )}
         {/* Hero KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -290,9 +194,8 @@ export default function ProfitLossPage() {
           </div>
           <div className="text-[12px] text-muted-foreground mt-2">
             Cost of goods sold uses the unit cost recorded at sale time (not the current cost).
-            {usingBackend
-              ? ' Opening/closing stock-valuation snapshots are not included yet (nightly job pending).'
-              : ' Stock snapshots are nightly aggregates — backend will replace these with real values.'}
+            Opening/closing stock-valuation snapshots are not available yet (nightly job pending),
+            so those rows show '—' and are excluded from the totals above.
           </div>
         </Card>
 
@@ -374,7 +277,8 @@ function BlockCard({
   block: PnLBlock;
   tone: 'success' | 'destructive';
 }) {
-  const total = block.rows.reduce((acc, r) => acc + r.amount, 0);
+  // Rows without a backend source (amount === null) never contribute to the total.
+  const total = block.rows.reduce((acc, r) => acc + (r.amount ?? 0), 0);
   const arrow = tone === 'success' ? ArrowUpRight : ArrowDownRight;
   const Arrow = arrow;
   return (
@@ -402,20 +306,26 @@ function BlockCard({
       </div>
       <div className="divide-y divide-border">
         {block.rows.map((row) => (
-          <button
+          // Presentational row. It used to be a <button> that popped an
+          // "wires up at backend stage" alert: nothing to drill into, and the
+          // native alert left the window without keyboard focus.
+          <div
             key={row.label}
-            onClick={() => alert(`Drill-down for "${row.label}" — wires up at backend stage.`)}
-            className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-secondary/40 transition text-left"
+            className="w-full flex items-center justify-between px-4 py-2.5 text-left"
           >
             <div>
               <div className="text-sm">{row.label}</div>
               {row.hint && <div className="text-[11px] text-muted-foreground">{row.hint}</div>}
             </div>
-            <div className="flex items-center gap-2">
-              <div className="tabular font-medium text-sm">{formatBDT(row.amount)}</div>
-              <ChevronRight className="size-3.5 text-muted-foreground" />
+            <div
+              className={cn(
+                'tabular font-medium text-sm',
+                row.amount === null && 'text-muted-foreground',
+              )}
+            >
+              {row.amount === null ? '—' : formatBDT(row.amount)}
             </div>
-          </button>
+          </div>
         ))}
       </div>
     </Card>

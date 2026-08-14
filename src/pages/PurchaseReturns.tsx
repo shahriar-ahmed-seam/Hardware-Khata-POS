@@ -4,6 +4,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
+import { Pagination } from '@/components/ui/Pagination';
 import { usePurchases } from '@/stores/purchases';
 import { formatBDT } from '@/lib/utils';
 import { hasBackend } from '@/lib/api';
@@ -15,6 +16,11 @@ export default function PurchaseReturns() {
   const hydrate = usePurchases((s) => s.hydrate);
   const [q, setQ] = useState('');
   const backend = hasBackend();
+
+  // Client-side paging: `purchaseReturns.list` is header-only and this list
+  // grows slowly, so every row is already in memory — we slice the filtered set.
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
 
   // Mirror Purchases.tsx: hydrate from the backend on mount so the store is
   // populated when this page is the entry point.
@@ -33,6 +39,22 @@ export default function PurchaseReturns() {
     );
   }, [returns, q]);
 
+  // Search change resets to page 1 — staying on page 5 of a narrower result set
+  // would show an empty table.
+  useEffect(() => {
+    setPage(1);
+  }, [q, pageSize]);
+
+  // Clamp so a shrinking list can never leave the user past the last page.
+  const pageCount = Math.max(1, Math.ceil(list.length / pageSize));
+  const current = Math.min(page, pageCount);
+  const pageRows = useMemo(
+    () => list.slice((current - 1) * pageSize, current * pageSize),
+    [list, current, pageSize],
+  );
+
+  // Summed over the FULL filtered set, not just this page — all rows are in
+  // memory, so there is no reason to scope this to the visible slice.
   const total = list.reduce((s, r) => s + r.total, 0);
 
   return (
@@ -61,6 +83,7 @@ export default function PurchaseReturns() {
               <SkeletonTable count={6} />
             </div>
           ) : (
+          <>
           <table className="w-full text-sm">
             <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50">
               <tr>
@@ -75,7 +98,7 @@ export default function PurchaseReturns() {
               </tr>
             </thead>
             <tbody>
-              {list.map((r) => (
+              {pageRows.map((r) => (
                 <tr key={r.id} className="border-t border-border hover:bg-secondary/40">
                   <td className="px-4 py-2.5 text-xs text-muted-foreground">
                     {new Date(r.date).toLocaleString('en-GB')}
@@ -109,6 +132,15 @@ export default function PurchaseReturns() {
               )}
             </tbody>
           </table>
+          <Pagination
+            page={current}
+            pageSize={pageSize}
+            total={list.length}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+            label="returns"
+          />
+          </>
           )}
         </Card>
       </div>

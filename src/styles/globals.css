@@ -5,23 +5,27 @@
 :root {
   --radius: 0.625rem;
 
+  /* LIGHT MODE — text is pushed near-black and "muted" text is darkened a lot,
+     so nothing on a white background sits below a comfortable contrast ratio. */
   --background: 220 20% 98%;
-  --foreground: 222 25% 12%;
+  --foreground: 222 34% 7%;
 
   --card: 0 0% 100%;
-  --card-foreground: 222 25% 12%;
+  --card-foreground: 222 34% 7%;
 
   --popover: 0 0% 100%;
-  --popover-foreground: 222 25% 12%;
+  --popover-foreground: 222 34% 7%;
 
-  --primary: 243 75% 58%;
+  /* 52% reads well both ways: white-on-primary for filled buttons AND
+     primary-on-white for links/active labels. */
+  --primary: 243 75% 52%;
   --primary-foreground: 0 0% 100%;
 
   --secondary: 220 14% 96%;
-  --secondary-foreground: 222 25% 12%;
+  --secondary-foreground: 222 34% 7%;
 
   --muted: 220 14% 96%;
-  --muted-foreground: 220 9% 46%;
+  --muted-foreground: 220 18% 30%;
 
   --accent: 38 92% 50%;
   --accent-foreground: 26 50% 14%;
@@ -29,63 +33,70 @@
   --destructive: 0 72% 51%;
   --destructive-foreground: 0 0% 100%;
 
-  --success: 152 60% 40%;
+  /* Amber-on-white was the worst offender in the old palette (~2:1). Darkened
+     so `text-warning` labels are actually readable. */
+  --success: 152 62% 32%;
   --success-foreground: 0 0% 100%;
 
-  --warning: 38 92% 50%;
-  --warning-foreground: 26 50% 14%;
+  --warning: 30 95% 34%;
+  --warning-foreground: 0 0% 100%;
 
-  --border: 220 14% 90%;
-  --input: 220 14% 90%;
-  --ring: 243 75% 58%;
+  --border: 220 14% 86%;
+  --input: 220 14% 82%;
+  --ring: 243 75% 52%;
 
   --sidebar: 0 0% 100%;
-  --sidebar-foreground: 222 25% 18%;
-  --sidebar-accent: 243 75% 58%;
-  --sidebar-border: 220 14% 92%;
-  --sidebar-hover: 220 14% 96%;
+  --sidebar-foreground: 222 34% 9%;
+  --sidebar-accent: 243 75% 52%;
+  --sidebar-border: 220 14% 88%;
+  --sidebar-hover: 220 14% 94%;
 }
 
 .dark {
+  /* DARK MODE — text is pushed to near-white and "muted" text is brightened a
+     lot, so grey-on-dark labels stay readable for older eyes. */
   --background: 222 28% 7%;
-  --foreground: 220 14% 95%;
+  --foreground: 210 24% 99%;
 
-  --card: 222 25% 10%;
-  --card-foreground: 220 14% 95%;
+  --card: 222 25% 11%;
+  --card-foreground: 210 24% 99%;
 
-  --popover: 222 25% 10%;
-  --popover-foreground: 220 14% 95%;
+  --popover: 222 25% 11%;
+  --popover-foreground: 210 24% 99%;
 
-  --primary: 243 80% 66%;
+  /* These five are used BOTH as filled backgrounds (with a white foreground)
+     and as text on `/10`-alpha chips, so they stay mid-lightness. Only the
+     plain text tokens above were brightened. */
+  --primary: 243 82% 64%;
   --primary-foreground: 0 0% 100%;
 
-  --secondary: 222 18% 14%;
-  --secondary-foreground: 220 14% 95%;
+  --secondary: 222 18% 16%;
+  --secondary-foreground: 210 24% 99%;
 
-  --muted: 222 18% 14%;
-  --muted-foreground: 220 9% 60%;
+  --muted: 222 18% 16%;
+  --muted-foreground: 215 22% 80%;
 
-  --accent: 38 92% 55%;
-  --accent-foreground: 26 50% 14%;
+  --accent: 38 92% 56%;
+  --accent-foreground: 26 60% 10%;
 
-  --destructive: 0 72% 55%;
+  --destructive: 0 78% 60%;
   --destructive-foreground: 0 0% 100%;
 
-  --success: 152 60% 50%;
-  --success-foreground: 0 0% 100%;
+  --success: 152 58% 48%;
+  --success-foreground: 222 40% 8%;
 
-  --warning: 38 92% 55%;
-  --warning-foreground: 26 50% 14%;
+  --warning: 38 94% 58%;
+  --warning-foreground: 26 60% 10%;
 
-  --border: 222 18% 18%;
-  --input: 222 18% 18%;
-  --ring: 243 80% 66%;
+  --border: 222 16% 26%;
+  --input: 222 16% 30%;
+  --ring: 243 82% 64%;
 
   --sidebar: 222 30% 6%;
-  --sidebar-foreground: 220 14% 90%;
-  --sidebar-accent: 243 80% 66%;
-  --sidebar-border: 222 18% 14%;
-  --sidebar-hover: 222 18% 12%;
+  --sidebar-foreground: 210 22% 97%;
+  --sidebar-accent: 243 82% 64%;
+  --sidebar-border: 222 16% 20%;
+  --sidebar-hover: 222 18% 16%;
 }
 
 * {
@@ -98,7 +109,9 @@ body,
   height: 100%;
   background: hsl(var(--background));
   color: hsl(var(--foreground));
-  font-family: 'Inter', system-ui, sans-serif;
+  /* Inter first if it happens to be installed locally, then the fonts every
+     Windows machine ships with. No webfont is downloaded — see index.html. */
+  font-family: 'Inter', system-ui, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
   font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11', 'ss01';
 }
@@ -203,22 +216,114 @@ input[type='number'] {
   background-size: 24px 24px;
 }
 
-/* Print preview: when printing, show only the print sheet */
+/* A mounted <PrintSheet> is always black-on-white. It is a direct child of
+   <body>, so without this it would inherit the dark theme's near-white text and
+   dark background — which a thermal printer renders as a black rectangle. */
+.print-frame-root {
+  color-scheme: light;
+  background: #fff;
+  color: #000;
+}
+
+/* The app-wide legibility floor on mono text (see LEGIBILITY LAYER below) is a
+   screen-readability aid. On a 50mm thermal roll it would blow the money
+   columns past the paper edge, so inside a print sheet mono text keeps the
+   size its own class asked for. */
+.print-frame-root .font-mono {
+  font-size: inherit;
+  letter-spacing: 0;
+}
+
+/* ==========================================================================
+   PRINTING
+   --------------------------------------------------------------------------
+   Two modes, chosen by whether a <PrintSheet> is currently mounted (it puts
+   `has-print-sheet` on <body>):
+
+   A. SHEET MODE — receipts and X/Z reports. The sheet is portalled to <body>,
+      outside #root, so hiding #root leaves exactly the sheet on the page. No
+      titlebar, no sidebar, no modal scrim, no scrollbars.
+
+   B. PAGE MODE — report pages that just call window.print(). Nothing is
+      portalled, so only the app chrome is hidden and the page's own content
+      prints. (The old rule hid every child of .app-shell unconditionally,
+      which is why every print came out blank.)
+   ========================================================================== */
 @media print {
-  body {
+  /* The app is a fixed-size window on screen; those clipping boxes would crop
+     printed output to one viewport, so they are all released here. */
+  html,
+  body,
+  #root {
+    height: auto !important;
+    max-height: none !important;
     overflow: visible !important;
     background: #fff !important;
   }
-  /* Hide app chrome */
-  .app-shell > *:not(.print-frame-root),
+  .app-shell {
+    height: auto !important;
+    max-height: none !important;
+    max-width: none !important;
+    overflow: visible !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+  .app-shell main {
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* App chrome never prints, in either mode: window titlebar, sidebar, and
+     anything explicitly marked `print:hidden`. */
   .titlebar-drag,
   .print\:hidden {
     display: none !important;
   }
+
+  /* --- Mode A: a dedicated sheet exists → print nothing else --- */
+  body.has-print-sheet #root {
+    display: none !important;
+  }
+  body.has-print-sheet .print-frame-root {
+    display: block !important;
+  }
+
+  /* --- Mode B: the chrome above is already hidden, so the page body prints.
+     One extra thing is needed though: in dark mode the page's text is near-white
+     and printers drop backgrounds, which would hand back the same blank sheet
+     this whole block exists to fix. Page-mode printing is therefore normalised
+     to black on white. Inline background-IMAGES (barcode bars) are untouched. */
+  body:not(.has-print-sheet) #root,
+  body:not(.has-print-sheet) #root * {
+    color: #000 !important;
+    background-color: transparent !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  .print-frame-root {
+    position: static !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  /* The sheet takes the printer's page width rather than its preview width. */
   .print-frame-sheet {
     box-shadow: none !important;
     width: auto !important;
+    max-width: none !important;
+    overflow: visible !important;
     margin: 0 !important;
+    background: #fff !important;
+    color: #000 !important;
+  }
+  /* Everything on a sheet is black ink, whatever theme the app is wearing, and
+     deliberate blacks (barcode bars, rules) are kept rather than dropped by the
+     print path. `background-color` is left alone on purpose so the barcode
+     block survives. */
+  .print-frame-root * {
+    color: #000 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
   @page {
     margin: 8mm;
@@ -232,4 +337,126 @@ input[type='number'] {
   40% { transform: translateX(8px); }
   60% { transform: translateX(-5px); }
   80% { transform: translateX(5px); }
+}
+
+/* ==========================================================================
+   LEGIBILITY LAYER (elderly-friendly)
+   --------------------------------------------------------------------------
+   The UI was written with ~600 hard-coded pixel font sizes (text-[10px],
+   text-[11px], …) which are far too small to read comfortably and which ignore
+   the Settings → Appearance font-scale slider because px does not inherit.
+
+   Rather than editing 600 call sites, the generated utility classes are
+   redefined here in `rem`. Two wins at once: every label gets bigger, and it
+   now scales with the appearance slider. Selectors are doubled so they always
+   beat Tailwind's own declaration regardless of layer ordering.
+   ========================================================================== */
+
+.text-\[9px\].text-\[9px\] {
+  font-size: 0.75rem; /* 9  → 12 */
+}
+.text-\[10px\].text-\[10px\] {
+  font-size: 0.8125rem; /* 10 → 13 */
+}
+.text-\[11px\].text-\[11px\] {
+  font-size: 0.875rem; /* 11 → 14 */
+}
+.text-\[12px\].text-\[12px\],
+.text-\[12\.5px\].text-\[12\.5px\] {
+  font-size: 0.9375rem; /* 12 → 15 */
+}
+.text-\[13px\].text-\[13px\] {
+  font-size: 1rem; /* 13 → 16 */
+}
+.text-\[14px\].text-\[14px\] {
+  font-size: 1.0625rem; /* 14 → 17 */
+}
+.text-\[18px\].text-\[18px\] {
+  font-size: 1.25rem; /* 18 → 20 */
+}
+.text-\[26px\].text-\[26px\] {
+  font-size: 1.75rem; /* 26 → 28 */
+}
+
+/* Faded text is the other half of the readability problem. Lift the low
+   opacity steps so dimmed labels stay legible without losing the hierarchy. */
+.opacity-40.opacity-40 {
+  opacity: 0.66;
+}
+.opacity-50.opacity-50 {
+  opacity: 0.74;
+}
+.opacity-60.opacity-60 {
+  opacity: 0.82;
+}
+.opacity-70.opacity-70 {
+  opacity: 0.88;
+}
+.opacity-80.opacity-80 {
+  opacity: 0.94;
+}
+
+/* Tiny mono badges (shortcut hints, codes) were the least readable text in the
+   app — give them a floor and a little breathing room. */
+.font-mono {
+  font-size: max(1em, 0.8125rem);
+  letter-spacing: 0.01em;
+}
+
+/* Bangla needs a font that actually ships the conjuncts. Nirmala UI is present
+   on every supported Windows build; the others are picked up if installed. */
+[lang='bn'],
+[lang='bn'] input,
+[lang='bn'] textarea,
+[lang='bn'] select,
+[lang='bn'] button {
+  font-family: 'Hind Siliguri', 'Noto Sans Bengali', 'Nirmala UI', 'Inter', system-ui,
+    sans-serif;
+}
+
+/* Bangla glyphs are taller than Latin; relax the leading so descenders in
+   fixed-height rows are not clipped. */
+[lang='bn'] body,
+[lang='bn'] .app-shell {
+  line-height: 1.6;
+}
+
+/* ==========================================================================
+   RESPONSIVE SAFETY NETS
+   --------------------------------------------------------------------------
+   The window is resizable and the app is used on small counter monitors, so
+   content must degrade by scrolling rather than by clipping.
+   ========================================================================== */
+
+/* The shell fills the window instead of assuming a viewport-sized page. */
+.app-shell {
+  height: 100vh;
+  max-width: 100vw;
+}
+
+/* Wide data tables keep their columns readable and scroll sideways instead of
+   compressing every column into unreadable slivers. Pair with `overflow-x-auto`
+   on the wrapper (already present on the list pages). */
+table {
+  max-width: 100%;
+}
+
+/* Any element that opted into horizontal scrolling should also show a usable
+   scrollbar on Windows rather than a hairline. */
+.overflow-x-auto {
+  scrollbar-width: thin;
+}
+
+/* Modals/drawers must never exceed the window on a small screen. */
+.animate-scale-in,
+.animate-slide-in-right {
+  max-width: 100vw;
+  max-height: 100vh;
+}
+
+/* Print sheets are a fixed physical width; allow the preview to scroll rather
+   than force the whole app wider. */
+.print-frame-sheet {
+  max-width: 100%;
+  overflow-x: auto;
 }

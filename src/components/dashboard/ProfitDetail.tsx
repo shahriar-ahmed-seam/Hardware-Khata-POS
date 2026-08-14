@@ -1,8 +1,11 @@
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { TrendingUp, ChevronRight, Receipt, Wallet } from 'lucide-react';
+import { ChevronRight, Receipt, Wallet } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
-import { dashboardMock } from '@/mocks/data';
+import { apiSafe } from '@/lib/api';
+import { useDashboard } from '@/stores/dashboard';
+import { DEFAULT_BRANCH, toRangeInput, useDashboardData } from '@/hooks/useDashboardData';
 import { formatBDT } from '@/lib/utils';
 
 interface Props {
@@ -10,13 +13,64 @@ interface Props {
   onClose: () => void;
 }
 
+/** Subset of `reports.profitLoss` this modal reads (see backend/services/reports.ts). */
+interface ProfitLossReport {
+  moneyIn: {
+    totalSalesExclTaxDisc: number;
+    sellShipping: number;
+    sellOther: number;
+    purchaseReturns: number;
+  };
+  moneyOut: {
+    cogs: number;
+    sellReturns: number;
+    expenses: number;
+    stockAdjustment: number;
+  };
+  grossProfit: number;
+  marginPct: number;
+  netProfit: number;
+  totalPurchases: number;
+}
+
+/** Neutral placeholder for a row the backend does not expose yet. */
+const NA = '—';
+const money = (v: number | null | undefined) => (typeof v === 'number' ? formatBDT(v) : NA);
+
 export function ProfitDetail({ open, onClose }: Props) {
-  const d = dashboardMock.todayProfitDetail;
-  const p = dashboardMock.todayProfit;
+  const range = useDashboard((s) => s.range);
+  const customRange = useDashboard((s) => s.customRange);
+  const { data: bundle } = useDashboardData();
 
   // Net profit calc per UltimatePOS formula:
   // Gross = (Closing stock by sale + Total sales) − (Opening stock by purchase + Total purchase + …)
-  // Simplified: we already have grossProfit & netProfit pre-computed in mock.
+  // The numbers below are NOT recomputed here: grossProfit / marginPct / netProfit
+  // come straight from the backend (dashboard.stats + reports.profitLoss).
+
+  // Backend-only: the mock `todayProfitDetail` / `todayProfit` blocks were
+  // removed. Headline figures come from the dashboard bundle; the line-item
+  // breakdown comes from `reports.profitLoss` for the selected range, fetched
+  // when the modal opens. Anything the backend does not expose renders as '—'
+  // instead of a fabricated number.
+  const [report, setReport] = useState<ProfitLossReport | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      const res = await apiSafe<ProfitLossReport>('reports.profitLoss', {
+        range: toRangeInput(range, customRange),
+        branchId: DEFAULT_BRANCH,
+      });
+      if (!cancelled) setReport(res);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, range, customRange]);
+
+  const p = bundle?.stats.profit ?? null;
+  const stats = bundle?.stats ?? null;
 
   return (
     <Modal
@@ -28,9 +82,19 @@ export function ProfitDetail({ open, onClose }: Props) {
       footer={
         <div className="flex items-center justify-between">
           <div className="text-xs text-muted-foreground">
-            Margin <span className="font-mono font-semibold text-success">{p.marginPct.toFixed(2)}%</span>
+            Margin{' '}
+            <span className="font-mono font-semibold text-success">
+              {p ? `${p.marginPct.toFixed(2)}%` : NA}
+            </span>
             <span className="mx-2">·</span>
-            vs yesterday <span className="font-mono font-semibold text-success">+{p.deltaVsYesterday}%</span>
+            vs yesterday{' '}
+            <span
+              className={`font-mono font-semibold ${
+                (p?.deltaPct ?? 0) >= 0 ? 'text-success' : 'text-destructive'
+              }`}
+            >
+              {p ? `${p.deltaPct >= 0 ? '+' : ''}${p.deltaPct}%` : NA}
+            </span>
           </div>
           <div className="flex items-center gap-2">
             <Link to="/expenses" onClick={onClose}>
@@ -52,19 +116,19 @@ export function ProfitDetail({ open, onClose }: Props) {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <SummaryStat
             label="Gross Profit"
-            value={formatBDT(p.grossProfit)}
+            value={money(p?.grossProfit)}
             sub="Total sale price − Total purchase price"
             tone="primary"
           />
           <SummaryStat
             label="Total Expenses"
-            value={formatBDT(p.expenses)}
+            value={money(p?.expenses)}
             sub="Sum of all expenses today"
             tone="warning"
           />
           <SummaryStat
             label="Net Profit"
-            value={formatBDT(p.netProfit)}
+            value={money(p?.netProfit)}
             sub="Gross profit − Expenses"
             tone="success"
             highlight
@@ -75,55 +139,52 @@ export function ProfitDetail({ open, onClose }: Props) {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-1 border-t border-border pt-5">
           {/* LEFT */}
           <div className="space-y-3">
-            <Row
-              label="Opening Stock"
-              sub="(By purchase price)"
-              value={formatBDT(d.openingStockByPurchase)}
-            />
-            <Row
-              label="Opening Stock"
-              sub="(By sale price)"
-              value={formatBDT(d.openingStockBySale)}
-              muted
-            />
+            {/* Opening stock is not exposed by the backend — shown as '—'. */}
+            <Row label="Opening Stock" sub="(By purchase price)" value={NA} />
+            <Row label="Opening Stock" sub="(By sale price)" value={NA} muted />
             <Row
               label="Total purchase"
               sub="(Exc. tax, Discount)"
-              value={formatBDT(d.totalPurchaseExclTaxDisc)}
+              value={money(report?.totalPurchases)}
             />
-            <Row label="Total Stock Adjustment" value={formatBDT(d.totalStockAdjustment)} />
-            <Row label="Total Expense" value={formatBDT(d.totalExpense)} tone="warning" />
-            <Row label="Total purchase shipping charge" value={formatBDT(d.totalPurchaseShipping)} />
-            <Row label="Total transfer shipping charge" value={formatBDT(d.totalTransferShipping)} />
-            <Row label="Total Sell discount" value={formatBDT(d.totalSellDiscount)} />
-            <Row label="Total customer reward" value={formatBDT(d.totalCustomerReward)} />
-            <Row label="Total Sell Return" value={formatBDT(d.totalSellReturn)} tone="warning" />
+            <Row label="Total Stock Adjustment" value={money(report?.moneyOut.stockAdjustment)} />
+            <Row label="Total Expense" value={money(report?.moneyOut.expenses)} tone="warning" />
+            {/* Purchase / transfer shipping, sell discount and customer reward
+                totals have no backend source yet — shown as '—'. */}
+            <Row label="Total purchase shipping charge" value={NA} />
+            <Row label="Total transfer shipping charge" value={NA} />
+            <Row label="Total Sell discount" value={NA} />
+            <Row label="Total customer reward" value={NA} />
+            <Row label="Total Sell Return" value={money(report?.moneyOut.sellReturns)} tone="warning" />
           </div>
 
           {/* RIGHT */}
           <div className="space-y-3">
+            {/* Closing stock = current stock valuation from dashboard.stats. */}
             <Row
               label="Closing stock"
               sub="(By purchase price)"
-              value={formatBDT(d.closingStockByPurchase)}
+              value={money(stats?.stockValueAtCost)}
             />
             <Row
               label="Closing stock"
               sub="(By sale price)"
-              value={formatBDT(d.closingStockBySale)}
+              value={money(stats?.stockValueAtRetail)}
               muted
             />
             <Row
               label="Total Sales"
               sub="(Exc. tax, Discount)"
-              value={formatBDT(d.totalSalesExclTaxDisc)}
+              value={money(report?.moneyIn.totalSalesExclTaxDisc)}
               tone="success"
             />
-            <Row label="Total sell shipping charge" value={formatBDT(d.totalSellShipping)} />
-            <Row label="Total Stock Recovered" value={formatBDT(d.totalStockRecovered)} />
-            <Row label="Total Purchase Return" value={formatBDT(d.totalPurchaseReturn)} />
-            <Row label="Total Purchase discount" value={formatBDT(d.totalPurchaseDiscount)} />
-            <Row label="Total sell round off" value={formatBDT(d.totalSellRoundOff)} />
+            <Row label="Total sell shipping charge" value={money(report?.moneyIn.sellShipping)} />
+            {/* Stock recovered, purchase discount and sell round-off totals have
+                no backend source yet — shown as '—'. */}
+            <Row label="Total Stock Recovered" value={NA} />
+            <Row label="Total Purchase Return" value={money(report?.moneyIn.purchaseReturns)} />
+            <Row label="Total Purchase discount" value={NA} />
+            <Row label="Total sell round off" value={NA} />
           </div>
         </div>
 
@@ -131,13 +192,13 @@ export function ProfitDetail({ open, onClose }: Props) {
         <div className="border-t border-border pt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
           <BigStat
             label="Gross Profit"
-            value={formatBDT(p.grossProfit)}
+            value={money(p?.grossProfit)}
             sub="Total sell price − Total purchase price"
             tone="primary"
           />
           <BigStat
             label="Net Profit"
-            value={formatBDT(p.netProfit)}
+            value={money(p?.netProfit)}
             sub="Gross profit − Total expenses + …"
             tone="success"
           />

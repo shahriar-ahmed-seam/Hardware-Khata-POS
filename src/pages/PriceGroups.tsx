@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/Button';
 import { Drawer } from '@/components/ui/Drawer';
 import { Badge } from '@/components/ui/Badge';
 import { usePriceGroups, type PriceGroup } from '@/stores/masterData';
+import { confirm } from '@/stores/confirm';
+import { toast } from '@/stores/toast';
 
 export default function PriceGroups() {
   const { items, add, update, remove } = usePriceGroups();
@@ -74,12 +76,18 @@ export default function PriceGroups() {
                   <Edit2 className="size-3.5" />
                 </button>
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     if (g.isDefault) {
-                      alert('Cannot delete the default price group.');
+                      toast.warning('Cannot delete the default price group.');
                       return;
                     }
-                    if (confirm(`Delete "${g.name}"? Products with this group will revert to Retail.`))
+                    if (
+                      await confirm({
+                        title: `Delete "${g.name}"?`,
+                        message: 'Products in this group will revert to Retail.',
+                        variant: 'destructive',
+                      })
+                    )
                       remove(g.id);
                   }}
                   className="size-7 grid place-items-center rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive disabled:opacity-30"

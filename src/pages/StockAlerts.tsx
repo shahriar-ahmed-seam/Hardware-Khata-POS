@@ -7,9 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Input } from '@/components/ui/Input';
 import { ProductImage } from '@/components/products/ProductImage';
-import { products as mockProducts, brandName as mockBrandName, categoryName as mockCategoryName } from '@/mocks/data';
 import { useReport } from '@/hooks/useReport';
-import { hasBackend } from '@/lib/api';
 import { setPurchasePrefill } from '@/lib/purchasePrefill';
 import { formatBDT, formatNumber, cn } from '@/lib/utils';
 
@@ -59,40 +57,20 @@ export default function StockAlerts() {
 
   // Backend wiring: `dashboard.lowStock` returns both low + out items (stock <=
   // reorder_level). We join category/brand/unit/image client-side via
-  // products.list. Mirrors StockAlertReportPage.tsx. Falls back to mock data
-  // outside Electron.
-  const { data: beLowStock, loading, backend, error } = useReport<BackendLowStock[]>(
+  // products.list. Mirrors StockAlertReportPage.tsx.
+  const { data: beLowStock, loading, error } = useReport<BackendLowStock[]>(
     'dashboard.lowStock',
-    hasBackend() ? { branchId: 'br_mp', limit: 500 } : null,
+    { branchId: 'br_mp', limit: 500 },
     [],
   );
   const { data: beProducts } = useReport<BackendProductRow[]>(
     'products.list',
-    hasBackend() ? { branchId: 'br_mp' } : null,
+    { branchId: 'br_mp' },
     [],
   );
 
-  const mockItems: AlertItem[] = useMemo(
-    () =>
-      mockProducts.map((p) => ({
-        id: p.id,
-        name: p.name,
-        sku: p.sku,
-        stock: p.stock,
-        reorderLevel: p.reorderLevel,
-        cost: p.cost,
-        unit: p.unit,
-        categoryId: p.categoryId ?? '',
-        brandId: p.brandId ?? '',
-        image: p.image,
-        categoryLabel: mockCategoryName(p.categoryId),
-        brandLabel: mockBrandName(p.brandId),
-      })),
-    [],
-  );
-
-  const backendItems: AlertItem[] | null = useMemo(() => {
-    if (!backend || !beLowStock) return null;
+  const allItems: AlertItem[] = useMemo(() => {
+    if (!beLowStock) return [];
     const meta = new Map<string, BackendProductRow>();
     for (const p of beProducts ?? []) meta.set(p.id, p);
     return beLowStock.map((p) => {
@@ -112,9 +90,7 @@ export default function StockAlerts() {
         brandLabel: m?.brand_name ?? '—',
       };
     });
-  }, [backend, beLowStock, beProducts]);
-
-  const allItems: AlertItem[] = backend && error ? [] : (backendItems ?? mockItems);
+  }, [beLowStock, beProducts]);
 
   const list = useMemo(() => {
     let arr = allItems.filter((p) =>
@@ -154,7 +130,7 @@ export default function StockAlerts() {
 
   // Hand off the selected alert items (product id + suggested qty) to the Add
   // Purchase form via sessionStorage, then navigate. AddPurchase consumes +
-  // clears the prefill on mount. Works in both mock and backend modes.
+  // clears the prefill on mount.
   const createPurchaseFromSelected = () => {
     const lines = allItems
       .filter((p) => selected.has(p.id))
@@ -268,9 +244,9 @@ export default function StockAlerts() {
               {list.length === 0 && (
                 <tr>
                   <td colSpan={8} className="px-4 py-12 text-center text-muted-foreground text-sm">
-                    {backend && loading
+                    {loading
                       ? 'Loading…'
-                      : backend && error
+                      : error
                         ? 'Couldn’t load — backend error. Check connection and retry.'
                         : tab === 'low'
                           ? 'No low-stock items.'

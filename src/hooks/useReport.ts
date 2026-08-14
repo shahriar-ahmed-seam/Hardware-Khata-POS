@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, hasBackend } from '@/lib/api';
+import { api } from '@/lib/api';
 import { useBranches } from '@/stores/branches';
 import { toast } from '@/stores/toast';
 
@@ -11,25 +11,26 @@ import { toast } from '@/stores/toast';
  * error }`.
  *
  * Contract:
- *  - When the Electron backend bridge is unavailable (browser dev) OR `payload`
- *    is null, it returns `{ data: null, loading: false, backend: false,
- *    error: false }` so the page keeps its EXISTING mock computation untouched.
- *    This is legitimate dev mode — mock is expected there.
- *  - When backed and payload !== null, it fetches `api<T>(channel, payload)` on
- *    mount and whenever `deps` change. Stale responses are ignored via a
+ *  - Data comes exclusively from the SQLite backend; there is no fallback
+ *    computation. `backend` is therefore always true and stays in the returned
+ *    shape only so existing call sites keep compiling.
+ *  - When `payload` is null the hook is idle and returns `{ data: null,
+ *    loading: false, error: false }` (a page uses this to defer a fetch until
+ *    its filters are ready).
+ *  - When payload !== null it fetches `api<T>(channel, payload)` on mount and
+ *    whenever `deps` change. Stale responses are ignored via a
  *    monotonically-increasing request id (last-write-wins).
- *  - ON ERROR under a real backend it does NOT silently degrade to mock: it
- *    surfaces a toast (once per fetch attempt) and flips `error: true` so the
- *    page can show an empty/error state instead of MOCK numbers. A real backend
- *    failure must never masquerade as real data.
+ *  - ON ERROR it surfaces a toast (once per fetch attempt) and flips
+ *    `error: true` so the page can show an empty/error state. A backend failure
+ *    must never masquerade as real data.
  */
 export function useReport<T = unknown>(
   channel: string,
   payload: object | null,
   deps: unknown[],
 ): { data: T | null; loading: boolean; backend: boolean; error: boolean } {
-  const backend = hasBackend();
-  const active = backend && payload !== null;
+  // Reads always go to the backend; only a null payload keeps the hook idle.
+  const active = payload !== null;
 
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(active);
@@ -83,7 +84,9 @@ export function useReport<T = unknown>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channel, active, ...deps]);
 
-  return { data, loading, backend, error };
+  // `backend` is kept in the returned shape for existing call sites; data now
+  // only ever comes from the backend.
+  return { data, loading, backend: true, error };
 }
 
 /**

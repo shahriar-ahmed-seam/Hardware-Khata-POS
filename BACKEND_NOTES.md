@@ -2361,10 +2361,17 @@ Mostly frontend primitives — minimal backend impact. Notable points:
   `globalSearch()` IPC that the titlebar search will use. Add "recent commands" persisted
   per user.
 
-## Print preview
-- `src/components/ui/PrintFrame.tsx` + print stylesheet in globals.css. Uses
-  `window.print()`. For thermal printers, backend ESC/POS rendering is separate (see
-  Task 3 / Task 13 receipt notes) — PrintFrame is for browser/PDF/A4 printing.
+## Printing
+- `src/components/ui/PrintSheet.tsx` (portals an off-screen, print-only sheet to
+  `document.body` and marks `<body class="has-print-sheet">`) + the `@media print`
+  block in globals.css. Paper width comes from `src/hooks/usePaperWidth.ts`, which
+  reads the default `PrinterProfile` from the settings store.
+- Print CSS has two modes: with a sheet mounted it hides `#root` so only the sheet
+  prints; with no sheet it hides just the app chrome so a report page prints its own
+  content. Triggering is still plain `window.print()`.
+- The old `PrintFrame` component was dead code and has been removed.
+- For thermal printers, backend ESC/POS rendering is separate (see Task 3 / Task 13
+  receipt notes) — this path is browser/PDF printing.
 
 ## Density + appearance
 - Density (`compact`/`comfortable`) lives in `pos-ui` (Zustand persist) and is toggled

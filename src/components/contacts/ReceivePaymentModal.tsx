@@ -6,7 +6,11 @@ import { Input } from '@/components/ui/Input';
 import { Banknote, Smartphone, CreditCard, Building2, HandCoins, Save } from 'lucide-react';
 import { cn, formatBDT } from '@/lib/utils';
 import { useCustomers } from '@/stores/contacts';
-import { useSales } from '@/stores/sales';
+import { useSales, type SaleRecord } from '@/stores/sales';
+import { api } from '@/lib/api';
+import { toCustomer, type BackendCustomer } from '@/hooks/contactAdapter';
+import { toSaleRecord, type BackendSale } from '@/hooks/saleAdapter';
+import type { Customer } from '@/types/domain';
 
 const METHODS: { id: 'Cash' | 'bKash' | 'Nagad' | 'Card' | 'Bank'; icon: any; label: string; needsRef?: boolean }[] = [
   { id: 'Cash', icon: Banknote, label: 'Cash' },
@@ -25,10 +29,38 @@ interface Props {
 }
 
 export function ReceivePaymentModal({ open, onClose, customerId }: Props) {
-  const customer = useCustomers((s) => s.items.find((c) => c.id === customerId));
+  const storeCustomer = useCustomers((s) => s.items.find((c) => c.id === customerId)) ?? null;
   const receivePayment = useCustomers((s) => s.receivePayment);
   const sales = useSales((s) => s.sales);
   const addSalePayment = useSales((s) => s.addPayment);
+
+  // The contacts store holds ONE PAGE of customers. This modal usually opens
+  // from a row on that page, but not always (Customer Dues rows, a deep-linked
+  // CustomerDetail), so fall back to a single-record read instead of silently
+  // rendering nothing. Store row wins when present — payments rehydrate it, so
+  // the due shown here stays live.
+  const hasStoreCustomer = !!storeCustomer;
+  const [fetched, setFetched] = useState<Customer | null>(null);
+
+  useEffect(() => {
+    if (!open || !customerId || hasStoreCustomer) {
+      setFetched(null);
+      return;
+    }
+    let alive = true;
+    void api<BackendCustomer | null>('customers.get', { id: customerId })
+      .then((row) => {
+        if (alive && row) setFetched(toCustomer(row));
+      })
+      .catch(() => {
+        // Channel error or running outside Electron — leave the modal empty.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open, customerId, hasStoreCustomer]);
+
+  const customer = storeCustomer ?? fetched;
 
   const [mode, setMode] = useState<Mode>('auto');
   const [amount, setAmount] = useState(0);
@@ -36,12 +68,39 @@ export function ReceivePaymentModal({ open, onClose, customerId }: Props) {
   const [reference, setReference] = useState('');
   const [picked, setPicked] = useState<Record<string, number>>({});
 
+  /**
+   * The sales store is ONE PAGE too, and this modal opens from screens that do
+   * not load it at all (Customer Dues) — an invoice missing from that page would
+   * silently drop out of the allocation, so the customer's outstanding invoices
+   * are read from the UNPAGED `sales.list` (headers carry total/paid/due). Falls
+   * back to the store page if the read fails.
+   */
+  const [allSales, setAllSales] = useState<SaleRecord[] | null>(null);
+
+  useEffect(() => {
+    if (!open || !customerId) {
+      setAllSales(null);
+      return;
+    }
+    let alive = true;
+    void api<BackendSale[]>('sales.list', {})
+      .then((rows) => {
+        if (alive) setAllSales(rows.map(toSaleRecord));
+      })
+      .catch(() => {
+        // Fall back to the store page below.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open, customerId]);
+
   const dueInvoices = useMemo(() => {
     if (!customer) return [];
-    return sales
+    return (allSales ?? sales)
       .filter((s) => s.status === 'final' && s.customerId === customer.id && s.due > 0)
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  }, [sales, customer]);
+  }, [allSales, sales, customer]);
 
   useEffect(() => {
     if (open) {

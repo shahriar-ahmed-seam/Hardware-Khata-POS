@@ -16,7 +16,7 @@
 - **Complete Hardware Shop POS System**
   - Offline-first Electron desktop application
   - SQLite database with full data persistence
-  - All core modules fully functional and tested (611 checks passed)
+  - All core modules fully functional and tested (860 checks passed)
 
 - **Core Features:**
   - Point of Sale with real-time inventory updates
@@ -28,6 +28,7 @@
   - Returns (Sales & Purchase)
   - Comprehensive Reports (Sales, Purchase, Stock, Cash, Customer, Profit)
   - Multi-user authentication with roles
+  - Backup & Cloud saving — verified database snapshots, retention, restore and CSV export
 
 ---
 
@@ -55,15 +56,23 @@
 - **Frontend:** All pages, forms, and UI components wired to real database
 - **Backend:** 19 service modules with complete CRUD operations
 - **Database:** Schema with 28 tables, FTS indexes, proper constraints
-- **Verification:** 611 checks across 132 test channels (all green)
+- **Verification:** 860 checks across 146 registered channels (all green)
 - **Data Flow:** No mock data in production paths (sell→stock→cash→reports)
 
-### 📝 Documented Deferrals (Non-blocking)
-- **AddSale/AddPurchase forms:** Create-mode uses mock master data for pickers (functional, id-wiring deferred)
-- **Shipments:** No backend table (UI is mock)
-- **Warranties & Price Groups:** Management UIs are mock placeholders
+### 📝 Deferred / Post-MVP (Non-blocking)
 
-These deferrals are documented and do not affect core business operations.
+The three deferrals listed in earlier releases are now **closed**: AddSale/AddPurchase pickers
+run on real master data, Shipments has its own table + service + channels, and Warranties &
+Price Groups have real backend CRUD. There is no mock data path anywhere in the app.
+
+What genuinely remains is external or explicitly post-MVP:
+- **SMS gateway:** needs a Bangladeshi provider account (frontend is done)
+- **Hosted multi-device sync:** off-machine safety is covered by Backup & Cloud; live
+  row-level sync between machines would need a hosted account + conflict resolution
+- **Thermal/ESC-POS printing** and cash-drawer kick
+- **Multi-branch context:** writes currently assume the single default branch
+
+None of these affect core business operations.
 
 ---
 
@@ -79,7 +88,10 @@ These deferrals are documented and do not affect core business operations.
 - **Engine:** SQLite 3 (better-sqlite3)
 - **Location:** User data directory (persistent)
 - **Size:** Starts ~50KB, grows with transactions
-- **Backup:** Can be copied from user data folder
+- **Backup:** Built in — `Settings → Backup & Cloud` takes a verified `VACUUM INTO` snapshot
+  (`pos-backup-YYYYMMDD-HHMMSS.sqlite3`), keeps the newest N (default 14), and can restore one.
+  Point the folder at a OneDrive / Google Drive / Dropbox folder the machine already syncs and
+  the copy leaves the shop; the app itself makes no network request and needs no account.
 
 ### Performance
 - Offline-first architecture (no network required)
@@ -104,7 +116,7 @@ Full project documentation is available in the `docs/` folder:
 
 ## 🐛 Known Issues
 
-None at this time. All 611 verification checks are passing.
+None at this time. All 860 verification checks are passing.
 
 ---
 

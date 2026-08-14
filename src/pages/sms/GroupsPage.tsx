@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Drawer } from '@/components/ui/Drawer';
 import { useSms, type SmsGroup } from '@/stores/sms';
-import { useCustomers } from '@/stores/contacts';
+import { useCustomersQuery } from '@/hooks/useCustomers';
 import { confirm } from '@/stores/confirm';
 import { cn } from '@/lib/utils';
 
@@ -139,7 +139,14 @@ function GroupForm({
   onSave: (data: Omit<SmsGroup, 'id' | 'createdAt'>) => void;
   onCancel: () => void;
 }) {
-  const customers = useCustomers((s) => s.items);
+  /**
+   * MEMBER PICKER — reads the UNPAGED `customers.list` (via useCustomersQuery),
+   * NOT `useCustomers().items` (one page of 50), so a group can contain any
+   * customer. The store's `options` is id+name only, and this list shows phone
+   * and price group, so it cannot serve here.
+   */
+  const customersQuery = useCustomersQuery();
+  const customers = customersQuery.data ?? [];
   const [name, setName] = useState(initial?.name ?? '');
   const [description, setDescription] = useState(initial?.description ?? '');
   const [memberIds, setMemberIds] = useState<string[]>(initial?.memberIds ?? []);

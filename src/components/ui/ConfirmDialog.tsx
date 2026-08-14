@@ -27,7 +27,10 @@ export function ConfirmDialog() {
   const Icon = destructive ? AlertTriangle : HelpCircle;
 
   return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 animate-fade-in">
+    <div
+      data-overlay="true"
+      className="fixed inset-0 z-[110] flex items-center justify-center p-6 animate-fade-in"
+    >
       <button
         className="absolute inset-0 bg-black/50"
         onClick={() => respond(false)}

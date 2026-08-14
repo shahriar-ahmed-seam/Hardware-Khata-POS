@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Settings2, Pencil, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Settings2, Pencil, RefreshCw, AlertTriangle, ScanBarcode, Receipt, TrendingUp } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { useDashboard } from '@/stores/dashboard';
@@ -9,8 +9,10 @@ import { CustomizePanel } from '@/components/dashboard/CustomizePanel';
 import { Shortcuts } from '@/components/dashboard/Shortcuts';
 import { TimeRange } from '@/components/dashboard/TimeRange';
 import { ProfitDetail } from '@/components/dashboard/ProfitDetail';
+import { PendriveBackup } from '@/components/dashboard/PendriveBackup';
 import { DashboardDataProvider, useDashboardData } from '@/hooks/useDashboardData';
 import { cn } from '@/lib/utils';
+import { Link } from 'react-router-dom';
 
 export default function Dashboard() {
   return (
@@ -42,6 +44,12 @@ function DashboardContent() {
         actions={
           <>
             <TimeRange />
+            <QuickAction to="/pos" icon={ScanBarcode} label="POS" color="bg-green-500" />
+            <QuickAction to="/sales" icon={Receipt} label="New Sale" color="bg-yellow-500" />
+            <QuickAction onClick={() => setProfitOpen(true)} icon={TrendingUp} label="Today's Profit" color="bg-orange-500" />
+            {/* An off-site copy the owner can carry home. Renders nothing for a
+                user without `settings.backup` — see PendriveBackup.tsx. */}
+            <PendriveBackup />
             <IconAction
               title="Refresh"
               onClick={() => refresh()}
@@ -239,4 +247,43 @@ function EmptyHint({ kind, onClick }: { kind: string; onClick: () => void }) {
       </Button>
     </div>
   );
+}
+
+function QuickAction({
+  to,
+  onClick,
+  icon: Icon,
+  label,
+  color,
+}: {
+  to?: string;
+  onClick?: () => void;
+  icon: any;
+  label: string;
+  color: string;
+}) {
+  const content = (
+    <div className={cn("h-9 px-3 rounded-md border border-border flex items-center gap-2 transition hover:shadow-sm", color)}>
+      <Icon className="size-4 text-white" />
+      <span className="text-sm font-medium text-white">{label}</span>
+    </div>
+  );
+
+  if (onClick) {
+    return (
+      <button onClick={onClick} className="flex">
+        {content}
+      </button>
+    );
+  }
+
+  if (to) {
+    return (
+      <Link to={to} className="flex">
+        {content}
+      </Link>
+    );
+  }
+
+  return content;
 }

@@ -32,21 +32,55 @@ export interface SeededMaster {
   expenseCategoryIds: string[];
 }
 
-export function seedMaster(db: DB): SeededMaster {
+export interface SeedMasterOptions {
+  /**
+   * REFERENCE-ONLY MODE — used for a real (packaged/clean) first install.
+   *
+   * Seeds only what a shop genuinely needs before it starts trading: business
+   * row, ONE branch, roles, ONE owner account, tax rates, invoice schemes,
+   * categories/brands/units/warranties/price groups, expense categories and the
+   * Walk-in customer.
+   *
+   * It deliberately SKIPS the sample product catalogue, sample customers,
+   * suppliers, extra staff accounts and commission agents — those are fixtures
+   * for the verification harness and the demo simulation, and shipping them
+   * would put invented data in a real shop's database.
+   *
+   * Default `false` keeps the harness fixture byte-identical.
+   */
+  referenceOnly?: boolean;
+}
+
+export function seedMaster(db: DB, opts: SeedMasterOptions = {}): SeededMaster {
+  const referenceOnly = opts.referenceOnly === true;
   const now = new Date().toISOString();
 
   // ---- Business ----
-  db.prepare(
-    `INSERT OR REPLACE INTO business_info (id, name, tagline, address, phone_primary, currency_symbol, default_branch_id)
-     VALUES (1, 'Hardware POS', 'Built for the shop floor', 'Mirpur 10, Dhaka', '01711-000001', '৳', 'br_mp')`,
-  ).run();
+  // Reference-only installs write an EMPTY identity: the shop name, address and
+  // phone print on real receipts, so a placeholder here would ship as the
+  // customer's own details. The first-run wizard fills these in.
+  if (referenceOnly) {
+    db.prepare(
+      `INSERT OR REPLACE INTO business_info (id, name, tagline, address, phone_primary, currency_symbol, default_branch_id)
+       VALUES (1, '', '', '', '', '৳', 'br_mp')`,
+    ).run();
+  } else {
+    db.prepare(
+      `INSERT OR REPLACE INTO business_info (id, name, tagline, address, phone_primary, currency_symbol, default_branch_id)
+       VALUES (1, 'Hardware POS', 'Built for the shop floor', 'Mirpur 10, Dhaka', '01711-000001', '৳', 'br_mp')`,
+    ).run();
+  }
 
   // ---- Branches ----
-  const branches = [
-    { id: 'br_mp', name: 'Mirpur Branch', code: 'BL0001', def: 1, active: 1, mgr: 'Seam' },
-    { id: 'br_ut', name: 'Uttara Branch', code: 'BL0002', def: 0, active: 1, mgr: 'Faruq' },
-    { id: 'br_dh', name: 'Dhanmondi Branch', code: 'BL0003', def: 0, active: 0, mgr: null },
-  ];
+  // One neutral branch for a real install (the wizard renames it); the extra
+  // branches exist so the harness can exercise transfers between branches.
+  const branches = referenceOnly
+    ? [{ id: 'br_mp', name: 'Main Branch', code: 'BL0001', def: 1, active: 1, mgr: null as string | null }]
+    : [
+        { id: 'br_mp', name: 'Mirpur Branch', code: 'BL0001', def: 1, active: 1, mgr: 'Seam' as string | null },
+        { id: 'br_ut', name: 'Uttara Branch', code: 'BL0002', def: 0, active: 1, mgr: 'Faruq' as string | null },
+        { id: 'br_dh', name: 'Dhanmondi Branch', code: 'BL0003', def: 0, active: 0, mgr: null as string | null },
+      ];
   const brStmt = db.prepare(
     'INSERT INTO branches (id, name, code, is_default, active, manager, created_at) VALUES (?,?,?,?,?,?,?)',
   );
@@ -58,8 +92,18 @@ export function seedMaster(db: DB): SeededMaster {
     {
       id: 'role_manager',
       name: 'Manager',
+      // Everything except the four owner-only powers:
+      //  settings.users / settings.roles — who can use the shop's till
+      //  settings.backup                 — where the shop's data is copied to
+      //  products.delete                 — irreversible removal from the catalogue
+      //  sales.edit                      — rewriting an invoice that has already
+      //                                    taken money and moved stock
+      // Any of these can be granted per-role in Settings → Roles.
       perms: PERMISSIONS_ALL.filter(
-        (p) => !['settings.users', 'settings.roles', 'settings.backup', 'products.delete'].includes(p),
+        (p) =>
+          !['settings.users', 'settings.roles', 'settings.backup', 'products.delete', 'sales.edit'].includes(
+            p,
+          ),
       ),
     },
     {
@@ -77,12 +121,21 @@ export function seedMaster(db: DB): SeededMaster {
   for (const r of roles) roleStmt.run(r.id, r.name, JSON.stringify(r.perms));
 
   // ---- Users ----
-  const users = [
+  // Reference-only installs get JUST the owner account; the first-run wizard
+  // immediately renames it and replaces the PIN, so no shipped credential
+  // survives setup. The extra staff accounts exist only as harness fixtures.
+  const allUsers = [
     { id: 'u_admin', name: 'Seam', username: 'seam', pin: '1234', role: 'role_admin', branches: [] as string[] },
     { id: 'u_faruq', name: 'Faruq Hossain', username: 'faruq', pin: '4321', role: 'role_manager', branches: ['br_ut'] },
     { id: 'u_rana', name: 'Rana Ahmed', username: 'rana', pin: '1111', role: 'role_cashier', branches: ['br_mp'] },
     { id: 'u_rashed', name: 'Rashed Khan', username: 'rashed', pin: '2222', role: 'role_stock', branches: ['br_mp', 'br_ut'] },
   ];
+  // A real install gets ONE neutral owner account (the wizard renames it and
+  // sets the real PIN immediately). The demo/harness fixture keeps its exact
+  // original identities — `backend/verify/scenarios.ts` pins the 'seam' login.
+  const users = referenceOnly
+    ? [{ ...allUsers[0], name: 'Owner', username: 'owner' }]
+    : allUsers;
   const userStmt = db.prepare(
     'INSERT INTO users (id, name, username, pin_hash, role_id, branch_ids, status, created_at) VALUES (?,?,?,?,?,?,?,?)',
   );
@@ -91,11 +144,13 @@ export function seedMaster(db: DB): SeededMaster {
   for (const u of users)
     userStmt.run(u.id, u.name, u.username, hashSecret(u.pin), u.role, JSON.stringify(u.branches), 'active', now);
 
-  // ---- Commission agents ----
-  const agents = [
-    { id: 'ag_1', name: 'Hassan (Field)', pct: 2 },
-    { id: 'ag_2', name: 'Jamal (Contractor)', pct: 1.5 },
-  ];
+  // ---- Commission agents (harness fixture only) ----
+  const agents = referenceOnly
+    ? []
+    : [
+        { id: 'ag_1', name: 'Hassan (Field)', pct: 2 },
+        { id: 'ag_2', name: 'Jamal (Contractor)', pct: 1.5 },
+      ];
   const agentStmt = db.prepare('INSERT INTO commission_agents (id, name, commission_pct, active) VALUES (?,?,?,1)');
   for (const a of agents) agentStmt.run(a.id, a.name, a.pct);
 
@@ -130,6 +185,7 @@ export function seedMaster(db: DB): SeededMaster {
 
   // ---- Catalog ----
   const categories = [
+    { id: 'cat_none', name: 'Uncategorized', emoji: '📦' },
     { id: 'c1', name: 'Hand Tools', emoji: '🔨' },
     { id: 'c2', name: 'Power Tools', emoji: '🪚' },
     { id: 'c3', name: 'Plumbing', emoji: '🚰' },
@@ -142,9 +198,9 @@ export function seedMaster(db: DB): SeededMaster {
   const catStmt = db.prepare('INSERT INTO categories (id, name, emoji) VALUES (?,?,?)');
   for (const c of categories) catStmt.run(c.id, c.name, c.emoji);
 
-  const brands = ['Bosch', 'Makita', 'Stanley', 'RFL', 'Berger', 'BSRM', 'Walton', 'Generic'];
+  const brands = ['No Brand', 'Bosch', 'Makita', 'Stanley', 'RFL', 'Berger', 'BSRM', 'Walton', 'Generic'];
   const brandStmt = db.prepare('INSERT INTO brands (id, name) VALUES (?,?)');
-  brands.forEach((b, i) => brandStmt.run(`b${i + 1}`, b));
+  brands.forEach((b, i) => brandStmt.run(i === 0 ? 'b_none' : `b${i}`, b));
 
   const units = [
     { id: 'u1', name: 'Pieces', short: 'pc', type: 'count', f: 1 },
@@ -194,16 +250,28 @@ export function seedMaster(db: DB): SeededMaster {
     ['SF-HELM-Y', 'Safety Helmet Yellow', 'c8', 'b8', 'pc', 180, 300, 270, 285, 30],
     ['SF-GOGL-CL', 'Safety Goggles Clear', 'c8', 'b8', 'pc', 70, 130, 115, 122, 40],
   ];
+  // `avg_cost` and `cost_updated_at` are seeded alongside `cost`, and each
+  // product opens its buying-price history with that same cost. Skipping them
+  // would leave the fixture with avg_cost = 0 against a real cost, which is
+  // exactly the drift `backend/verify/costing.ts` refuses to allow.
   const prodStmt = db.prepare(
-    `INSERT INTO products (id, sku, barcode, name, category_id, brand_id, unit, cost, price, wholesale_price, contractor_price, reorder_level, tax_pct, created_at, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)`,
+    `INSERT INTO products (id, sku, barcode, name, category_id, brand_id, unit, cost, avg_cost,
+       cost_updated_at, price, wholesale_price, contractor_price, reorder_level, tax_pct, created_at, updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)`,
+  );
+  const costHistStmt = db.prepare(
+    `INSERT INTO product_cost_history (id, product_id, cost, at, user_id, source, note)
+     VALUES (?,?,?,?,NULL,'initial','Opening buying price')`,
   );
   const ftsProdStmt = db.prepare('INSERT INTO fts_products (product_id, name, sku, barcode) VALUES (?,?,?,?)');
   const productIds: string[] = [];
-  products.forEach((p, i) => {
+  // Reference-only installs ship an EMPTY catalogue — the shop adds its own
+  // products (or bulk-imports them from Data & Import).
+  (referenceOnly ? [] : products).forEach((p, i) => {
     const id = `p${i + 1}`;
     const barcode = '880100100' + String(1000 + i).padStart(4, '0');
-    prodStmt.run(id, p[0], barcode, p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], now, now);
+    prodStmt.run(id, p[0], barcode, p[1], p[2], p[3], p[4], p[5], p[5], now, p[6], p[7], p[8], p[9], now, now);
+    costHistStmt.run(`pch_seed_${id}`, id, p[5], now);
     ftsProdStmt.run(id, p[1], p[0], barcode);
     productIds.push(id);
   });
@@ -229,7 +297,9 @@ export function seedMaster(db: DB): SeededMaster {
   const ftsCustStmt = db.prepare('INSERT INTO fts_customers (customer_id, name, phone) VALUES (?,?,?)');
   const customerIds: string[] = [];
   const joinedBase = new Date(Date.now() - 400 * 86400000);
-  customers.forEach((c, i) => {
+  // Reference-only installs keep ONLY the Walk-in customer (cu1) — the POS and
+  // the sale forms rely on it for counter sales; the rest are harness fixtures.
+  (referenceOnly ? customers.slice(0, 1) : customers).forEach((c, i) => {
     const id = `cu${i + 1}`;
     const joined = new Date(joinedBase.getTime() + i * 7 * 86400000).toISOString();
     custStmt.run(id, c[0], c[1] || null, c[2], c[3] || null, c[4], joined, joined);
@@ -252,7 +322,8 @@ export function seedMaster(db: DB): SeededMaster {
   );
   const ftsSupStmt = db.prepare('INSERT INTO fts_suppliers (supplier_id, name, company, phone) VALUES (?,?,?,?)');
   const supplierIds: string[] = [];
-  suppliers.forEach((s, i) => {
+  // Reference-only installs ship no suppliers — the shop adds its own.
+  (referenceOnly ? [] : suppliers).forEach((s, i) => {
     const id = `sp${i + 1}`;
     supStmt.run(id, s[0], s[1], s[2], s[3], s[4], now);
     ftsSupStmt.run(id, s[0], s[1], s[2]);

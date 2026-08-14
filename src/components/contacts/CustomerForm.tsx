@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { NumberField } from '@/components/ui/NumberField';
 import { Avatar } from './Avatar';
-import { type Customer } from '@/mocks/data';
+import type { Customer } from '@/types/domain';
 import { cn } from '@/lib/utils';
 
 interface Props {
@@ -58,8 +58,14 @@ export function CustomerForm({ initial, asDrawer, onSave, onDelete, onCancel }: 
   const removeTag = (t: string) => set('tags', (c.tags ?? []).filter((x) => x !== t));
 
   return (
-    <div className={cn('flex flex-col flex-1 min-h-0', !asDrawer && 'min-h-full')}>
-      <div className="flex-1 overflow-auto">
+    // Exactly one scroll container, and the mode decides which. In a Drawer the
+    // body is `flex-1 min-h-0 flex flex-col`, so this root must claim
+    // `flex-1 min-h-0` or the inner scroller gets no bounded height and nothing
+    // scrolls. On a page, <main> already scrolls — adding a second one here
+    // would nest scrollbars. (Previously both min-height classes were applied at
+    // once and whichever CSS rule came last silently won.)
+    <div className={cn('flex flex-col', asDrawer ? 'flex-1 min-h-0' : 'min-h-full')}>
+      <div className={cn(asDrawer && 'flex-1 min-h-0 overflow-auto')}>
         <div className={cn('mx-auto max-w-3xl', asDrawer ? 'p-4 space-y-4' : 'p-6 space-y-4')}>
           {/* Header preview */}
           <div className="flex items-center gap-3 rounded-xl border border-border p-4 bg-card">

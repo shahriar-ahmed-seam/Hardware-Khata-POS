@@ -17,13 +17,10 @@ import { Input } from '@/components/ui/Input';
 import { NumberField } from '@/components/ui/NumberField';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
-import { customers as mockCustomers, products as mockProducts } from '@/mocks/data';
 import { cn, formatBDT } from '@/lib/utils';
-import { hasBackend } from '@/lib/api';
 import { useProducts } from '@/hooks/useProducts';
 import { useCustomersQuery } from '@/hooks/useCustomers';
 import { useBranches } from '@/stores/branches';
-import { useCustomers } from '@/stores/contacts';
 import {
   useSales,
   type SaleLine,
@@ -31,6 +28,9 @@ import {
   type SaleStatus,
   nextInvoiceNo,
 } from '@/stores/sales';
+import { toast } from '@/stores/toast';
+import { promptText } from '@/stores/prompt';
+import { useCan } from '@/hooks/useCan';
 import { ProductImage } from '@/components/products/ProductImage';
 
 export default function AddSale() {
@@ -40,44 +40,47 @@ export default function AddSale() {
   const initialStatus = (searchParams.get('status') as SaleStatus) || 'final';
   const sales = useSales((s) => s.sales);
   const addSale = useSales((s) => s.addSale);
-  const deleteSale = useSales((s) => s.deleteSale);
+  const updateSaleBackend = useSales((s) => s.updateSale);
+  // Editing an existing invoice is Admin-only (see electron/permissions.ts).
+  // The IPC gate is authoritative; this just keeps the button honest.
+  const canEditSale = useCan('sales.edit');
+  const [saving, setSaving] = useState(false);
 
-  // Create-form wiring (now wired to the real backend): under Electron the
-  // product/customer pickers read live backend data and the Business Location
-  // select feeds a real branch. addSale() persists via api('sales.create'),
-  // which generates the server id, customerId, and branch id; this page then
-  // navigates to the relevant list which rehydrates from the backend. Without a
-  // backend (browser dev) it falls back to the mock master data + optimistic id.
-  const backend = hasBackend();
+  // Create-form wiring (backend only): the product/customer pickers read live
+  // backend data and the Business Location select feeds a real branch.
+  // addSale() persists via api('sales.create'), which generates the server id,
+  // customerId, and branch id; this page then navigates to the relevant list
+  // which rehydrates from the backend. The mock master-data fallback was
+  // removed — empty queries render empty pickers.
   const productsQuery = useProducts('br_mp');
   const customersQuery = useCustomersQuery();
-  const products = backend ? (productsQuery.data ?? []) : mockProducts;
-  const customers = backend ? (customersQuery.data ?? []) : mockCustomers;
+  const products = productsQuery.data ?? [];
+  const customers = customersQuery.data ?? [];
   const branches = useBranches((s) => s.items);
 
-  // Hydrate customers + branches on mount (cheap no-ops without a backend).
-  const hydrateCustomers = useCustomers((s) => s.hydrate);
+  // Hydrate branches on mount (cheap no-op without a backend). The customer
+  // picker reads `useCustomersQuery()` (unpaged `customers.list`), NOT the
+  // contacts store — so the old `useCustomers().hydrate()` here only fetched one
+  // page of customers that nothing on this screen read. It is gone.
   const hydrateBranches = useBranches((s) => s.hydrate);
   useEffect(() => {
-    void hydrateCustomers();
     void hydrateBranches();
-  }, [hydrateCustomers, hydrateBranches]);
+  }, [hydrateBranches]);
 
   const editing = id ? sales.find((s) => s.id === id) : undefined;
 
-  // Default customer: edit value wins; otherwise under backend pick the real
-  // walk-in customer if present (by name or seed id), else leave empty; under
-  // mock keep 'cu1' (the walk-in label).
+  // Default customer: edit value wins; otherwise pick the real walk-in customer
+  // if the backend has one, else leave empty until the query resolves.
   const defaultCustomerId =
     editing?.customerId ??
-    (backend
-      ? customers.find((c) => c.name === 'Walk-in Customer' || c.id === 'cu1')?.id ?? ''
-      : 'cu1');
+    customers.find((c) => c.name === 'Walk-in Customer' || c.id === 'cu1')?.id ??
+    '';
 
-  // Default branch: edit value wins; otherwise the default branch name, else first.
+  // Default branch: edit value wins; otherwise the default branch name, else
+  // first. No hardcoded branch-name fallback — an unhydrated branch list simply
+  // leaves the select empty.
   const defaultBranchName =
-    editing?.branch ??
-    (branches.find((b) => b.isDefault)?.name ?? branches[0]?.name ?? 'Mirpur Branch');
+    editing?.branch ?? (branches.find((b) => b.isDefault)?.name ?? branches[0]?.name ?? '');
 
   const [status, setStatus] = useState<SaleStatus>(editing?.status ?? initialStatus);
   const [customerId, setCustomerId] = useState(defaultCustomerId);
@@ -100,12 +103,22 @@ export default function AddSale() {
   // Once backend customers load, default the picker to the walk-in customer if
   // nothing is selected yet (and not editing an existing sale).
   useEffect(() => {
-    if (!backend || editing) return;
+    if (editing) return;
     if (customerId) return;
     const walkIn = customers.find((c) => c.name === 'Walk-in Customer' || c.id === 'cu1');
     if (walkIn) setCustomerId(walkIn.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customers]);
+
+  // Same for branches: the list arrives asynchronously from the backend, so
+  // adopt the default branch once it lands (previously a hardcoded branch name
+  // filled this gap).
+  useEffect(() => {
+    if (editing || branch) return;
+    const next = branches.find((b) => b.isDefault)?.name ?? branches[0]?.name;
+    if (next) setBranch(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branches]);
 
   const matches = useMemo(() => {
     if (!searchQ.trim()) return [] as typeof products;
@@ -158,23 +171,15 @@ export default function AddSale() {
   const tax = taxableBase * (taxPct / 100);
   const total = taxableBase + tax + shipping + other;
 
-  const save = (newStatus: SaleStatus = status) => {
-    if (lines.length === 0) {
-      alert('Add at least one item');
-      return;
-    }
+  const goToList = (s: SaleStatus) => {
+    if (s === 'final') nav('/sales');
+    else if (s === 'draft') nav('/sales/drafts');
+    else nav('/sales/quotations');
+  };
 
-    // EDIT-MODE INTEGRITY (backend): there is no `sales.update` channel. A final
-    // sale has already moved stock/cash, so it can NEVER be edited in place by
-    // creating a new record — that would double-count stock and revenue. Block
-    // it and direct the user to Void + re-create. Drafts/quotations carry no
-    // stock/cash side effects, so we "edit" them by creating the new record and
-    // purging the original (a safe convert), keeping exactly one row.
-    if (backend && editing && editing.status === 'final') {
-      alert(
-        'A finalized sale cannot be edited (it has already affected stock and cash). ' +
-          'Void it from the sale detail, then create a new sale.',
-      );
+  const save = async (newStatus: SaleStatus = status) => {
+    if (lines.length === 0) {
+      toast.warning('Add at least one item');
       return;
     }
 
@@ -198,23 +203,60 @@ export default function AddSale() {
       shipping,
       other,
       total,
-      paid: 0,
-      due: total,
-      payments: [],
-      audit: [{ id: 'a_' + Date.now(), at: new Date().toISOString(), by: 'Seam', action: 'created' }],
+      // On an edit the payments already recorded against the invoice are kept
+      // (the backend re-applies them); paid/due are recomputed there and come
+      // back on the next hydrate, so these are only the create-path defaults.
+      paid: editing?.paid ?? 0,
+      due: editing ? Math.max(0, total - (editing.paid ?? 0)) : total,
+      payments: editing?.payments ?? [],
+      audit: editing?.audit ?? [
+        { id: 'a_' + Date.now(), at: new Date().toISOString(), by: 'Seam', action: 'created' },
+      ],
       notes: notes || undefined,
       validUntil: newStatus === 'quotation' ? validUntil : undefined,
     };
-    // Under the backend, editing/converting an existing draft or quotation must
-    // not leave the original behind. Create the new record, then delete the
-    // source draft/quotation so there is exactly one resulting sale.
-    if (backend && editing && (editing.status === 'draft' || editing.status === 'quotation')) {
-      deleteSale(editing.id);
+
+    // ---------------- EDITING AN EXISTING SALE ----------------
+    // There IS a `sales.update` channel now (backend/services/sales.ts): it
+    // reverses the original stock and cash and re-applies the corrected figures
+    // in one transaction, keeping the invoice number the customer is holding. So
+    // the old delete-and-recreate dance is gone, along with the flat refusal to
+    // touch a finalized sale.
+    if (editing) {
+      if (!canEditSale) {
+        toast.error('Only an admin can edit a sale', {
+          description:
+            'Ask the owner to sign in. This is deliberate: an edit rewrites money that has already been taken.',
+        });
+        return;
+      }
+      // A correction to a finalized invoice must say WHY — it is recorded in the
+      // sale's audit trail, which is the only thing that distinguishes fixing a
+      // mistake from quietly changing the books.
+      const reason = await promptText({
+        title: `Why is ${editing.invoiceNo} being corrected?`,
+        message:
+          editing.status === 'final'
+            ? 'This reverses the original stock and cash and re-applies the corrected amounts. The invoice number stays the same.'
+            : 'Recorded against the invoice so the change is traceable.',
+        label: 'Reason',
+        placeholder: 'e.g. wrong quantity keyed at the counter',
+        confirmLabel: 'Save correction',
+        required: true,
+      });
+      if (reason === null) return;
+
+      setSaving(true);
+      const ok = await updateSaleBackend(editing.id, rec, reason);
+      setSaving(false);
+      if (!ok) return;
+      toast.success(`${editing.invoiceNo} corrected`);
+      goToList(newStatus);
+      return;
     }
+
     addSale(rec);
-    if (newStatus === 'final') nav('/sales');
-    else if (newStatus === 'draft') nav('/sales/drafts');
-    else nav('/sales/quotations');
+    goToList(newStatus);
   };
 
   return (
@@ -227,18 +269,41 @@ export default function AddSale() {
             <Button variant="ghost" onClick={() => nav(-1)}>
               <ArrowLeft className="size-4" /> Back
             </Button>
-            <Button variant="outline" onClick={() => save('draft')}>
-              <PenSquare className="size-4" /> Save as Draft
-            </Button>
-            <Button variant="outline" onClick={() => save('quotation')}>
-              <FileText className="size-4" /> Save as Quotation
-            </Button>
-            <Button onClick={() => save('final')}>
-              <CheckCircle2 className="size-4" /> Save Sale
-            </Button>
+            {/* A finalized invoice is corrected, not re-filed as a draft or a
+                quotation — those two buttons would change what the document IS.
+                They stay for a new sale and for an unfinalized one. */}
+            {editing?.status !== 'final' && (
+              <>
+                <Button variant="outline" disabled={saving} onClick={() => void save('draft')}>
+                  <PenSquare className="size-4" /> Save as Draft
+                </Button>
+                <Button variant="outline" disabled={saving} onClick={() => void save('quotation')}>
+                  <FileText className="size-4" /> Save as Quotation
+                </Button>
+              </>
+            )}
+            {editing ? (
+              <Button
+                disabled={saving || !canEditSale}
+                title={canEditSale ? undefined : 'Only an admin can edit a sale'}
+                onClick={() => void save(status)}
+              >
+                <CheckCircle2 className="size-4" /> Save Correction
+              </Button>
+            ) : (
+              <Button disabled={saving} onClick={() => void save('final')}>
+                <CheckCircle2 className="size-4" /> Save Sale
+              </Button>
+            )}
           </>
         }
       />
+
+      {editing && !canEditSale && (
+        <div className="mx-6 mt-4 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
+          Only an admin can edit a sale. Ask the owner to sign in.
+        </div>
+      )}
 
       <div className="p-6 grid grid-cols-1 xl:grid-cols-3 gap-6">
         {/* LEFT — meta + items */}
@@ -270,7 +335,7 @@ export default function AddSale() {
                 onChange={(e) => setBranch(e.target.value)}
                 className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
               >
-                {(branches.length > 0 ? branches.map((b) => b.name) : [branch]).map((name) => (
+                {(branches.length > 0 ? branches.map((b) => b.name) : branch ? [branch] : []).map((name) => (
                   <option key={name} value={name}>
                     {name}
                   </option>

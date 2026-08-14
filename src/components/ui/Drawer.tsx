@@ -31,6 +31,7 @@ export function Drawer({
   if (!open) return null;
   return (
     <div
+      data-overlay="true"
       className={cn(
         'fixed inset-0 z-50 flex animate-fade-in',
         side === 'right' ? 'justify-end' : 'justify-start',

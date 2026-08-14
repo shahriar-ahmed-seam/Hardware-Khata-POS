@@ -90,7 +90,7 @@ export default function ReceiptTemplatePage() {
         {/* LEFT — settings */}
         <div className="space-y-4">
           <Card className="p-4 space-y-3">
-            <div className="text-sm font-semibold">Paper</div>
+            <div className="text-sm font-semibold">Preview size</div>
             <div className="grid grid-cols-3 gap-2">
               {(['50mm', '80mm', 'A4'] as const).map((p) => (
                 <button
@@ -106,6 +106,13 @@ export default function ReceiptTemplatePage() {
                   {p}
                 </button>
               ))}
+            </div>
+            {/* Honest labelling: this only changes the preview on the right. The
+                width actually sent to the printer comes from the printer profile,
+                so two different controls were quietly competing before. */}
+            <div className="text-xs text-muted-foreground">
+              This only changes the preview here. The width used when printing comes from your
+              printer in Settings → Printers.
             </div>
           </Card>
 
@@ -132,15 +139,17 @@ export default function ReceiptTemplatePage() {
 
           <Card className="p-4 space-y-1">
             <div className="text-sm font-semibold mb-2">Show on receipt</div>
-            <ToggleRow label="Cashier name" checked={r.showCashier} onChange={(v) => set({ showCashier: v })} />
+            <ToggleRow label="Date and branch line at the top" checked={r.showDateAndBranch} onChange={(v) => set({ showDateAndBranch: v })} />
+            <ToggleRow label="Served by (cashier name)" checked={r.showCashier} onChange={(v) => set({ showCashier: v })} />
             <ToggleRow label="Customer phone" checked={r.showCustomerPhone} onChange={(v) => set({ showCustomerPhone: v })} />
             <ToggleRow label="Customer address" checked={r.showCustomerAddress} onChange={(v) => set({ showCustomerAddress: v })} />
             <ToggleRow label="Line discount" checked={r.showLineDiscount} onChange={(v) => set({ showLineDiscount: v })} />
             <ToggleRow label="Line tax" checked={r.showLineTax} onChange={(v) => set({ showLineTax: v })} />
             <ToggleRow label="Payment reference / TxID" checked={r.showPaymentRef} onChange={(v) => set({ showPaymentRef: v })} />
             <ToggleRow label="Barcode of invoice no" checked={r.showBarcode} onChange={(v) => set({ showBarcode: v })} />
-            <ToggleRow label="QR code (invoice link)" checked={r.showQRCode} onChange={(v) => set({ showQRCode: v })} />
             <ToggleRow label="Amount in words" checked={r.showAmountInWords} onChange={(v) => set({ showAmountInWords: v })} />
+            {/* The "QR code (invoice link)" switch was removed: nothing rendered a
+                QR code, so it silently did nothing. */}
           </Card>
 
           <Card className="p-4 space-y-3">
@@ -156,6 +165,9 @@ export default function ReceiptTemplatePage() {
                 placeholder="Returns within 7 days with receipt"
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 resize-y"
               />
+              <div className="text-xs text-muted-foreground mt-1">
+                Leave this empty to print no footer at all.
+              </div>
             </div>
           </Card>
         </div>

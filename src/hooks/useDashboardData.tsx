@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { api, hasBackend } from '@/lib/api';
+import { api } from '@/lib/api';
 import { useDashboard } from '@/stores/dashboard';
 import { toast } from '@/stores/toast';
 import {
@@ -59,9 +59,9 @@ export type { DashboardBundle } from './dashboardAdapter';
  * cash card need) in parallel via `api()`, then maps the snake_case backend
  * rows into the exact shapes the existing KPI/widget components render.
  *
- * When `hasBackend()` is false (browser dev), it returns `backend:false` and
- * `data:null`; every component then keeps using its current mock imports
- * unchanged.
+ * Every widget reads from this bundle only — the dashboard has no fallback data
+ * source. While the first fetch is in flight `data` is null and `loading` is
+ * true; if the fetch fails `error` flips true.
  *
  * DEFERRALS (commented through the slice):
  *  1. Single-branch assumption — DEFAULT_BRANCH = 'br_mp'. The branch picker is
@@ -84,9 +84,9 @@ interface DashboardDataValue {
   loading: boolean;
   backend: boolean;
   /**
-   * True when a backend fetch FAILED under `hasBackend()`. The dashboard uses
-   * this to show an explicit error state instead of silently rendering MOCK
-   * numbers — a real backend failure must never masquerade as real data.
+   * True when a backend fetch FAILED. The dashboard uses this to show an
+   * explicit error state — a backend failure must never masquerade as real
+   * data.
    */
   error: boolean;
   refresh: () => void;
@@ -98,9 +98,10 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
   const range = useDashboard((s) => s.range);
   const customRange = useDashboard((s) => s.customRange);
 
-  const backend = hasBackend();
+  // The dashboard is backend-only, so a fetch always runs.
+  const backend = true;
   const [data, setData] = useState<DashboardBundle | null>(null);
-  const [loading, setLoading] = useState(backend);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -112,13 +113,6 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
   const toastedRef = useRef(false);
 
   useEffect(() => {
-    if (!backend) {
-      setData(null);
-      setLoading(false);
-      setError(false);
-      return;
-    }
-
     const reqId = ++reqIdRef.current;
     let cancelled = false;
     setLoading(true);
@@ -202,9 +196,8 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
         setData(bundle);
         setError(false);
       } catch (err) {
-        // Backend error: surface it. Do NOT silently fall back to MOCK — flip
-        // `error` so the dashboard shows an explicit error state, and toast once
-        // per attempt. (Mock is only legitimate when !hasBackend().)
+        // Backend error: surface it. Flip `error` so the dashboard shows an
+        // explicit error state, and toast once per attempt.
         if (!cancelled && reqId === reqIdRef.current) {
           console.error('[useDashboardData] fetch failed:', err);
           setData(null);
@@ -222,7 +215,7 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [backend, range, customRange, refreshKey]);
+  }, [range, customRange, refreshKey]);
 
   const value = useMemo<DashboardDataValue>(
     () => ({ data, loading, backend, error, refresh }),
@@ -234,11 +227,11 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
 
 /**
  * Access the dashboard data bundle. Safe to call even when no provider is
- * mounted (returns a backend:false / data:null default) so individual
- * components stay resilient and keep their mock fallback.
+ * mounted: it returns a `data:null` default so a widget rendered outside the
+ * provider shows its empty state instead of substituting data of its own.
  */
 export function useDashboardData(): DashboardDataValue {
   const ctx = useContext(DashboardDataContext);
   if (ctx) return ctx;
-  return { data: null, loading: false, backend: false, error: false, refresh: () => {} };
+  return { data: null, loading: false, backend: true, error: false, refresh: () => {} };
 }

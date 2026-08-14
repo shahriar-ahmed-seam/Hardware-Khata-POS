@@ -4,14 +4,13 @@ import { useNavigate } from 'react-router-dom';
 import { Search, FileText, Package, User, Truck, Receipt, X } from 'lucide-react';
 import {
   parseSearch,
-  runSearch,
   mapBackendResults,
   SCOPE_HINTS,
   type SearchScope,
   type SearchResult,
   type BackendSearchPayload,
 } from '@/lib/search';
-import { api, hasBackend } from '@/lib/api';
+import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useT } from '@/lib/i18n';
 
@@ -62,23 +61,19 @@ export function GlobalSearch() {
   }, [open, updateRect]);
 
   const parsed = useMemo(() => parseSearch(q), [q]);
-  const backend = hasBackend();
 
-  // Mock results computed synchronously (also the !hasBackend() fallback).
-  const mockResults = useMemo(() => runSearch(parsed), [parsed]);
-
-  // Backend results: fetched (debounced ~200ms) from search.global. A
+  // Results: fetched (debounced ~200ms) from search.global — the only source.
+  // The synchronous mock/local-index path was removed. A
   // monotonically-increasing request id guards against stale responses
   // overwriting newer ones (last-write-wins).
-  const [beResults, setBeResults] = useState<SearchResult[]>([]);
+  const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const reqIdRef = useRef(0);
 
   useEffect(() => {
-    if (!backend) return;
     const term = parsed.term.trim();
     if (!term) {
-      setBeResults([]);
+      setResults([]);
       setLoading(false);
       return;
     }
@@ -92,19 +87,18 @@ export function GlobalSearch() {
         .then((payload) => {
           // Drop stale responses.
           if (reqId !== reqIdRef.current) return;
-          setBeResults(mapBackendResults(payload));
+          setResults(mapBackendResults(payload));
           setLoading(false);
         })
         .catch(() => {
           if (reqId !== reqIdRef.current) return;
-          setBeResults([]);
+          setResults([]);
           setLoading(false);
         });
     }, 200);
     return () => clearTimeout(handle);
-  }, [backend, parsed.term, parsed.scope]);
+  }, [parsed.term, parsed.scope]);
 
-  const results = backend ? beResults : mockResults;
   const showHints = parsed.scope === 'all' && !parsed.term;
 
   // Ctrl+K shortcut
@@ -162,7 +156,10 @@ export function GlobalSearch() {
   };
 
   return (
-    <div ref={ref} className="titlebar-no-drag flex-1 max-w-xl mx-auto relative">
+    <div
+      ref={ref}
+      className="titlebar-no-drag flex-1 min-w-0 max-w-xl mx-auto relative"
+    >
       <div className="relative">
         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
         <input
@@ -196,10 +193,12 @@ export function GlobalSearch() {
       {open &&
         rect &&
         createPortal(
+          // `print:hidden` — portalled to <body>, so it sits outside the #root
+          // that printing hides and has to opt out by name.
           <div
             ref={panelRef}
             style={{ position: 'fixed', left: rect.left, top: rect.top, width: rect.width }}
-            className="bg-popover text-popover-foreground border border-border rounded-lg shadow-2xl overflow-hidden z-[60] animate-fade-in"
+            className="bg-popover text-popover-foreground border border-border rounded-lg shadow-2xl overflow-hidden z-[60] animate-fade-in print:hidden"
           >
           {/* Scope chip */}
           {parsed.scope !== 'all' && (

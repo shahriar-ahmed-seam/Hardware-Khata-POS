@@ -1,41 +1,31 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Splitter } from '@/components/ui/Splitter';
 import { CartPanel } from '@/components/pos/CartPanel';
 import { ProductPanel } from '@/components/pos/ProductPanel';
-import { type CartLine, type ParkedCart, computeTotals } from '@/components/pos/types';
-import { products as mockProducts, customers as mockCustomers, type Customer } from '@/mocks/data';
+import {
+  type CartLine,
+  type ParkedCart,
+  type PriceGroup,
+  computeTotals,
+} from '@/components/pos/types';
+import type { Customer } from '@/types/domain';
 import { usePOS } from '@/stores/pos';
+import { usePOSCart, type PriceResolver } from '@/stores/posCart';
 import { useSettings } from '@/stores/settings';
 import { CustomerPicker } from '@/components/pos/CustomerPicker';
 import { PaymentModal, type PaymentMethod, type PaymentResult } from '@/components/pos/PaymentModal';
 import { HeldList } from '@/components/pos/HeldList';
 import { ReceiptModal } from '@/components/pos/ReceiptModal';
 import { ShortcutsOverlay } from '@/components/pos/ShortcutsOverlay';
-import { api, apiSafe, hasBackend } from '@/lib/api';
+import { api, apiSafe } from '@/lib/api';
 import { useProducts } from '@/hooks/useProducts';
 import { useCustomersQuery } from '@/hooks/useCustomers';
+import { useBelow } from '@/hooks/useBreakpoint';
 import { useAuth } from '@/stores/auth';
 import { useSales } from '@/stores/sales';
 import { useCashRegister } from '@/stores/cashRegister';
 import { toast } from '@/stores/toast';
-
-function makeCart(label: string, defaults: { taxPct: number; markupPct: number }): ParkedCart {
-  return {
-    id: String(Date.now() + Math.random()),
-    label,
-    lines: [],
-    customerId: 'cu1',
-    priceGroup: 'retail',
-    orderDiscountPct: 0,
-    orderDiscountFlat: 0,
-    orderTaxPct: defaults.taxPct,
-    shippingCharge: 0,
-    otherCharge: 0,
-  };
-}
-
-let invoiceCounter = 451; // mock counter (used only when running without a backend)
 
 /**
  * Map a cart 1:1 to the `sales.create` line/order-level fields. The frontend
@@ -111,36 +101,55 @@ export default function POS() {
     void useSettings.getState().hydrate();
   }, []);
 
-  // ----- Data source: live backend when available, else mock seed -----
-  const backend = hasBackend();
+  // ----- Data source: the SQLite backend, exclusively -----
+  // Mock product/customer seeds were removed: an empty result now renders an
+  // empty grid (ProductPanel/CartPanel handle that) instead of fake stock.
   const qc = useQueryClient();
   const productsQuery = useProducts('br_mp');
   const customersQuery = useCustomersQuery();
-  const products = backend ? (productsQuery.data ?? []) : mockProducts;
-  const customers: Customer[] = backend ? (customersQuery.data ?? []) : mockCustomers;
+  const products = productsQuery.data ?? [];
+  const customers: Customer[] = customersQuery.data ?? [];
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false); // synchronous in-flight lock (state lags a render)
 
   // Permission gate (DEFENSIVE — the IPC layer is the authoritative gate; this
   // only hides/disables the UI). Subscribe to `permissions` so the buttons
-  // re-disable if the signed-in user changes. Mock mode (`!backend`) never
-  // blocks. Falls back to the store's role-derived `can()` when the permission
-  // array is empty (pre-restore).
+  // re-disable if the signed-in user changes. Falls back to the store's
+  // role-derived `can()` when the permission array is empty (pre-restore).
   const permissions = useAuth((s) => s.permissions);
   const canCreateSale =
-    !backend ||
-    (permissions.length > 0
+    permissions.length > 0
       ? permissions.includes('sales.create')
-      : useAuth.getState().can('sales.create'));
+      : useAuth.getState().can('sales.create');
 
-  const [carts, setCarts] = useState<ParkedCart[]>(() => [
-    {
-      ...makeCart('Cart 1', { taxPct: defaultOrderTaxPct, markupPct: defaultPriceMarkupPct }),
-      label: 'Cart 1',
+  // ----- Cart state lives in a PERSISTED store, not in this component -----
+  // It used to be `useState` here, so leaving POS for any other tab unmounted
+  // the page and destroyed every open cart (and every suspended one). See
+  // src/stores/posCart.ts.
+  // Buying prices for the cart rows, read from the SAME live catalogue the grid
+  // uses. Looked up per render rather than copied onto the cart line, because
+  // carts persist to localStorage and a stored cost would be stale the moment a
+  // new buying price is recorded. Unknown product → nulls → the row shows '—'.
+  const costOf = useCallback(
+    (productId: string): { cost: number | null; avgCost: number | null } => {
+      const p = products.find((x) => x.id === productId);
+      if (!p) return { cost: null, avgCost: null };
+      return { cost: p.cost ?? null, avgCost: p.avgCost ?? p.cost ?? null };
     },
-  ]);
-  const [activeId, setActiveId] = useState<string>(carts[0].id);
-  const [held, setHeld] = useState<ParkedCart[]>([]); // explicitly held / suspended
+    [products],
+  );
+
+  const carts = usePOSCart((s) => s.carts);
+  const activeId = usePOSCart((s) => s.activeId);
+  const held = usePOSCart((s) => s.held);
+  const cartDefaults = useMemo(() => ({ taxPct: defaultOrderTaxPct }), [defaultOrderTaxPct]);
+
+  // Create "Cart 1" on a first ever run, and repair a stored activeId that no
+  // longer points at a cart.
+  useEffect(() => {
+    usePOSCart.getState().ensureInitialized(cartDefaults);
+  }, [cartDefaults]);
+
   const [search, setSearch] = useState('');
   const [activeCat, setActiveCat] = useState<string | 'all'>('all');
   const [activeBrand, setActiveBrand] = useState<string | 'all'>('all');
@@ -160,19 +169,73 @@ export default function POS() {
   } | null>(null);
   const [lastReceipt, setLastReceipt] = useState<typeof receipt>(null);
 
-  const active = carts.find((c) => c.id === activeId)!;
-  const setActiveCart = (next: ParkedCart) =>
-    setCarts((cs) => cs.map((c) => (c.id === activeId ? next : c)));
+  const active = carts.find((c) => c.id === activeId);
 
-  function priceForProduct(p: (typeof products)[number], group: ParkedCart['priceGroup']) {
+  /**
+   * Single mutation path for the active cart.
+   *
+   * It also intercepts a PRICE GROUP change. `CartPanel` just sets the new group
+   * on the cart, and until now nothing re-priced the lines already in it — so a
+   * cashier could add three items on Retail, switch the tabs to Wholesale, and
+   * the sale would post at retail prices while the UI claimed wholesale. Doing
+   * it here keeps the re-pricing rule in one place instead of trusting every
+   * caller to remember it.
+   */
+  const setActiveCart = (next: ParkedCart) => {
+    const store = usePOSCart.getState();
+    const groupChanged = !!active && next.priceGroup !== active.priceGroup;
+    store.setActiveCart(next);
+    if (groupChanged) store.setPriceGroup(next.priceGroup, resolvePrice);
+  };
+
+  function priceForProduct(p: (typeof products)[number], group: PriceGroup) {
     if (group === 'wholesale' && p.wholesalePrice) return p.wholesalePrice;
     if (group === 'contractor' && p.contractorPrice) return p.contractorPrice;
     return p.price;
   }
 
+  /** Current catalogue price/name/sku for a product, in a given price group. */
+  const resolvePrice: PriceResolver = useMemo(
+    () => (productId, group) => {
+      const p = products.find((x) => x.id === productId);
+      if (!p) return undefined;
+      return { price: priceForProduct(p, group), name: p.name, sku: p.sku };
+    },
+    // `priceForProduct` is pure over its arguments; only the catalogue matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [products],
+  );
+
+  /**
+   * Reconcile carts restored from disk against the live catalogue.
+   *
+   * Runs once the catalogue has actually loaded — a cart persisted yesterday
+   * must not be charged at yesterday's price, and a line whose product was
+   * deleted would fail at `sales.create` with a foreign-key error the cashier
+   * cannot act on. `revalidate` is a no-op unless the state came off disk.
+   */
+  useEffect(() => {
+    if (productsQuery.isLoading || products.length === 0) return;
+    const result = usePOSCart.getState().revalidate(resolvePrice);
+    if (!result) return;
+    if (result.repriced.length > 0) {
+      toast.warning(
+        result.repriced.length === 1
+          ? 'A price changed since this cart was saved'
+          : 'Some prices changed since this cart was saved',
+        { description: 'The cart now uses the current prices. Please check before taking payment.' },
+      );
+    }
+    if (result.removed.length > 0) {
+      toast.error('Some items are no longer in the catalogue', {
+        description: `Removed from the cart: ${result.removed.join(', ')}`,
+      });
+    }
+  }, [productsQuery.isLoading, products.length, resolvePrice]);
+
   function addToCart(productId: string) {
     const p = products.find((x) => x.id === productId);
-    if (!p) return;
+    if (!p || !active) return;
     const idx = active.lines.findIndex((l) => l.productId === productId);
     if (idx >= 0) {
       const lines = [...active.lines];
@@ -217,40 +280,22 @@ export default function POS() {
     }
   };
 
-  const addCart = () => {
-    const c = makeCart(`Cart ${carts.length + 1}`, {
-      taxPct: defaultOrderTaxPct,
-      markupPct: defaultPriceMarkupPct,
-    });
-    setCarts((cs) => [...cs, c]);
-    setActiveId(c.id);
-  };
-
-  const closeCart = (id: string) => {
-    setCarts((cs) => {
-      const next = cs.filter((c) => c.id !== id);
-      if (next.length === 0) {
-        const fresh = makeCart('Cart 1', {
-          taxPct: defaultOrderTaxPct,
-          markupPct: defaultPriceMarkupPct,
-        });
-        setActiveId(fresh.id);
-        return [fresh];
-      }
-      if (id === activeId) setActiveId(next[0].id);
-      return next;
-    });
-  };
-
-  const clearCart = () => setActiveCart({ ...active, lines: [] });
+  const setActiveId = (id: string) => usePOSCart.getState().setActiveId(id);
+  const addCart = () => usePOSCart.getState().addCart(cartDefaults);
+  const closeCart = (id: string) => usePOSCart.getState().closeCart(id, cartDefaults);
+  const clearCart = () => usePOSCart.getState().clearActive();
 
   const onPickCustomer = () => setPickerOpen(true);
-  const onSelectCustomer = (id: string) => setActiveCart({ ...active, customerId: id });
+  const onSelectCustomer = (id: string) => {
+    if (active) setActiveCart({ ...active, customerId: id });
+  };
 
-  const totalsForActive = computeTotals(active);
+  const totalsForActive = active
+    ? computeTotals(active)
+    : { subtotal: 0, totalLineDiscount: 0, orderDiscount: 0, tax: 0, shipping: 0, other: 0, total: 0 };
 
   const openPay = (method: PaymentMethod = 'Cash') => {
-    if (active.lines.length === 0) return;
+    if (!active || active.lines.length === 0) return;
     if (!canCreateSale) {
       toast.error("You don't have permission to create sales");
       return;
@@ -260,7 +305,7 @@ export default function POS() {
     setPaymentOpen(true);
   };
   const openSplitPay = () => {
-    if (active.lines.length === 0) return;
+    if (!active || active.lines.length === 0) return;
     if (!canCreateSale) {
       toast.error("You don't have permission to create sales");
       return;
@@ -270,20 +315,12 @@ export default function POS() {
   };
 
   const handleConfirmPayment = async (result: PaymentResult) => {
-    if (submittingRef.current) return; // guard against double-submit
+    if (submittingRef.current || !active) return; // guard against double-submit
     const snapshot: ParkedCart = JSON.parse(JSON.stringify(active));
 
-    if (!backend) {
-      // ---- mock path (no backend): keep the local invoiceCounter behaviour ----
-      invoiceCounter += 1;
-      const invoiceNo = `INV-${new Date().getFullYear()}-${String(invoiceCounter).padStart(4, '0')}`;
-      setReceipt({ invoiceNo, cart: snapshot, payment: result });
-      setLastReceipt({ invoiceNo, cart: snapshot, payment: result });
-      setPaymentOpen(false);
-      return;
-    }
-
-    // ---- backend path: persist through sales.create (source of truth) ----
+    // Persist through sales.create (source of truth). The local
+    // invoiceCounter mock path was removed — no invoice number is ever
+    // fabricated in the renderer.
     const now = new Date().toISOString();
     const total = computeTotals(snapshot).total;
     const userId = useAuth.getState().currentUserId ?? 'u_admin';
@@ -325,11 +362,7 @@ export default function POS() {
       toast.success(`Sale ${invoiceNo} recorded`);
       // Clear the active cart slot for the next sale (the receipt keeps the
       // snapshot, so the printed copy is unaffected).
-      const fresh = makeCart(active.label, {
-        taxPct: defaultOrderTaxPct,
-        markupPct: defaultPriceMarkupPct,
-      });
-      setActiveCart({ ...fresh, id: active.id, label: active.label });
+      usePOSCart.getState().resetActiveSlot(cartDefaults);
       // Reflect stock-out, the new sale, and any drawer movement.
       void qc.invalidateQueries({ queryKey: ['products'] });
       void useSales.getState().hydrate();
@@ -356,60 +389,28 @@ export default function POS() {
   const startNewSale = () => {
     setReceipt(null);
     // Reset the current cart instead of opening a new one
-    const fresh = makeCart(active.label, {
-      taxPct: defaultOrderTaxPct,
-      markupPct: defaultPriceMarkupPct,
-    });
-    setActiveCart({ ...fresh, id: active.id, label: active.label });
+    usePOSCart.getState().resetActiveSlot(cartDefaults);
     searchInputRef.current?.focus();
   };
 
-  // Suspend / Hold (F9): move active cart into held list, replace with fresh cart in same slot
-  const onSuspend = () => {
-    if (active.lines.length === 0) return;
-    setHeld((hs) => [...hs, active]);
-    const fresh = makeCart(active.label, {
-      taxPct: defaultOrderTaxPct,
-      markupPct: defaultPriceMarkupPct,
-    });
-    setCarts((cs) => cs.map((c) => (c.id === activeId ? { ...fresh, id: c.id, label: c.label } : c)));
-  };
+  // Suspend (F9): move the active cart into the held list and leave a fresh cart
+  // in the same slot. Held carts are persisted, so "suspend" now genuinely means
+  // "come back to it later" — even after an app restart.
+  const onSuspend = () => usePOSCart.getState().suspendActive(cartDefaults);
 
   const resumeHeld = (id: string) => {
-    const hc = held.find((h) => h.id === id);
-    if (!hc) return;
-    setHeld((hs) => hs.filter((h) => h.id !== id));
-    // Replace active cart with the held one
-    setCarts((cs) => cs.map((c) => (c.id === activeId ? { ...hc, label: c.label } : c)));
+    usePOSCart.getState().resumeHeld(id);
     setHeldOpen(false);
   };
 
-  const discardHeld = (id: string) => {
-    setHeld((hs) => hs.filter((h) => h.id !== id));
-  };
-
-  // Reset the active cart slot to a fresh cart (used after a successful
-  // backend draft/quotation persist).
-  const resetActiveSlot = () => {
-    const fresh = makeCart(active.label, {
-      taxPct: defaultOrderTaxPct,
-      markupPct: defaultPriceMarkupPct,
-    });
-    setCarts((cs) => cs.map((c) => (c.id === activeId ? { ...fresh, id: c.id, label: c.label } : c)));
-  };
+  const discardHeld = (id: string) => usePOSCart.getState().discardHeld(id);
 
   const persistAsStatus = async (status: 'draft' | 'quotation') => {
-    if (active.lines.length === 0) return;
+    if (!active || active.lines.length === 0) return;
     if (submittingRef.current) return;
 
-    if (!backend) {
-      // ---- mock path: held with a [Draft]/[Quote] label (unchanged) ----
-      const label = status === 'draft' ? '[Draft] ' : '[Quote] ';
-      setHeld((hs) => [...hs, { ...active, label: label + active.label }]);
-      resetActiveSlot();
-      return;
-    }
-
+    // Drafts/quotations are persisted by the backend only; the local
+    // "[Draft]/[Quote] held cart" mock path was removed.
     const now = new Date().toISOString();
     const userId = useAuth.getState().currentUserId ?? 'u_admin';
     const payload = {
@@ -429,7 +430,7 @@ export default function POS() {
       toast.success(
         `${status === 'draft' ? 'Draft' : 'Quotation'} ${res.invoiceNo} saved`,
       );
-      resetActiveSlot();
+      usePOSCart.getState().resetActiveSlot(cartDefaults);
       // Surface it in Sales → Drafts/Quotations (backend-backed list).
       void useSales.getState().hydrate();
     } catch (e) {
@@ -511,7 +512,18 @@ export default function POS() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, lastReceipt, held]);
 
-  const customerForActive = customers.find((c) => c.id === active.customerId);
+  const customerForActive = customers.find((c) => c.id === active?.customerId);
+
+  // `ensureInitialized` runs in an effect, so the very first render (and a
+  // corrupted store) can legitimately have no active cart. Bail out with a
+  // placeholder rather than letting the panels dereference undefined.
+  if (!active) {
+    return (
+      <div className="h-full grid place-items-center text-sm text-muted-foreground">
+        Opening the counter…
+      </div>
+    );
+  }
 
   const cart = (
     <CartPanel
@@ -524,6 +536,7 @@ export default function POS() {
       clearCart={clearCart}
       customers={customers}
       busy={submitting}
+      costOf={costOf}
       onPickCustomer={onPickCustomer}
       onPay={(m) => openPay(m)}
       onSplitPay={openSplitPay}
@@ -552,15 +565,34 @@ export default function POS() {
   const splitRatio = isCartLeft ? cartRatio : 1 - cartRatio;
   const handleSplit = (r: number) => setCartRatio(isCartLeft ? r : 1 - r);
 
+  // A side-by-side split needs real width. Below `lg` the two panels stack and
+  // scroll vertically instead (product picker first so scanning still works),
+  // which keeps the checkout usable on a 1366-wide or resized window.
+  const stacked = useBelow('lg');
+
   return (
-    <div className="h-[calc(100vh-3rem)] flex flex-col">
+    // `h-full`, not `h-[calc(100vh-3rem)]`: that hardcoded the titlebar at 3rem,
+    // and the Appearance font-scale slider changes the root font size, so the
+    // subtraction drifted and left a gap (or overflowed) at larger scales.
+    // AppShell's <main> already gives this a definite height.
+    <div className="h-full flex flex-col">
       <div className="flex-1 min-h-0">
-        <Splitter
-          ratio={splitRatio}
-          onChange={handleSplit}
-          left={isCartLeft ? cart : productPicker}
-          right={isCartLeft ? productPicker : cart}
-        />
+        {stacked ? (
+          // Stacked (narrow window): each panel scrolls INDEPENDENTLY. It used to
+          // be one tall page-level scroller, which pushed the totals and the Pay
+          // button below the fold — the cashier had to scroll down to take money.
+          <div className="h-full flex flex-col divide-y divide-border">
+            <div className="h-[42%] min-h-0 shrink-0">{productPicker}</div>
+            <div className="flex-1 min-h-0">{cart}</div>
+          </div>
+        ) : (
+          <Splitter
+            ratio={splitRatio}
+            onChange={handleSplit}
+            left={isCartLeft ? cart : productPicker}
+            right={isCartLeft ? productPicker : cart}
+          />
+        )}
       </div>
 
       <CustomerPicker
@@ -600,6 +632,7 @@ export default function POS() {
           cart={receipt.cart}
           payment={receipt.payment}
           customer={customers.find((c) => c.id === receipt.cart.customerId)}
+          cashierName={useAuth.getState().currentUser()?.name}
           onNewSale={startNewSale}
           onReprint={() => {
             // already showing it; tells user it's the last receipt

@@ -1,27 +1,37 @@
 {
   "appId": "com.hardwareshop.pos",
-  "productName": "HardwareKhataPOS",
+  "productName": "Hardware Khata POS",
   "directories": {
-    "output": "release"
+    "output": "release",
+    "buildResources": "build"
   },
   "files": [
     "dist/**/*",
     "dist-electron/**/*",
-    "node_modules/better-sqlite3/**/*"
+    "node_modules/better-sqlite3/**/*",
+    "package.json"
   ],
   "asarUnpack": [
     "node_modules/better-sqlite3/**/*"
   ],
+  "npmRebuild": true,
   "win": {
+    "icon": "build/icon.png",
     "target": [
       {
-        "target": "portable",
-        "arch": ["x64"]
-      },
-      {
-        "target": "zip",
+        "target": "nsis",
         "arch": ["x64"]
       }
-    ]
+    ],
+    "requestedExecutionLevel": "asInvoker"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "Hardware Khata POS",
+    "artifactName": "HardwareKhataPOS-Setup-${version}.${ext}"
   }
 }

@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/Input';
 import { Search, Receipt, Trash2 } from 'lucide-react';
 import { cn, formatBDT } from '@/lib/utils';
 import { computeTotals, type ParkedCart } from './types';
-import { customers as mockCustomers, type Customer } from '@/mocks/data';
+import type { Customer } from '@/types/domain';
 
 interface Props {
   open: boolean;
@@ -13,11 +13,11 @@ interface Props {
   onResume: (id: string) => void;
   onDiscard: (id: string) => void;
   /** Live customer list (backend-hydrated) used to resolve held-cart names.
-   *  Defaults to mock data so browser dev / standalone usage still works. */
+   *  Seed-data default removed — an unresolved id renders the 'Walk-in' label. */
   customers?: Customer[];
 }
 
-export function HeldList({ open, onClose, carts, onResume, onDiscard, customers = mockCustomers }: Props) {
+export function HeldList({ open, onClose, carts, onResume, onDiscard, customers = [] }: Props) {
   const [q, setQ] = useState('');
   const list = useMemo(() => {
     const t = q.trim().toLowerCase();

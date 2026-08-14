@@ -284,7 +284,25 @@ export function salesRep(db: DB, rangeInput: RangeInput, branchId?: string) {
 }
 
 // ---------- Customer group ----------
-export function customerGroup(db: DB, rangeInput: RangeInput, branchId?: string) {
+export /**
+ * Sales metrics per customer price group, PLUS the per-group customer head-count
+ * and outstanding due.
+ *
+ * The count and due used to be merged in on the frontend from the customers
+ * store. That store now holds ONE PAGE (50 rows), so the report silently
+ * under-counted every shop with more than 50 customers. Both figures are
+ * therefore aggregated here in SQL over the whole contact book.
+ *
+ * SCOPE, deliberately mixed and labelled as such in the UI:
+ *  - saleCount / gross / net / avgTicket are scoped to `range` (+ branch).
+ *  - customerCount / totalDue are LIFETIME and branch-independent — a customer
+ *    is not owned by a branch, and a balance is not a period figure.
+ *
+ * Groups are the UNION of "had sales in range" and "has customers", so a group
+ * that carries a balance but made no sales in the range is still reported
+ * instead of vanishing from the totals.
+ */
+function customerGroup(db: DB, rangeInput: RangeInput, branchId?: string) {
   const range = resolveRange(rangeInput);
   const rows = db
     .prepare(
@@ -300,13 +318,64 @@ export function customerGroup(db: DB, rangeInput: RangeInput, branchId?: string)
     gross: number;
     net: number;
   }[];
-  return rows.map((r) => ({
-    group: r.grp,
-    saleCount: r.sales,
-    grossSales: round2(r.gross),
-    netSales: round2(r.net),
-    avgTicket: r.sales > 0 ? round2(r.net / r.sales) : 0,
-  }));
+
+  // Head-count + derived due per group, in ONE pass over the contact book.
+  // The per-customer expression is exactly `customerDue()` in ledger.ts:
+  //   opening_balance + final sales - sale payments - CreditAdjust returns.
+  // Each customer's due is ROUNDed to 2dp BEFORE summing so the group total
+  // equals the sum of the dues shown on the Customers screen to the cent.
+  const balances = db
+    .prepare(
+      `WITH cust AS (
+         SELECT id, COALESCE(price_group,'Retail') AS grp, COALESCE(opening_balance,0) AS opening
+           FROM customers
+       ),
+       sale_tot AS (
+         SELECT customer_id AS cid, SUM(total) AS t FROM sales
+          WHERE status='final' AND customer_id IS NOT NULL GROUP BY customer_id
+       ),
+       pay_tot AS (
+         SELECT sa.customer_id AS cid, SUM(p.amount) AS t
+           FROM sale_payments p JOIN sales sa ON sa.id = p.sale_id
+          WHERE sa.status='final' AND sa.customer_id IS NOT NULL GROUP BY sa.customer_id
+       ),
+       ret_tot AS (
+         SELECT customer_id AS cid, SUM(total) AS t FROM sell_returns
+          WHERE refund_method='CreditAdjust' AND customer_id IS NOT NULL GROUP BY customer_id
+       )
+       SELECT c.grp AS grp, COUNT(*) AS customers,
+              COALESCE(SUM(ROUND(c.opening + COALESCE(s.t,0) - COALESCE(p.t,0) - COALESCE(r.t,0), 2)),0) AS due
+         FROM cust c
+         LEFT JOIN sale_tot s ON s.cid = c.id
+         LEFT JOIN pay_tot  p ON p.cid = c.id
+         LEFT JOIN ret_tot  r ON r.cid = c.id
+        GROUP BY c.grp`,
+    )
+    .all() as { grp: string; customers: number; due: number }[];
+
+  const countByGroup = new Map(balances.map((b) => [b.grp, b.customers]));
+  const dueByGroup = new Map(balances.map((b) => [b.grp, b.due]));
+
+  // Union the two group sets so neither source can hide a group.
+  const groups = new Set<string>([...rows.map((r) => r.grp), ...balances.map((b) => b.grp)]);
+  const byGroup = new Map(rows.map((r) => [r.grp, r]));
+
+  return [...groups]
+    .map((grp) => {
+      const r = byGroup.get(grp);
+      const sales = r?.sales ?? 0;
+      const net = round2(r?.net ?? 0);
+      return {
+        group: grp,
+        saleCount: sales,
+        grossSales: round2(r?.gross ?? 0),
+        netSales: net,
+        avgTicket: sales > 0 ? round2(net / sales) : 0,
+        customerCount: countByGroup.get(grp) ?? 0,
+        totalDue: round2(dueByGroup.get(grp) ?? 0),
+      };
+    })
+    .sort((a, b) => b.netSales - a.netSales || a.group.localeCompare(b.group));
 }
 
 // ---------- Stock report ----------

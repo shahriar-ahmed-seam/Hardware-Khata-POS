@@ -8,6 +8,7 @@ Electron + React + TypeScript + Vite + Tailwind on the frontend; SQLite
 
 Start here — full handoff docs live in [`docs/`](./docs):
 
+- **[docs/07-CONTINUE-HERE.md](./docs/07-CONTINUE-HERE.md)** — ⭐ **START HERE to resume work**: current state, what landed last session, known gaps, environment gotchas
 - **[docs/00-OVERVIEW.md](./docs/00-OVERVIEW.md)** — the big picture, stack, status
 - **[docs/01-FRONTEND.md](./docs/01-FRONTEND.md)** — every UI module, store, convention
 - **[docs/02-BACKEND.md](./docs/02-BACKEND.md)** — schema, services, calculations, verification
@@ -23,7 +24,7 @@ Plus: `TASKS.md` (running checklist), `BACKEND_NOTES.md` (accumulated backend sp
 ```bash
 npm install
 npm run dev                  # launches the app (auto-rebuilds native deps for Electron)
-npm run backend:verify:all   # runs 611 backend verification checks
+npm run backend:verify:all   # runs 860 backend verification checks (seven suites)
 npm run build                # production bundles (renderer + main + preload)
 ```
 
@@ -37,16 +38,19 @@ npm run build                # production bundles (renderer + main + preload)
 | Area | Status |
 |------|--------|
 | Frontend (15 modules) | ✅ Built |
-| Backend data layer | ✅ Built + 611 verification checks passing |
+| Backend data layer | ✅ Built + 860 verification checks passing (146 channels) |
 | Electron ↔ backend bridge | ✅ Wired & proven on both native ABIs |
 | Store-by-store wiring (9 data slices) | ✅ Done — every module on the real backend |
 | Auth (bcrypt) + IPC permission enforcement | ✅ Done |
 | First-run wizard (writes a real shop) | ✅ Done |
-| POS checkout (hero screen) | ✅ Done — persists via `sales.create`, mock fallback kept |
+| POS checkout (hero screen) | ✅ Done — persists via `sales.create` |
+| Mock data removal | ✅ Done — `src/mocks/` deleted; no fallback, no fabricated numbers |
 | AddSale / AddPurchase create-forms | ✅ Done — real products/customers/suppliers/branches |
 | Warranties + Price Groups management | ✅ Done — backend CRUD (v2 migration) |
 | Shipments | ✅ Done — own table + service + channels (v3 migration; no stock/cash impact) |
-| Final end-to-end test | ✅ Done — 611 checks incl. full-shop-day E2E (`backend:verify:all`) |
+| Pagination on every list tab | ✅ Done — six server-paged channels + client paging on the slow-growing lists |
+| Backup & Cloud saving | ✅ Done — verified `VACUUM INTO` snapshots, retention, restore, CSV export |
+| Final end-to-end test | ✅ Done — 860 checks incl. full-shop-day E2E, paged list reads, backup (`backend:verify:all`) |
 | Packaging (installer) | 🔴 Next — final phase |
 
 ## Stack

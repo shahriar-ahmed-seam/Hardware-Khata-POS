@@ -5,12 +5,37 @@ import { cn } from '@/lib/utils';
 
 export type KpiTone = 'primary' | 'success' | 'warning' | 'info' | 'destructive';
 
-const toneCls: Record<KpiTone, string> = {
-  primary: 'from-primary/20 to-primary/5 text-primary',
-  success: 'from-success/20 to-success/5 text-success',
-  warning: 'from-warning/20 to-warning/5 text-warning',
-  info: 'from-accent/20 to-accent/5 text-accent',
-  destructive: 'from-destructive/20 to-destructive/5 text-destructive',
+/**
+ * DIMMED TONES.
+ *
+ * These cards used to be solid saturated blocks (`bg-blue-600`, `bg-emerald-600`
+ * …) with white text — a wall of loud colour, and white-on-amber in particular
+ * was hard to read. Now the card is a normal surface with a soft tint plus a
+ * coloured accent bar and icon tile, so the tone still identifies the metric but
+ * the NUMBER is plain high-contrast foreground text.
+ */
+const surfaceCls: Record<KpiTone, string> = {
+  primary: 'bg-primary/[0.07] border-primary/25',
+  success: 'bg-success/[0.07] border-success/25',
+  warning: 'bg-warning/[0.07] border-warning/25',
+  info: 'bg-accent/[0.07] border-accent/25',
+  destructive: 'bg-destructive/[0.07] border-destructive/25',
+};
+
+const accentCls: Record<KpiTone, string> = {
+  primary: 'bg-primary',
+  success: 'bg-success',
+  warning: 'bg-warning',
+  info: 'bg-accent',
+  destructive: 'bg-destructive',
+};
+
+const iconCls: Record<KpiTone, string> = {
+  primary: 'bg-primary/15 text-primary',
+  success: 'bg-success/15 text-success',
+  warning: 'bg-warning/15 text-warning',
+  info: 'bg-accent/15 text-accent',
+  destructive: 'bg-destructive/15 text-destructive',
 };
 
 interface KpiProps {
@@ -41,35 +66,43 @@ export function Kpi({
   const positive = (delta ?? 0) >= 0;
 
   const inner = (
-    <Card className="relative overflow-hidden hover:shadow-md transition group h-full">
-      <CardContent className="p-4">
+    <Card
+      className={cn(
+        'relative overflow-hidden hover:shadow-md transition group h-full border',
+        surfaceCls[tone],
+      )}
+    >
+      {/* Thin accent bar carries the tone without flooding the card with colour */}
+      <span className={cn('absolute inset-y-0 left-0 w-1', accentCls[tone])} />
+      <CardContent className="p-4 pl-5">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <div className="flex items-center gap-1 text-xs text-muted-foreground">
-              <span>{label}</span>
+            <div className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+              <span className="truncate">{label}</span>
               {(to || onClick) && (
-                <ChevronRight className="size-3 opacity-0 group-hover:opacity-100 transition" />
+                <ChevronRight className="size-3 shrink-0 opacity-0 group-hover:opacity-100 transition" />
               )}
             </div>
-            <div className="text-2xl font-bold mt-1 tracking-tight font-mono">{value}</div>
+            <div className="text-2xl font-bold mt-1 tracking-tight font-mono text-foreground">
+              {value}
+            </div>
             {showDelta && typeof delta === 'number' && (
               <div
                 className={cn(
-                  'mt-2 inline-flex items-center gap-1 text-[11px] font-medium',
+                  'mt-2 inline-flex items-center gap-1 text-xs font-medium',
                   positive ? 'text-success' : 'text-destructive',
                 )}
               >
-                {positive ? <ArrowUpRight className="size-3" /> : <ArrowDownRight className="size-3" />}
-                {Math.abs(delta)}% vs yesterday
+                {positive ? (
+                  <ArrowUpRight className="size-3" />
+                ) : (
+                  <ArrowDownRight className="size-3" />
+                )}
+                {Math.abs(delta)}% <span className="text-muted-foreground">vs yesterday</span>
               </div>
             )}
           </div>
-          <div
-            className={cn(
-              'size-10 rounded-lg bg-gradient-to-br grid place-items-center shrink-0',
-              toneCls[tone],
-            )}
-          >
+          <div className={cn('size-10 rounded-lg grid place-items-center shrink-0', iconCls[tone])}>
             <Icon className="size-5" />
           </div>
         </div>
@@ -80,7 +113,7 @@ export function Kpi({
               e.stopPropagation();
               onRemove?.();
             }}
-            className="absolute top-1.5 right-1.5 size-5 grid place-items-center rounded text-muted-foreground hover:bg-destructive hover:text-destructive-foreground text-xs"
+            className="absolute top-1.5 right-1.5 size-6 grid place-items-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground"
             title="Remove from dashboard"
           >
             ×

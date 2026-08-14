@@ -3,8 +3,18 @@ import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Truck } from 'lucide-react';
-import { useSales, type Shipment, nextShipmentNo, type ShipmentStatus } from '@/stores/sales';
+import {
+  useSales,
+  type Shipment,
+  nextShipmentNo,
+  type ShipmentStatus,
+  type SaleRecord,
+} from '@/stores/sales';
 import { useCustomers } from '@/stores/contacts';
+import { api } from '@/lib/api';
+import { toSaleRecord, type BackendSale } from '@/hooks/saleAdapter';
+import { toCustomer, type BackendCustomer } from '@/hooks/contactAdapter';
+import type { Customer } from '@/types/domain';
 
 const STATUSES: ShipmentStatus[] = ['pending', 'in-transit', 'delivered', 'failed'];
 
@@ -18,8 +28,60 @@ export function CreateShipmentModal({ open, onClose, saleId }: Props) {
   const sales = useSales((s) => s.sales);
   const addShipment = useSales((s) => s.addShipment);
   const customers = useCustomers((s) => s.items);
-  const sale = sales.find((s) => s.id === saleId);
-  const customer = sale ? customers.find((c) => c.id === sale.customerId) : undefined;
+
+  // Both stores hold ONE PAGE of rows. This modal normally opens from a row on
+  // the sales page, but the sale can also come from a search result or the sale
+  // detail drawer, and the customer (whose address pre-fills the delivery
+  // address) is very unlikely to be on the customers page at all. So prefer the
+  // store rows and fall back to single-record reads.
+  const storeSale = sales.find((s) => s.id === saleId) ?? null;
+  const hasStoreSale = !!storeSale;
+  const [fetchedSale, setFetchedSale] = useState<SaleRecord | null>(null);
+
+  useEffect(() => {
+    if (!open || !saleId || hasStoreSale) {
+      setFetchedSale(null);
+      return;
+    }
+    let alive = true;
+    void api<BackendSale | null>('sales.get', { id: saleId })
+      .then((row) => {
+        if (alive && row) setFetchedSale(toSaleRecord(row));
+      })
+      .catch(() => {
+        // Channel error or running outside Electron — leave the modal empty.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open, saleId, hasStoreSale]);
+
+  const sale = storeSale ?? fetchedSale ?? undefined;
+
+  const storeCustomer = sale ? customers.find((c) => c.id === sale.customerId) : undefined;
+  const customerId = sale?.customerId;
+  const hasStoreCustomer = !!storeCustomer;
+  const [fetchedCustomer, setFetchedCustomer] = useState<Customer | null>(null);
+
+  useEffect(() => {
+    if (!open || !customerId || hasStoreCustomer) {
+      setFetchedCustomer(null);
+      return;
+    }
+    let alive = true;
+    void api<BackendCustomer | null>('customers.get', { id: customerId })
+      .then((row) => {
+        if (alive && row) setFetchedCustomer(toCustomer(row));
+      })
+      .catch(() => {
+        // No address autofill available — the field stays editable.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open, customerId, hasStoreCustomer]);
+
+  const customer = storeCustomer ?? fetchedCustomer ?? undefined;
 
   const [driver, setDriver] = useState('');
   const [vehicle, setVehicle] = useState('');
@@ -39,6 +101,17 @@ export function CreateShipmentModal({ open, onClose, saleId }: Props) {
       setTarget(new Date(Date.now() + 86_400_000).toISOString().slice(0, 10));
       setNotes('');
     }
+    // Only on open/close: the customer may resolve later (see the address
+    // autofill below), and re-running this then would wipe whatever the user has
+    // already typed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // The customer can arrive after the modal opened (single-record fallback), so
+  // fill the delivery address then — but never over something already typed.
+  useEffect(() => {
+    if (!open || !customer?.address) return;
+    setAddress((prev) => (prev ? prev : customer.address ?? ''));
   }, [open, customer]);
 
   if (!sale) return null;

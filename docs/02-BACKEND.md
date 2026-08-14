@@ -9,6 +9,7 @@ wired into Electron via a generic IPC bridge with permission enforcement. See al
 ```
 db/
   connection.ts   openDatabase / migrate / tx / resetDatabase + pragmas (WAL, FK on)
+                  openDatabase(file, { readonly:true }) skips the WAL/synchronous pragmas
   schema.ts       SCHEMA_SQL + FTS_SQL as TS strings (bundler-safe) ← used at runtime
   schema.sql      same schema as a .sql file (reference / external tooling only)
   fts.sql         FTS5 reference
@@ -37,6 +38,10 @@ services/         operations WITH side-effects (all funnel through core/)
   dashboard.ts    getStats + widget queries (topCustomers, recentPurchases, salesVsPurchaseVsExpense, ...)
   reports.ts      profitLoss, productSell/Purchase, payments, tax, trending, salesRep, ...
   queries.ts      read-side list/detail getters + globalSearch (FTS5) + listAgents
+  paged.ts        server-side paged list reads: sales, purchases, products, customers,
+                  suppliers, expenses ({rows,total,page,pageSize}; pageSize clamped to 200)
+  backup.ts       verified VACUUM INTO snapshots, retention, integrity verify, CSV export
+                  (pure SQLite+fs, so the Node harness can verify all of it)
 seed/
   master.ts       deterministic reference data (branches, users w/ bcrypt pins, products, ...)
   rng.ts          seeded PRNG (mulberry32) — reproducible
@@ -47,7 +52,10 @@ verify/
   scenarios.ts    targeted exact-value operation tests (incl. auth, settings, setup, stockops)
   api.ts          checks exercising the buildApi() facade (the IPC surface)
   all.ts          scenarios + determinism + persistent-file smoke + identities
-api.ts            buildApi(): flat { channel -> handler(db, payload) } — 132 channels
+  e2e.ts          one full shop day through buildApi() from a clean first-run DB
+  paging.ts       paged list reads == unpaged truth, clamping, filters, partitions
+  backup.ts       snapshot/verify/retention/export behaviour on real files
+api.ts            buildApi(): flat { channel -> handler(db, payload) } — 146 channels
 README.md         architecture deep-dive
 ```
 
@@ -67,7 +75,8 @@ README.md         architecture deep-dive
   `purchase_returns(+lines)`.
 - **Money/ops**: `expenses`, `expense_categories`, `cash_shifts`, `cash_movements`,
   `activity_log`.
-- **Sync**: `sync_outbox` (for the future cloud layer).
+- **Sync**: `sync_outbox` — reserved for a future hosted sync layer. The shipping
+  Backup & Cloud path does not use it: it copies the whole database file (see below).
 
 Conventions: IDs are TEXT, money is REAL (rounded to 2dp at every boundary), timestamps
 are ISO-8601 TEXT, booleans are INTEGER 0/1, JSON arrays stored as TEXT.
@@ -109,11 +118,17 @@ and the seeder agree:
 
 ## API facade (`backend/api.ts`)
 
-`buildApi()` returns `{ channel: (db, payload) => result }`. **132 channels** grouped:
-reads (`*.list`, `*.get`, `search.global`), writes (`sales.create`, `purchases.create`,
-`*.void`, `cash.openShift`, catalog/contacts/settings CRUD, ...), aggregations
-(`dashboard.*`, `reports.*`), and auth helpers (`auth.authenticate`, `auth.verifyPin`,
-`auth.setSecret`, `setup.complete`, `setup.status`). This is the surface IPC forwards to.
+`buildApi()` returns `{ channel: (db, payload) => result }`. **146 channels** grouped:
+reads (`*.list`, `*.get`, `*.listPage`, `search.global`), writes (`sales.create`,
+`purchases.create`, `*.void`, `cash.openShift`, catalog/contacts/settings CRUD, ...),
+aggregations (`dashboard.*`, `reports.*`), backup (`backup.status/run/configure/export/
+verify`), and auth helpers (`auth.authenticate`, `auth.verifyPin`, `auth.setSecret`,
+`setup.complete`, `setup.status`). This is the surface IPC forwards to.
+
+> A handful of backup channels are **Electron-only** and therefore live in `electron/ipc.ts`
+> instead of `buildApi()` — they need `dialog`/`app`/`relaunch`, which do not exist in the
+> Node harness: `backup.folderOptions`, `backup.chooseFolder`, `backup.setFolder`,
+> `backup.reveal`, `backup.restore`. They are permission-gated like any other write.
 
 > The verify harness calls these handlers **directly** (no IPC), so it is unaffected by
 > permission enforcement. That separation is deliberate and must be preserved.
@@ -140,13 +155,93 @@ reads (`*.list`, `*.get`, `search.global`), writes (`sales.create`, `purchases.c
   seeded `u_admin`/`br_mp`/`role_admin` in one tx (hashing the chosen PIN), sets the flag,
   and establishes the owner session. Replaying it throws.
 
+## Backup & Cloud saving
+
+Split deliberately in two, along the line of "what can the Node harness prove?":
+
+**`backend/services/backup.ts` — pure SQLite + `fs`, fully verified.**
+- A backup is a **`VACUUM INTO` snapshot of the whole database**. `VACUUM INTO` is consistent
+  while the app is live (no "copy a file mid-write" tearing), compact, and produces a
+  standalone file that does not depend on the `-wal`/`-shm` sidecars.
+- **Verify before it counts.** Every snapshot is reopened **READ-ONLY** and must pass
+  `PRAGMA integrity_check` plus a readable-core-tables check before the run is reported as
+  successful. A snapshot that fails verification is **deleted** — an unverifiable file must
+  never be sitting there waiting to be restored by mistake.
+- Filenames are `pos-backup-YYYYMMDD-HHMMSS.sqlite3` in **local** time, chosen so plain
+  string sort == chronological order. **Retention keys off the FILENAME, not the file
+  mtime**, because a cloud sync client rewrites mtime on upload/download and would otherwise
+  scramble "newest".
+- **Retention**: keep the newest N (7 / 14 / 30 / 90, default 14). It runs **only after a
+  verified success**, so a failed backup can never be the reason the last good one was
+  deleted. Files in the folder that are not our snapshots are **never** touched.
+- **CSV export** (`backup.export`): sales, purchases, products, customers, suppliers, stock,
+  written to an `exports/` subfolder next to the snapshots (so a cloud folder carries them
+  off the machine too). UTF-8 **with a BOM** so Excel on Windows renders Bangla and ৳
+  correctly. Stock on-hand in the export is DERIVED from `stock_movements` — never a stored
+  column, same rule as everywhere else.
+- `SyncTarget` is the documented seam for a hosted provider later. Nothing behind it is
+  stubbed or faked today.
+
+**`electron/backup.ts` — the parts that need Electron** and therefore cannot be covered by
+the Node harness: resolving Documents via `app.getPath`, detecting cloud folders, the native
+folder/file pickers, RESTORE, and the automatic-backup timer.
+
+- **"Cloud" means a folder the owner's own OneDrive / Google Drive / Dropbox desktop client
+  already syncs.** The app makes **no outbound network request of its own**, stores no
+  third-party credentials, and needs no account. It still works with no internet: the
+  snapshot always succeeds locally and the sync client uploads it later. Cloud roots are
+  **detected** — a location is only offered if that folder actually exists on the machine,
+  never assumed.
+- **RESTORE is the most destructive operation in the app**, so it: verifies the chosen file
+  first; shows a native confirmation naming the snapshot, its date and its row counts, with
+  **Cancel as the default**; takes a `VACUUM INTO` safety copy of the CURRENT database to
+  `pre-restore-<timestamp>.sqlite3` before overwriting; **deletes the `-wal`/`-shm`
+  sidecars** — a stale WAL would let SQLite replay the OLD pages over the restored file,
+  which is silent corruption; then relaunches the app.
+- **Schedules**: `off`, `daily`, `on-shift-close` (recommended). `daily` is a "no verified
+  snapshot yet today, and it's past 02:00" check on a 10-minute tick, **not a 02:00 alarm** —
+  a shop PC is usually switched off overnight and an alarm would silently never fire.
+  `on-shift-close` is triggered in `electron/ipc.ts` right after a successful
+  `cash.closeShift`, which keeps scheduling and IO policy out of the backend services.
+
+**`openDatabase()` bug found and fixed while building this** (`db/connection.ts`): it created
+the handle and then applied pragmas, so if a pragma threw (e.g. the file is not a database —
+exactly what a corrupt snapshot does) the OS file handle **leaked** and the file stayed locked
+for the rest of the process. It now closes the handle and rethrows. It also accepts
+`{ readonly: true }`, which skips the WAL/synchronous pragmas: switching a file to WAL creates
+`-wal`/`-shm` sidecars next to it, and that must never happen to a snapshot sitting in a
+cloud-synced folder.
+
+> The backup settings blob is owned **solely** by the backend service and read in the renderer
+> via `src/stores/backup.ts`. It used to also live in the renderer settings store, which meant
+> TWO writers to the same `settings_kv` 'backup' key — saving an appearance preference could
+> silently wipe the backup folder path.
+
+## Reports — aggregate in SQL, not on the client
+
+`reports.customerGroup` now computes per-group **customer counts AND outstanding due in SQL**.
+It used to merge those two figures in from the customers store on the frontend; once that store
+became paginated (one 50-row page) the report silently under-counted every shop with more than
+50 customers. Two more corrections came with it:
+
+- Group rows are the **UNION** of "had sales in the range" and "has customers", so a group
+  carrying a balance but no sales in the range is no longer invisible.
+- Each customer's due is **rounded to 2dp before summing**, so a group total matches the
+  Customers screen to the cent.
+
+Sales figures stay range + branch scoped while counts and dues are lifetime / all-branch, and
+the page says so — mixing the two silently is how a report starts lying.
+
 ## Electron wiring
 
 - `electron/db.ts` — `initDb()` opens `userData/pos.db`, migrates, seeds on first run
   (`POS_SEED`: `demo`/`clean`/`none`; packaged default `clean`).
 - `electron/ipc.ts` — registers `api:invoke` (session control + permission gate + forward to
   `buildApi()`, returns `{ok,data}`/`{ok,error}`) and `api:channels`.
-- `electron/permissions.ts` — the channel→permission map (the gate's policy).
+- `electron/backup.ts` — the Electron-only half of Backup & Cloud (paths, cloud-folder
+  detection, pickers, restore, the schedule tick). Handled + gated in `electron/ipc.ts`.
+- `electron/permissions.ts` — the channel→permission map (the gate's policy). The backup
+  writes sit behind `settings.backup`; `backup.status` is an open read.
 - `electron/main.ts` — calls `initDb()` + `registerIpc()` before the window opens; `closeDb()`
   on quit.
 - `electron/preload.ts` — exposes `window.api.db.invoke / .channels` (generic; session.* ride
@@ -170,7 +265,19 @@ Symptom of wrong ABI: `ERR_DLOPEN_FAILED`. Fix: run the matching rebuild script.
 
 ## Verification — what's proven
 
-Run `npm run backend:verify:all` → **611 checks** (grew from 122 as slices were wired):
+Run `npm run backend:verify:all` → **seven suites, 860 checks** (grew from 122 as slices were
+wired):
+
+| Suite | Checks | What it covers |
+|-------|-------:|----------------|
+| `all.ts` | 309 | scenarios + determinism + file-DB smoke + identities |
+| `api.ts` | 193 | the `buildApi()` facade |
+| `run.ts` | 56 | identities on a 365-day dataset |
+| `e2e.ts` | 68 | one full shop day |
+| `paging.ts` | 80 | paginated list reads |
+| `backup.ts` | 105 |
+| `costing.ts` | 49 | backup & cloud saving |
+
 - **68 E2E** (e2e.ts) — a full shop day through the `buildApi()` facade from a clean
   first-run DB, reconciling every cross-module number (see `docs/06-E2E-AND-SMOKE-TEST.md`).
 - **56 identities** (run.ts) on a 365-day dataset: per-sale total/due/subtotal/profit/cogs;
@@ -180,12 +287,21 @@ Run `npm run backend:verify:all` → **611 checks** (grew from 122 as slices wer
   transfers, adjustments, cash drawer, drafts, void, catalog CRUD, purchase cancel/delete,
   sale delete, contacts CRUD + supplier-pay, expense void/delete/edit drawer reversal,
   settings CRUD, auth (hash/verify/legacy-upgrade), setup (run-once).
-- **193 API checks** (api.ts) across **132 registered channels**: the buildApi() facade
+- **193 API checks** (api.ts) across **146 registered channels**: the buildApi() facade
   end-to-end incl. write-then-read, per slice (api-catalog/purchases/sales/contacts/cash/
   expenses/dashboard-extra/reports-extra/settings/auth/setup/stockops/warranties/
   price-groups/shipments).
-- **+ combined** (all.ts, 294 checks): scenarios + identities + determinism (same
+- **80 paging checks** (paging.ts) across all six server-paged channels: paged derived values
+  equal the unpaged ones product-by-product and customer-by-customer (stock from movements,
+  customer/supplier dues), the three product stock states partition the catalogue, paged
+  expenses exclude voided rows, and every channel clamps `pageSize` to 200 and `page` to ≥1.
+- **105 backup checks** (backup.ts) — snapshot, integrity verification, the delete-on-failed-
+  verify rule, filename-based retention, and CSV export, on real files.
+- **+ combined** (all.ts, 309 checks): scenarios + identities + determinism (same
   seed→same data) + persistent-file smoke.
+
+Single suites: `npm run backend:verify` (identities), `backend:scenarios`, `backend:e2e`,
+`backend:paging`, `backend:backup`.
 
 A failing identity check is a real correctness bug. Add a check for every new invariant.
 

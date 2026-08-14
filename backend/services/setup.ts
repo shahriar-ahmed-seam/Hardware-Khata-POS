@@ -11,6 +11,8 @@ import {
   setSetting,
   getSetting,
 } from './settings.ts';
+import { addDefaultCategoryAndBrand } from '../seed/addDefaults.ts';
+import { setBackupConfig } from './backup.ts';
 
 /**
  * First-run SETUP service — the single, run-once write-through for the
@@ -101,6 +103,9 @@ export function completeSetup(db: DB, input: SetupInput): SetupResult {
     throw new Error('Setup already completed');
   }
 
+  // Ensure default category and brand exist before any product operations
+  addDefaultCategoryAndBrand(db);
+
   return tx(db, () => {
     // …and re-check INSIDE the tx so two racing callers can't both pass.
     if (isSetupComplete(db)) {
@@ -156,14 +161,16 @@ export function completeSetup(db: DB, input: SetupInput): SetupResult {
       setSetting(db, 'printers', [profile]);
     }
 
-    // 6) Cloud backup (optional) — persist the backup preference blob.
-    if (input.cloud) {
-      setSetting(db, 'backup', {
-        cloudProvider: 'supabase',
-        autoBackup: 'on-shift-close',
-        cloudConnected: false,
-      });
-    }
+    // 6) Backup schedule. The wizard's toggle only chooses WHEN snapshots run;
+    //    the folder is resolved after this transaction, because picking a
+    //    cloud-synced folder needs the Electron layer (see electron/backup.ts)
+    //    and the session that this very call establishes.
+    //
+    //    'on-shift-close' when the owner opted in, because that is the end of
+    //    the trading day and captures the takings immediately. Otherwise the
+    //    default daily local snapshot still applies — a shop should never end up
+    //    with NO backup just because it declined cloud.
+    setBackupConfig(db, { auto: input.cloud ? 'on-shift-close' : 'daily' });
 
     // 7) Latch — set the run-once flag LAST so a throw above never marks done.
     setSetting(db, SETUP_COMPLETE_KEY, true);

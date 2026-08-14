@@ -4,10 +4,13 @@ import { AppShell } from './components/layout/AppShell';
 import { AuthGate } from './components/auth/AuthGate';
 import { Toaster } from './components/ui/Toaster';
 import { ConfirmDialog } from './components/ui/ConfirmDialog';
+import { PromptDialog } from './components/ui/PromptDialog';
 import { useTheme } from './stores/theme';
 import { useSettings } from './stores/settings';
 import { useUI } from './stores/ui';
 import { useAuth } from './stores/auth';
+import { useFocusRescue } from './hooks/useFocusRescue';
+import { applyPersistedLang } from './lib/i18n';
 
 import Dashboard from './pages/Dashboard';
 import POS from './pages/POS';
@@ -50,6 +53,7 @@ import AddStockAdjustment from './pages/AddStockAdjustment';
 import Expenses from './pages/Expenses';
 import ExpenseCategories from './pages/ExpenseCategories';
 import ImportExpenses from './pages/ImportExpenses';
+import ImportHub from './pages/ImportHub';
 import Reports from './pages/Reports';
 import ProfitLossPage from './pages/reports/ProfitLossPage';
 import ActivityLogPage from './pages/reports/ActivityLogPage';
@@ -67,13 +71,9 @@ import StockAlertReportPage from './pages/reports/StockAlertReportPage';
 import StockAdjustmentReportPage from './pages/reports/StockAdjustmentReportPage';
 import StockTransfersReportPage from './pages/reports/StockTransfersReportPage';
 import ItemsReportPage from './pages/reports/ItemsReportPage';
-import SMS from './pages/SMS';
-import SendSmsPage from './pages/sms/SendSmsPage';
-import TemplatesPage from './pages/sms/TemplatesPage';
-import GroupsPage from './pages/sms/GroupsPage';
-import HistoryPage from './pages/sms/HistoryPage';
-import GatewayPage from './pages/sms/GatewayPage';
-import BuySmsPage from './pages/sms/BuySmsPage';
+// SMS pages are intentionally NOT routed — the whole feature had no backend, so
+// its credit balance, delivery status and history were placeholder values. The
+// files remain under src/pages/sms/ for whenever a real BD gateway is wired up.
 import Settings from './pages/Settings';
 import BusinessInfoPage from './pages/settings/BusinessInfoPage';
 import BranchesPage from './pages/settings/BranchesPage';
@@ -100,6 +100,10 @@ export default function App() {
   const setDensity = useUI((s) => s.setDensity);
   const restoreSession = useAuth((s) => s.restoreSession);
 
+  // Last-resort guard against a text box that refuses to take the caret. See
+  // hooks/useFocusRescue.ts — mounted here so it also covers the login screens.
+  useFocusRescue();
+
   useEffect(() => {
     init();
   }, [init]);
@@ -111,6 +115,12 @@ export default function App() {
   useEffect(() => {
     void restoreSession();
   }, [restoreSession]);
+
+  // Re-apply the saved language after a reload. When it is Bangla this starts
+  // the whole-UI translation layer (src/lib/bn/).
+  useEffect(() => {
+    applyPersistedLang();
+  }, []);
 
   // Apply persisted appearance on app load and on changes
   useEffect(() => {
@@ -173,6 +183,9 @@ export default function App() {
         <Route path="/expenses" element={<Expenses />} />
         <Route path="/expenses/categories" element={<ExpenseCategories />} />
         <Route path="/expenses/import" element={<ImportExpenses />} />
+
+        {/* Single hub for every bulk importer (replaces 7 sidebar rows) */}
+        <Route path="/import" element={<ImportHub />} />
         <Route path="/cash-register" element={<CashRegister />} />
         <Route path="/cash-register/report" element={<RegisterReport />} />
         <Route path="/reports" element={<Reports />} />
@@ -192,13 +205,7 @@ export default function App() {
         <Route path="/reports/stock-transfers" element={<StockTransfersReportPage />} />
         <Route path="/reports/contacts" element={<ContactsReportPage />} />
         <Route path="/reports/items" element={<ItemsReportPage />} />
-        <Route path="/sms" element={<SMS />} />
-        <Route path="/sms/send" element={<SendSmsPage />} />
-        <Route path="/sms/templates" element={<TemplatesPage />} />
-        <Route path="/sms/groups" element={<GroupsPage />} />
-        <Route path="/sms/history" element={<HistoryPage />} />
-        <Route path="/sms/gateway" element={<GatewayPage />} />
-        <Route path="/sms/buy" element={<BuySmsPage />} />
+
         <Route path="/settings" element={<Settings />} />
         <Route path="/settings/business" element={<BusinessInfoPage />} />
         <Route path="/settings/branches" element={<BranchesPage />} />
@@ -223,6 +230,7 @@ export default function App() {
       {/* Global overlays — mounted at root so they cover auth screens too */}
       <Toaster />
       <ConfirmDialog />
+      <PromptDialog />
     </>
   );
 }

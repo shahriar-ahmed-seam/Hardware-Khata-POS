@@ -1,13 +1,16 @@
 import { useMemo, useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, HandCoins, MessageSquare, AlertTriangle, ArrowRight } from 'lucide-react';
+import { Search, HandCoins, AlertTriangle, ArrowRight } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { useCustomers } from '@/stores/contacts';
-import { useSales } from '@/stores/sales';
+import { api } from '@/lib/api';
+import { toCustomer, type BackendCustomer } from '@/hooks/contactAdapter';
+import { toSaleRecord, type BackendSale } from '@/hooks/saleAdapter';
+import type { Customer } from '@/types/domain';
+import type { SaleRecord } from '@/stores/sales';
 import { Avatar } from '@/components/contacts/Avatar';
 import { ReceivePaymentModal } from '@/components/contacts/ReceivePaymentModal';
 import { formatBDT, cn } from '@/lib/utils';
@@ -15,15 +18,47 @@ import { formatBDT, cn } from '@/lib/utils';
 type Bucket = 'all' | '0-30' | '30-60' | '60-90' | '90+';
 
 export default function CustomerDues() {
-  const customers = useCustomers((s) => s.items);
-  const hydrate = useCustomers((s) => s.hydrate);
-  const sales = useSales((s) => s.sales);
-  // Hydrate from the backend on mount so deep-link entry populates the store.
-  // The dues aging buckets read sales too, so hydrate that store as well.
+  /**
+   * WHOLE-LIST AGGREGATE — this screen is an aging report: every customer with a
+   * due, and the age of each one's OLDEST unpaid invoice. `useCustomers().items`
+   * and `useSales().sales` are ONE PAGE each, so reading them would quietly
+   * report the aging of whatever happened to be loaded. Both inputs therefore
+   * come from the UNPAGED channels (`customers.list` carries the derived `due`,
+   * `sales.list` carries per-invoice `due` + date). The arithmetic below is
+   * unchanged — only the source of the rows moved.
+   */
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [sales, setSales] = useState<SaleRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  // Bumped after a payment so the aging figures reload (they no longer ride on a
+  // store hydrate). IPC calls are FIFO on one channel, so this read lands after
+  // the payment writes.
+  const [reloadKey, setReloadKey] = useState(0);
+
   useEffect(() => {
-    void hydrate();
-    void useSales.getState().hydrate();
-  }, [hydrate]);
+    let alive = true;
+    setLoading(true);
+    void Promise.all([
+      api<BackendCustomer[]>('customers.list', {}),
+      api<BackendSale[]>('sales.list', {}),
+    ])
+      .then(([customerRows, saleRows]) => {
+        if (!alive) return;
+        setCustomers(customerRows.map(toCustomer));
+        setSales(saleRows.map(toSaleRecord));
+        setLoading(false);
+      })
+      .catch(() => {
+        if (!alive) return;
+        // Channel error or running outside Electron — show the empty state
+        // rather than a partial figure.
+        setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [reloadKey]);
+
   const [q, setQ] = useState('');
   const [bucket, setBucket] = useState<Bucket>('all');
   const [payFor, setPayFor] = useState<string | null>(null);
@@ -87,12 +122,13 @@ export default function CustomerDues() {
     <div>
       <PageHeader
         title="Customer Dues"
-        subtitle={`${totals.customers} customers · ${formatBDT(totals.total)} outstanding`}
-        actions={
-          <Button>
-            <MessageSquare className="size-4" /> Send Reminder to All Selected
-          </Button>
+        subtitle={
+          loading
+            ? 'Loading…'
+            : `${totals.customers} customers · ${formatBDT(totals.total)} outstanding`
         }
+        // The SMS reminder buttons are gone: there was no gateway behind them,
+        // so they never sent anything. Collecting a due is done from the row.
       />
 
       <div className="p-6 space-y-4">
@@ -150,9 +186,6 @@ export default function CustomerDues() {
           <div className="rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 flex items-center gap-2">
             <Badge variant="info">{selected.size} selected</Badge>
             <div className="flex-1" />
-            <Button size="sm">
-              <MessageSquare className="size-3.5" /> Send Reminder
-            </Button>
             <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
               Clear
             </Button>
@@ -242,9 +275,6 @@ export default function CustomerDues() {
                     </td>
                     <td className="px-4 py-2.5">
                       <div className="flex items-center justify-end gap-1">
-                        <Button size="sm" variant="outline" title="Send reminder SMS">
-                          <MessageSquare className="size-3.5" />
-                        </Button>
                         <Button size="sm" onClick={() => setPayFor(r.c.id)}>
                           <HandCoins className="size-3.5" /> Receive
                         </Button>
@@ -256,7 +286,7 @@ export default function CustomerDues() {
               {filtered.length === 0 && (
                 <tr>
                   <td colSpan={9} className="px-4 py-12 text-center text-muted-foreground text-sm">
-                    No customer dues match these filters.
+                    {loading ? 'Loading customer dues…' : 'No customer dues match these filters.'}
                   </td>
                 </tr>
               )}
@@ -265,7 +295,14 @@ export default function CustomerDues() {
         </Card>
       </div>
 
-      <ReceivePaymentModal open={!!payFor} onClose={() => setPayFor(null)} customerId={payFor} />
+      <ReceivePaymentModal
+        open={!!payFor}
+        onClose={() => {
+          setPayFor(null);
+          setReloadKey((k) => k + 1);
+        }}
+        customerId={payFor}
+      />
     </div>
   );
 }

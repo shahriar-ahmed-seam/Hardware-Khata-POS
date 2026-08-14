@@ -15,7 +15,6 @@ import {
   ListTree,
   Award,
   Ruler,
-  Layers,
   Barcode,
   TrendingUp,
   Warehouse,
@@ -29,24 +28,37 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  PanelsTopLeft,
   BarChart3,
-  MessageSquare,
   Settings,
   Hammer,
   Store,
+  MoreHorizontal,
+  Upload,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUI } from '@/stores/ui';
-import { useT } from '@/lib/i18n';
 
 type Item = { label: string; to: string; icon: any; badge?: string };
 type Group = { label: string; icon: any; items: Item[] };
 type Entry = { kind: 'item'; item: Item } | { kind: 'group'; group: Group };
 
+/**
+ * NAVIGATION
+ *
+ * Trimmed deliberately for an elderly shop owner:
+ *  - The seven per-module "Import …" rows collapsed into one "Data & Import"
+ *    hub (`/import`) instead of repeating the same idea in six groups.
+ *  - "Variations" removed — it only ever rendered a Placeholder page.
+ *  - Expenses, Reports, SMS and Settings merged into a single "More & Settings"
+ *    tab so the top level stays short and scannable.
+ *  - No fabricated counters (the old hard-coded "4" stock-alert badge is gone).
+ */
 const nav: Entry[] = [
   { kind: 'item', item: { label: 'Dashboard', to: '/dashboard', icon: LayoutDashboard } },
-  { kind: 'item', item: { label: 'POS', to: '/pos', icon: ScanBarcode, badge: 'Ctrl+N' } },
+  // No shortcut badge: 'Ctrl+N' was never actually wired to anything, and it
+  // squeezed the Bangla label ('বিক্রয় কাউন্টার') until it was unreadable.
+  // Real POS shortcuts live in the F1 shortcuts overlay.
+  { kind: 'item', item: { label: 'POS', to: '/pos', icon: ScanBarcode } },
   {
     kind: 'group',
     group: {
@@ -59,7 +71,6 @@ const nav: Entry[] = [
         { label: 'Quotations', to: '/sales/quotations', icon: FileText },
         { label: 'Sell Returns', to: '/sales/returns', icon: Undo2 },
         { label: 'Shipments', to: '/sales/shipments', icon: Truck },
-        { label: 'Import Sales', to: '/sales/import', icon: ListTree },
       ],
     },
   },
@@ -72,7 +83,6 @@ const nav: Entry[] = [
         { label: 'All Purchases', to: '/purchases', icon: Receipt },
         { label: 'Add Purchase', to: '/purchases/new', icon: PenSquare },
         { label: 'Purchase Returns', to: '/purchases/returns', icon: Undo2 },
-        { label: 'Import Purchases', to: '/purchases/import', icon: ListTree },
       ],
     },
   },
@@ -86,13 +96,10 @@ const nav: Entry[] = [
         { label: 'Categories', to: '/products/categories', icon: ListTree },
         { label: 'Brands', to: '/products/brands', icon: Award },
         { label: 'Units', to: '/products/units', icon: Ruler },
-        { label: 'Variations', to: '/products/variations', icon: Layers },
         { label: 'Bulk Price Update', to: '/products/price-update', icon: Tag },
         { label: 'Price Groups', to: '/products/price-groups', icon: Tag },
         { label: 'Barcode Print', to: '/products/barcodes', icon: Barcode },
         { label: 'Warranties', to: '/products/warranties', icon: Award },
-        { label: 'Import Products', to: '/products/import', icon: ListTree },
-        { label: 'Import Opening Stock', to: '/products/import-stock', icon: ListTree },
       ],
     },
   },
@@ -103,7 +110,7 @@ const nav: Entry[] = [
       icon: Warehouse,
       items: [
         { label: 'Stock Report', to: '/stock', icon: Boxes },
-        { label: 'Stock Alerts', to: '/stock/alerts', icon: AlertTriangle, badge: '4' },
+        { label: 'Stock Alerts', to: '/stock/alerts', icon: AlertTriangle },
         { label: 'Transfers', to: '/stock/transfers', icon: ArrowLeftRight },
         { label: 'Damage / Adjustment', to: '/stock/adjustments', icon: AlertTriangle },
       ],
@@ -119,20 +126,6 @@ const nav: Entry[] = [
         { label: 'Suppliers', to: '/contacts/suppliers', icon: UserCog },
         { label: 'Customer Groups', to: '/contacts/customer-groups', icon: Users },
         { label: 'Customer Dues', to: '/contacts/dues', icon: HandCoins },
-        { label: 'Import Customers', to: '/contacts/customers/import', icon: ListTree },
-        { label: 'Import Suppliers', to: '/contacts/suppliers/import', icon: ListTree },
-      ],
-    },
-  },
-  {
-    kind: 'group',
-    group: {
-      label: 'Expenses',
-      icon: Wallet,
-      items: [
-        { label: 'All Expenses', to: '/expenses', icon: Receipt },
-        { label: 'Categories', to: '/expenses/categories', icon: ListTree },
-        { label: 'Import Expenses', to: '/expenses/import', icon: ListTree },
       ],
     },
   },
@@ -147,15 +140,30 @@ const nav: Entry[] = [
       ],
     },
   },
-  { kind: 'item', item: { label: 'Reports', to: '/reports', icon: TrendingUp } },
-  { kind: 'item', item: { label: 'SMS', to: '/sms', icon: MessageSquare } },
-  { kind: 'item', item: { label: 'Settings', to: '/settings', icon: Settings } },
+  {
+    // The four low-frequency destinations, merged into one tab.
+    kind: 'group',
+    group: {
+      label: 'More & Settings',
+      icon: MoreHorizontal,
+      items: [
+        { label: 'Reports', to: '/reports', icon: TrendingUp },
+        { label: 'All Expenses', to: '/expenses', icon: Wallet },
+        { label: 'Expense Categories', to: '/expenses/categories', icon: ListTree },
+        // SMS was removed from the nav: it had no backend at all (gateway,
+        // credit balance and send history were local placeholder state), so
+        // every number it showed was invented. The pages still exist on disk if
+        // it is ever wired to a real BD gateway.
+        { label: 'Data & Import', to: '/import', icon: Upload },
+        { label: 'Settings', to: '/settings', icon: Settings },
+      ],
+    },
+  },
 ];
 
 export function Sidebar() {
   const { sidebarCollapsed, toggleSidebar } = useUI();
   const location = useLocation();
-  const { t } = useT();
 
   // Accordion: only one group open at a time.
   // Initially open the group that contains the current route.
@@ -172,29 +180,32 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        'shrink-0 bg-sidebar text-sidebar-foreground border-r border-border flex flex-col transition-[width] duration-200',
-        sidebarCollapsed ? 'w-[64px]' : 'w-[240px]',
+        // `print:hidden` — the nav is app chrome and must never reach the printer.
+        'shrink-0 bg-sidebar text-sidebar-foreground border-r border-border flex flex-col transition-[width] duration-200 print:hidden',
+        sidebarCollapsed ? 'w-[68px]' : 'w-[248px]',
       )}
     >
+      {/* The business name and offline/branch status already live in the
+          titlebar — this header is just the mark plus the collapse control. */}
       <div className="flex items-center gap-2 px-3 h-12 border-b border-sidebar-border">
-        <div className="grid place-items-center size-7 rounded-md bg-gradient-to-br from-primary to-accent text-white">
-          <Hammer className="size-4" />
+        <div className="grid place-items-center size-8 rounded-md bg-gradient-to-br from-primary to-accent text-white">
+          <Hammer className="size-[18px]" />
         </div>
-        {!sidebarCollapsed && (
-          <div className="flex-1 leading-tight">
-            <div className="text-[13px] font-semibold">Hardware POS</div>
-            <div className="text-[10px] opacity-60 -mt-0.5">v0.1 · Offline ready</div>
-          </div>
-        )}
+        <div className="flex-1" />
         <button
           onClick={toggleSidebar}
-          className="size-7 grid place-items-center rounded-md hover:bg-sidebar-hover text-sidebar-foreground/70 hover:text-sidebar-foreground"
+          title={sidebarCollapsed ? 'Expand menu' : 'Collapse menu'}
+          className="size-8 grid place-items-center rounded-md hover:bg-sidebar-hover text-sidebar-foreground/80 hover:text-sidebar-foreground"
         >
-          {sidebarCollapsed ? <ChevronRight className="size-4" /> : <ChevronLeft className="size-4" />}
+          {sidebarCollapsed ? (
+            <ChevronRight className="size-[18px]" />
+          ) : (
+            <ChevronLeft className="size-[18px]" />
+          )}
         </button>
       </div>
 
-      <nav className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
+      <nav className="flex-1 overflow-y-auto py-2 px-2 space-y-1">
         {nav.map((entry, i) =>
           entry.kind === 'item' ? (
             <SidebarItem key={i} item={entry.item} collapsed={sidebarCollapsed} />
@@ -212,17 +223,6 @@ export function Sidebar() {
           ),
         )}
       </nav>
-
-      <div className="px-3 py-2 border-t border-sidebar-border">
-        {!sidebarCollapsed ? (
-          <div className="flex items-center gap-2 text-[11px] opacity-70">
-            <PanelsTopLeft className="size-3.5" />
-            <span>{t('sidebar.shortcutsHint')}</span>
-          </div>
-        ) : (
-          <div className="grid place-items-center text-[10px] opacity-60">F1</div>
-        )}
-      </div>
     </aside>
   );
 }
@@ -235,17 +235,18 @@ function SidebarItem({ item, collapsed }: { item: Item; collapsed: boolean }) {
       title={collapsed ? item.label : undefined}
       className={({ isActive }) =>
         cn(
-          'group relative flex items-center gap-2.5 px-2.5 py-2 rounded-md text-[13px] font-medium transition',
+          'group relative flex items-center gap-2.5 px-2.5 py-2.5 rounded-md text-sm font-semibold transition',
           isActive
             ? 'bg-primary text-primary-foreground shadow-sm'
-            : 'text-sidebar-foreground/80 hover:bg-sidebar-hover hover:text-sidebar-foreground',
+            : 'text-sidebar-foreground hover:bg-sidebar-hover',
         )
       }
     >
-      <Icon className="size-4 shrink-0" />
-      {!collapsed && <span className="flex-1 truncate">{item.label}</span>}
+      <Icon className="size-[18px] shrink-0" />
+      {!collapsed && <span className="flex-1 min-w-0 truncate">{item.label}</span>}
+      {/* Badges stay compact and never steal room from a longer (Bangla) label */}
       {!collapsed && item.badge && (
-        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-sidebar-hover">
+        <span className="text-2xs font-mono px-1 py-0.5 rounded bg-sidebar-hover shrink-0">
           {item.badge}
         </span>
       )}
@@ -273,23 +274,23 @@ function SidebarGroup({
   if (collapsed) {
     return (
       <div className="relative group/g" title={group.label}>
-        <button className="w-full flex items-center justify-center size-10 rounded-md hover:bg-sidebar-hover text-sidebar-foreground/80">
-          <Icon className="size-4" />
+        <button className="w-full flex items-center justify-center h-11 rounded-md hover:bg-sidebar-hover text-sidebar-foreground">
+          <Icon className="size-[18px]" />
         </button>
-        <div className="hidden group-hover/g:block absolute left-full top-0 ml-2 z-30 min-w-[180px] bg-card text-card-foreground border border-border rounded-md shadow-lg py-1">
-          <div className="px-3 py-1.5 text-[11px] font-semibold text-muted-foreground">{group.label}</div>
+        <div className="hidden group-hover/g:block absolute left-full top-0 ml-2 z-30 min-w-[200px] bg-card text-card-foreground border border-border rounded-md shadow-lg py-1">
+          <div className="px-3 py-1.5 text-xs font-bold text-muted-foreground">{group.label}</div>
           {group.items.map((it) => (
             <NavLink
               key={it.to}
               to={it.to}
               className={({ isActive }) =>
                 cn(
-                  'flex items-center gap-2 px-3 py-1.5 text-[12px] hover:bg-secondary',
-                  isActive && 'bg-secondary text-primary',
+                  'flex items-center gap-2 px-3 py-2 text-sm hover:bg-secondary',
+                  isActive && 'bg-secondary text-primary font-semibold',
                 )
               }
             >
-              <it.icon className="size-3.5" /> {it.label}
+              <it.icon className="size-4" /> {it.label}
             </NavLink>
           ))}
         </div>
@@ -302,37 +303,35 @@ function SidebarGroup({
       <button
         onClick={onToggle}
         className={cn(
-          'w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-[13px] font-medium transition',
+          'w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-md text-sm font-semibold transition',
           hasActive
-            ? 'text-sidebar-foreground'
-            : 'text-sidebar-foreground/80 hover:bg-sidebar-hover hover:text-sidebar-foreground',
+            ? 'text-primary bg-primary/10'
+            : 'text-sidebar-foreground hover:bg-sidebar-hover',
         )}
       >
-        <Icon className="size-4 shrink-0" />
+        <Icon className="size-[18px] shrink-0" />
         <span className="flex-1 text-left">{group.label}</span>
-        <ChevronDown
-          className={cn('size-3.5 opacity-60 transition-transform', open && 'rotate-180')}
-        />
+        <ChevronDown className={cn('size-4 opacity-70 transition-transform', open && 'rotate-180')} />
       </button>
       {open && (
-        <div className="ml-3 pl-3 border-l border-sidebar-border mt-0.5 space-y-0.5">
+        <div className="ml-3 pl-3 border-l border-sidebar-border mt-1 space-y-0.5">
           {group.items.map((it) => (
             <NavLink
               key={it.to}
               to={it.to}
               className={({ isActive }) =>
                 cn(
-                  'flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[12px] transition',
+                  'flex items-center gap-2 px-2.5 py-2 rounded-md text-sm transition',
                   isActive
-                    ? 'bg-primary/15 text-primary font-medium'
-                    : 'text-sidebar-foreground/70 hover:bg-sidebar-hover hover:text-sidebar-foreground',
+                    ? 'bg-primary/15 text-primary font-semibold'
+                    : 'text-sidebar-foreground/90 hover:bg-sidebar-hover hover:text-sidebar-foreground',
                 )
               }
             >
-              <it.icon className="size-3.5 shrink-0" />
+              <it.icon className="size-4 shrink-0" />
               <span className="flex-1 truncate">{it.label}</span>
               {it.badge && (
-                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-warning/20 text-warning">
+                <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-warning/20 text-warning">
                   {it.badge}
                 </span>
               )}

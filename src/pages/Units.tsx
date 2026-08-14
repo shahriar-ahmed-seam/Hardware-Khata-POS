@@ -5,30 +5,27 @@ import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Drawer } from '@/components/ui/Drawer';
-import { useUnits as useUnitsStore, type UnitRecord, type UnitType } from '@/stores/masterData';
+import { type UnitRecord, type UnitType } from '@/stores/masterData';
 import {
   useUnits as useUnitsQuery,
   useCreateUnit,
   useUpdateUnit,
   useDeleteUnit,
 } from '@/hooks/useCatalog';
-import { hasBackend } from '@/lib/api';
+import { confirm } from '@/stores/confirm';
 import { toast } from '@/stores/toast';
 import { NumberField } from '@/components/ui/NumberField';
 
 const TYPES: UnitType[] = ['count', 'weight', 'length', 'volume', 'pack'];
 
 export default function Units() {
-  const backend = hasBackend();
-
-  // ----- Data source: backend when available, else mock store -----
-  const store = useUnitsStore();
+  // ----- Data source: the SQLite backend -----
   const unitsQuery = useUnitsQuery();
   const createUnit = useCreateUnit();
   const updateUnit = useUpdateUnit();
   const deleteUnit = useDeleteUnit();
 
-  const items: UnitRecord[] = backend ? (unitsQuery.data ?? []) : store.items;
+  const items: UnitRecord[] = unitsQuery.data ?? [];
 
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState<UnitRecord | 'new' | null>(null);
@@ -53,49 +50,39 @@ export default function Units() {
   }, [list]);
 
   const save = async (data: Omit<UnitRecord, 'id'>, current: UnitRecord | 'new') => {
-    if (backend) {
-      try {
-        if (current === 'new') {
-          await createUnit.mutateAsync({
+    try {
+      if (current === 'new') {
+        await createUnit.mutateAsync({
+          name: data.name,
+          short: data.short,
+          type: data.type,
+          toBaseFactor: data.toBaseFactor,
+        });
+      } else {
+        await updateUnit.mutateAsync({
+          id: current.id,
+          patch: {
             name: data.name,
             short: data.short,
             type: data.type,
             toBaseFactor: data.toBaseFactor,
-          });
-        } else {
-          await updateUnit.mutateAsync({
-            id: current.id,
-            patch: {
-              name: data.name,
-              short: data.short,
-              type: data.type,
-              toBaseFactor: data.toBaseFactor,
-            },
-          });
-        }
-        toast.success(current === 'new' ? 'Unit added' : 'Unit updated');
-        setEditing(null);
-      } catch (e) {
-        toast.error('Save failed', { description: e instanceof Error ? e.message : undefined });
+          },
+        });
       }
-    } else {
-      if (current === 'new') store.add(data);
-      else store.update(current.id, data);
+      toast.success(current === 'new' ? 'Unit added' : 'Unit updated');
       setEditing(null);
+    } catch (e) {
+      toast.error('Save failed', { description: e instanceof Error ? e.message : undefined });
     }
   };
 
   const onDelete = async (u: UnitRecord) => {
-    if (!confirm(`Delete unit "${u.name}"?`)) return;
-    if (backend) {
-      try {
-        await deleteUnit.mutateAsync(u.id);
-        toast.success('Unit deleted');
-      } catch (e) {
-        toast.error('Delete failed', { description: e instanceof Error ? e.message : undefined });
-      }
-    } else {
-      store.remove(u.id);
+    if (!(await confirm({ title: `Delete unit "${u.name}"?`, variant: 'destructive' }))) return;
+    try {
+      await deleteUnit.mutateAsync(u.id);
+      toast.success('Unit deleted');
+    } catch (e) {
+      toast.error('Delete failed', { description: e instanceof Error ? e.message : undefined });
     }
   };
 

@@ -346,6 +346,43 @@ function main() {
   const readBack = call('sales.get', { id: created.id }) as { invoice_no: string };
   s.ok('api created sale readable', !!readBack.invoice_no);
 
+  // ----- correcting that sale through the facade -----
+  // Full behaviour is covered in scenarios.ts; here we only pin the CHANNEL
+  // contract: payload shape, invoice number preserved, totals recomputed.
+  const edited = call('sales.update', {
+    saleId: created.id,
+    input: {
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      lines: [{ productId: 'p1', qty: 2, spr: 520 }],
+      payments: [{ method: 'Cash', amount: 1040 }],
+      reason: 'wrong quantity keyed at the counter',
+    },
+  }) as { id: string; invoiceNo: string; totals: { total: number }; previousTotal: number };
+  s.eq('api sales.update keeps the sale id', edited.id, created.id);
+  s.eq('api sales.update keeps the invoice number', edited.invoiceNo, readBack.invoice_no);
+  s.money('api sales.update recomputes the total', edited.totals.total, 1040);
+  s.money('api sales.update reports the previous total', edited.previousTotal, 520);
+  s.money(
+    'api sales.update leaves no due on a fully paid correction',
+    (call('sales.get', { id: created.id }) as { due: number }).due,
+    0,
+  );
+  let apiEditNoReason = '';
+  try {
+    call('sales.update', {
+      saleId: created.id,
+      input: {
+        branchId: 'br_mp',
+        userId: 'u_admin',
+        lines: [{ productId: 'p1', qty: 1, spr: 520 }],
+      },
+    });
+  } catch (e) {
+    apiEditNoReason = e instanceof Error ? e.message : String(e);
+  }
+  s.ok('api sales.update demands a reason', apiEditNoReason.includes('reason is required'));
+
   // ----- catalog CRUD round-trip (the Products + Stock slice) -----
   s.section('api-catalog');
   {
@@ -374,6 +411,54 @@ function main() {
     const detail = call('products.get', { id, branchId: 'br_mp' }) as { price: number; name: string };
     s.money('product price updated via API', detail.price, 180);
     s.eq('product name updated via API', detail.name, 'Wiring Test v2');
+
+    // ----- retire / restore / delete via the API facade -----
+    const usage = call('products.usage', { id }) as {
+      deletable: boolean;
+      documentCount: number;
+      stock: number;
+      archived: boolean;
+    };
+    s.ok('products.usage reports a fresh product as deletable', usage.deletable);
+    s.eq('products.usage reports no documents', usage.documentCount, 0);
+    s.money('products.usage reports the stock that blocks a plain delete', usage.stock, 25);
+    s.ok('products.usage reports it as not archived', !usage.archived);
+
+    call('products.archive', { id, userId: 'u_admin' });
+    s.ok('products.archive marks it archived', (call('products.usage', { id }) as { archived: boolean }).archived);
+    s.eq(
+      'an archived product drops out of products.list',
+      (call('products.list', { branchId: 'br_mp' }) as { id: string }[]).filter((p) => p.id === id).length,
+      0,
+    );
+    s.eq(
+      'products.list can be asked for archived rows explicitly',
+      (call('products.list', { archivedOnly: true }) as { id: string }[]).filter((p) => p.id === id)
+        .length,
+      1,
+    );
+    call('products.unarchive', { id, userId: 'u_admin' });
+    s.eq(
+      'products.unarchive puts it back in the list',
+      (call('products.list', { branchId: 'br_mp' }) as { id: string }[]).filter((p) => p.id === id).length,
+      1,
+    );
+
+    // A plain delete is refused while stock remains; force is the Admin override.
+    let apiStockGuard = '';
+    try {
+      call('products.delete', { id });
+    } catch (e) {
+      apiStockGuard = e instanceof Error ? e.message : String(e);
+    }
+    s.ok('products.delete refuses a product with stock', apiStockGuard.includes('still has'));
+    call('products.delete', { id, force: true });
+    s.eq(
+      'products.delete with force removes it',
+      (call('products.list', { includeArchived: true }) as { id: string }[]).filter((p) => p.id === id)
+        .length,
+      0,
+    );
 
     // category + brand create via API
     const cat = call('categories.create', { name: 'Test Cat', emoji: '🧪' }) as { id: string };

@@ -1,10 +1,15 @@
 import { Link } from 'react-router-dom';
-import { TrendingUp, ArrowUpRight, ChevronRight } from 'lucide-react';
-import { dashboardMock } from '@/mocks/data';
+import { TrendingUp, ArrowUpRight, ArrowDownRight, ChevronRight } from 'lucide-react';
+import { useDashboardData } from '@/hooks/useDashboardData';
 import { formatBDT } from '@/lib/utils';
 
 export function ProfitPopover() {
-  const p = dashboardMock.todayProfit;
+  // Backend-only: the mock profit block was removed. Everything comes from the
+  // dashboard bundle; with no bundle yet the figures read 0 and the delta line
+  // is hidden rather than showing an invented percentage.
+  const { data } = useDashboardData();
+  const p = data?.stats.profit ?? null;
+  const delta = p?.deltaPct;
   return (
     <div className="p-4">
       <div className="flex items-center gap-2 mb-3">
@@ -14,23 +19,30 @@ export function ProfitPopover() {
         <div>
           <div className="text-xs text-muted-foreground">Today's Profit</div>
           <div className="flex items-baseline gap-2">
-            <span className="text-xl font-bold font-mono">{formatBDT(p.netProfit)}</span>
-            <span className="text-[11px] text-success font-medium inline-flex items-center gap-0.5">
-              <ArrowUpRight className="size-3" /> {p.deltaVsYesterday}%
-            </span>
+            <span className="text-xl font-bold font-mono">{formatBDT(p?.netProfit ?? 0)}</span>
+            {typeof delta === 'number' && (
+              <span
+                className={`text-[11px] font-medium inline-flex items-center gap-0.5 ${
+                  delta >= 0 ? 'text-success' : 'text-destructive'
+                }`}
+              >
+                {delta >= 0 ? <ArrowUpRight className="size-3" /> : <ArrowDownRight className="size-3" />}{' '}
+                {Math.abs(delta)}%
+              </span>
+            )}
           </div>
         </div>
       </div>
 
       <div className="space-y-1.5 text-sm border-t border-border pt-3">
-        <Row label="Revenue" value={formatBDT(p.revenue)} />
-        <Row label="Cost of goods sold" value={`− ${formatBDT(p.cogs)}`} muted />
-        <Row label="Gross Profit" value={formatBDT(p.grossProfit)} bold />
-        <Row label={`Margin`} value={`${p.marginPct.toFixed(1)}%`} muted />
+        <Row label="Revenue" value={formatBDT(p?.revenue ?? 0)} />
+        <Row label="Cost of goods sold" value={`− ${formatBDT(p?.cogs ?? 0)}`} muted />
+        <Row label="Gross Profit" value={formatBDT(p?.grossProfit ?? 0)} bold />
+        <Row label={`Margin`} value={`${(p?.marginPct ?? 0).toFixed(1)}%`} muted />
         <div className="border-t border-border my-2" />
-        <Row label="Expenses today" value={`− ${formatBDT(p.expenses)}`} muted />
+        <Row label="Expenses today" value={`− ${formatBDT(p?.expenses ?? 0)}`} muted />
         <div className="border-t border-border my-2" />
-        <Row label="Net Profit" value={formatBDT(p.netProfit)} bold tone="success" />
+        <Row label="Net Profit" value={formatBDT(p?.netProfit ?? 0)} bold tone="success" />
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2">

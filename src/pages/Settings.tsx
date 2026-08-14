@@ -16,6 +16,7 @@ import {
   Lock,
   HandCoins,
 } from 'lucide-react';
+import { useCanAll } from '@/hooks/useCan';
 import { cn } from '@/lib/utils';
 
 interface Tile {
@@ -24,31 +25,47 @@ interface Tile {
   label: string;
   desc: string;
   group: 'shop' | 'people' | 'docs' | 'devices' | 'app' | 'system';
+  /**
+   * Permission needed to do anything useful on that screen. Tiles without one
+   * are personal preferences (theme, shortcuts) that anyone may change for
+   * themselves. A tile whose every write would be refused at the IPC boundary is
+   * hidden instead of shown: leading a cashier to a screen that rejects each of
+   * their saves is worse than not offering it.
+   */
+  needs?: string;
 }
 
 const tiles: Tile[] = [
   // Shop
-  { group: 'shop', to: '/settings/business',     icon: Building2,  label: 'Business Info',          desc: 'Shop name, logo, address, currency, fiscal year' },
-  { group: 'shop', to: '/settings/branches',     icon: MapPin,     label: 'Branches',               desc: 'Add and manage shop branches' },
-  { group: 'shop', to: '/settings/tax-rates',    icon: Percent,    label: 'Tax Rates',              desc: 'VAT and other tax rates' },
+  { group: 'shop', to: '/settings/business',     icon: Building2,  label: 'Business Info',          desc: 'Shop name, logo, address, currency, fiscal year', needs: 'settings.business' },
+  { group: 'shop', to: '/settings/branches',     icon: MapPin,     label: 'Branches',               desc: 'Add and manage shop branches', needs: 'settings.business' },
+  { group: 'shop', to: '/settings/tax-rates',    icon: Percent,    label: 'Tax Rates',              desc: 'VAT and other tax rates', needs: 'settings.business' },
   // People
-  { group: 'people', to: '/settings/users',          icon: Users,      label: 'Users',                  desc: 'Cashiers, managers, admin accounts' },
-  { group: 'people', to: '/settings/roles',          icon: Users,      label: 'Roles & Permissions',    desc: 'What each role can do' },
-  { group: 'people', to: '/settings/sales-agents',   icon: HandCoins,  label: 'Sales Commission Agents', desc: 'Commission tracking (optional)' },
+  { group: 'people', to: '/settings/users',          icon: Users,      label: 'Users',                  desc: 'Cashiers, managers, admin accounts', needs: 'settings.users' },
+  { group: 'people', to: '/settings/roles',          icon: Users,      label: 'Roles & Permissions',    desc: 'What each role can do', needs: 'settings.roles' },
+  { group: 'people', to: '/settings/sales-agents',   icon: HandCoins,  label: 'Sales Commission Agents', desc: 'Commission tracking (optional)', needs: 'settings.business' },
   // Docs
-  { group: 'docs', to: '/settings/invoice-schemes',  icon: FileText,   label: 'Invoice Schemes',        desc: 'Numbering format per document type' },
-  { group: 'docs', to: '/settings/receipt-template', icon: Printer,    label: 'Receipt Template',       desc: 'Header, footer, fields shown on print' },
+  { group: 'docs', to: '/settings/invoice-schemes',  icon: FileText,   label: 'Invoice Schemes',        desc: 'Numbering format per document type', needs: 'settings.business' },
+  { group: 'docs', to: '/settings/receipt-template', icon: Printer,    label: 'Receipt Template',       desc: 'Header, footer, fields shown on print', needs: 'settings.business' },
   // Devices
-  { group: 'devices', to: '/settings/barcode',       icon: Barcode,    label: 'Barcode Settings',       desc: 'Label sizes and printed fields' },
-  { group: 'devices', to: '/settings/printers',      icon: Printer,    label: 'Receipt Printers',       desc: 'Thermal printer setup, test print' },
-  // App
-  { group: 'app', to: '/settings/pos',              icon: ShoppingCart, label: 'POS Preferences',        desc: 'Default markup, payment methods, big-button mode' },
-  { group: 'app', to: '/settings/cash-register',    icon: Lock,         label: 'Cash Register',          desc: 'Variance thresholds, default float' },
+  { group: 'devices', to: '/settings/barcode',       icon: Barcode,    label: 'Barcode Settings',       desc: 'Label sizes and printed fields', needs: 'settings.business' },
+  { group: 'devices', to: '/settings/printers',      icon: Printer,    label: 'Receipt Printers',       desc: 'Thermal printer setup, test print', needs: 'settings.business' },
+  // App — POS/cash prefs are shop policy; theme and shortcuts are personal.
+  { group: 'app', to: '/settings/pos',              icon: ShoppingCart, label: 'POS Preferences',        desc: 'Default markup, payment methods, big-button mode', needs: 'settings.business' },
+  { group: 'app', to: '/settings/cash-register',    icon: Lock,         label: 'Cash Register',          desc: 'Variance thresholds, default float', needs: 'settings.business' },
   { group: 'app', to: '/settings/appearance',       icon: Palette,      label: 'Theme & Appearance',     desc: 'Light/dark, accent color, density' },
   { group: 'app', to: '/settings/shortcuts',        icon: Keyboard,     label: 'Keyboard Shortcuts',     desc: 'Customize F-keys and combos' },
   // System
-  { group: 'system', to: '/settings/backup',        icon: CloudUpload,  label: 'Backup & Sync',          desc: 'Local backup, cloud sync, restore' },
+  { group: 'system', to: '/settings/backup',        icon: CloudUpload,  label: 'Backup & Cloud',         desc: 'Save a copy, restore, export CSV', needs: 'settings.backup' },
 ];
+
+/** Every distinct permission the tiles above reference. */
+const REQUIRED_PERMISSIONS = [
+  'settings.business',
+  'settings.users',
+  'settings.roles',
+  'settings.backup',
+] as const;
 
 const GROUP_TITLES: Record<Tile['group'], string> = {
   shop: 'Shop',
@@ -60,17 +77,22 @@ const GROUP_TITLES: Record<Tile['group'], string> = {
 };
 
 export default function Settings() {
+  const allowed = useCanAll(REQUIRED_PERMISSIONS);
+  const visible = tiles.filter((t) => !t.needs || allowed[t.needs as (typeof REQUIRED_PERMISSIONS)[number]]);
+
   return (
     <div>
       <PageHeader title="Settings" subtitle="Configure your shop, devices, and preferences" />
       <div className="p-6 space-y-6 max-w-6xl">
-        {(Object.keys(GROUP_TITLES) as Tile['group'][]).map((g) => (
+        {(Object.keys(GROUP_TITLES) as Tile['group'][])
+          .filter((g) => visible.some((t) => t.group === g))
+          .map((g) => (
           <section key={g}>
             <h2 className="text-[11px] uppercase font-semibold text-muted-foreground tracking-[0.06em] mb-2">
               {GROUP_TITLES[g]}
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-              {tiles
+              {visible
                 .filter((t) => t.group === g)
                 .map((it) => {
                   const Icon = it.icon;

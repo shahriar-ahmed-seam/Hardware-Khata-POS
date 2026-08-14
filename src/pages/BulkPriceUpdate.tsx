@@ -6,16 +6,10 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
-import {
-  brands as mockBrands,
-  categories as mockCategories,
-  products as seed,
-  type Product,
-} from '@/mocks/data';
-import { brandName, categoryName } from '@/mocks/data';
 import { useProducts } from '@/hooks/useProducts';
 import { useCategories, useBrands } from '@/hooks/useCatalog';
-import { api, hasBackend } from '@/lib/api';
+import { api } from '@/lib/api';
+import { confirm } from '@/stores/confirm';
 import { toast } from '@/stores/toast';
 import { formatBDT, cn } from '@/lib/utils';
 import { ProductImage } from '@/components/products/ProductImage';
@@ -32,20 +26,17 @@ const FIELD_LABEL: Record<Field, string> = {
 };
 
 export default function BulkPriceUpdate() {
-  const backend = hasBackend();
   const qc = useQueryClient();
 
-  // Product + filter sources: real catalogue under backend, mock otherwise.
+  // Product + filter sources: the real catalogue. Edits are read from the query
+  // cache and persisted via products.update (then invalidated to refetch).
   const productsQuery = useProducts();
   const categoriesQuery = useCategories();
   const brandsQuery = useBrands();
 
-  // Mock mode mutates a local copy; backend mode is read from the query cache
-  // and persisted via products.update (then invalidated to refetch).
-  const [mockList, setMockList] = useState<Product[]>(seed);
-  const list = backend ? (productsQuery.data ?? []) : mockList;
-  const categories = backend ? (categoriesQuery.data ?? []) : mockCategories;
-  const brands = backend ? (brandsQuery.data ?? []) : mockBrands;
+  const list = productsQuery.data ?? [];
+  const categories = categoriesQuery.data ?? [];
+  const brands = brandsQuery.data ?? [];
 
   const [applying, setApplying] = useState(false);
 
@@ -63,12 +54,9 @@ export default function BulkPriceUpdate() {
     });
   }, [list, q, cat, brand]);
 
-  // Resolve category/brand labels from the active lists (real ids under backend,
-  // mock ids otherwise) so the row subtitle is correct in both modes.
-  const catLabel = (id: string) =>
-    backend ? (categories.find((c) => c.id === id)?.name ?? '—') : categoryName(id);
-  const brandLabel = (id: string) =>
-    backend ? (brands.find((b) => b.id === id)?.name ?? '—') : brandName(id);
+  // Resolve category/brand labels from the real lists so the row subtitle is correct.
+  const catLabel = (id: string) => categories.find((c) => c.id === id)?.name ?? '—';
+  const brandLabel = (id: string) => brands.find((b) => b.id === id)?.name ?? '—';
 
   // Selection
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -118,51 +106,36 @@ export default function BulkPriceUpdate() {
 
   const apply = async () => {
     if (selected.size === 0) return;
-    if (
-      !confirm(
-        `Update ${FIELD_LABEL[field]} on ${selected.size} product(s)?\nThis cannot be undone.`,
-      )
-    )
-      return;
+    const ok0 = await confirm({
+      title: `Update ${FIELD_LABEL[field]} on ${selected.size} product(s)?`,
+      message: 'This cannot be undone.',
+      confirmLabel: 'Update prices',
+    });
+    if (!ok0) return;
 
-    if (backend) {
-      // Persist each affected product via products.update (no bulk channel),
-      // then invalidate ['products'] so the table refetches the real values.
-      setApplying(true);
-      const affected = list.filter((p) => selected.has(p.id));
-      let ok = 0;
-      let failed = 0;
-      for (const p of affected) {
-        const current = (p[field] as number | undefined) ?? 0;
-        const next = compute(current);
-        try {
-          await api('products.update', { id: p.id, patch: { [field]: next } });
-          ok += 1;
-        } catch {
-          failed += 1;
-        }
+    // Persist each affected product via products.update (no bulk channel),
+    // then invalidate ['products'] so the table refetches the real values.
+    setApplying(true);
+    const affected = list.filter((p) => selected.has(p.id));
+    let ok = 0;
+    let failed = 0;
+    for (const p of affected) {
+      const current = (p[field] as number | undefined) ?? 0;
+      const next = compute(current);
+      try {
+        await api('products.update', { id: p.id, patch: { [field]: next } });
+        ok += 1;
+      } catch {
+        failed += 1;
       }
-      await qc.invalidateQueries({ queryKey: ['products'] });
-      setApplying(false);
-      if (failed === 0) {
-        toast.success(`Updated ${FIELD_LABEL[field]} on ${ok} product${ok === 1 ? '' : 's'}`);
-      } else {
-        toast.error(`Updated ${ok}, failed ${failed}. Check and retry.`);
-      }
-      setSelected(new Set());
-      setAmount(0);
-      return;
     }
-
-    // Mock mode: mutate the local copy only.
-    setMockList((cs) =>
-      cs.map((p) => {
-        if (!selected.has(p.id)) return p;
-        const current = (p[field] as number | undefined) ?? 0;
-        const next = compute(current);
-        return { ...p, [field]: next };
-      }),
-    );
+    await qc.invalidateQueries({ queryKey: ['products'] });
+    setApplying(false);
+    if (failed === 0) {
+      toast.success(`Updated ${FIELD_LABEL[field]} on ${ok} product${ok === 1 ? '' : 's'}`);
+    } else {
+      toast.error(`Updated ${ok}, failed ${failed}. Check and retry.`);
+    }
     setSelected(new Set());
     setAmount(0);
   };

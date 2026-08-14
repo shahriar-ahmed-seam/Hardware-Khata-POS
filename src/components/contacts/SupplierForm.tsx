@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { NumberField } from '@/components/ui/NumberField';
 import { Avatar } from './Avatar';
-import { type Supplier } from '@/mocks/data';
+import type { Supplier } from '@/types/domain';
 import { cn } from '@/lib/utils';
 
 interface Props {
@@ -41,8 +41,9 @@ export function SupplierForm({ initial, asDrawer, onSave, onDelete, onCancel }: 
   };
 
   return (
-    <div className={cn('flex flex-col flex-1 min-h-0', !asDrawer && 'min-h-full')}>
-      <div className="flex-1 overflow-auto">
+    // One scroll container, chosen by mode — see the note in CustomerForm.
+    <div className={cn('flex flex-col', asDrawer ? 'flex-1 min-h-0' : 'min-h-full')}>
+      <div className={cn(asDrawer && 'flex-1 min-h-0 overflow-auto')}>
         <div className={cn('mx-auto max-w-3xl', asDrawer ? 'p-4 space-y-4' : 'p-6 space-y-4')}>
           <div className="flex items-center gap-3 rounded-xl border border-border p-4 bg-card">
             <Avatar name={s.name || '?'} size={56} variant="muted" />

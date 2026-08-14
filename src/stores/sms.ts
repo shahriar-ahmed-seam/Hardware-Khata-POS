@@ -32,6 +32,17 @@ export const TEMPLATE_VARIABLES = [
   '{discount}',
 ] as const;
 
+/**
+ * Timestamp used for the built-in starter templates/groups. They are created
+ * when the app first loads, so backdating them (the old code claimed 5–60 days
+ * ago) would show a fabricated history on a brand-new install.
+ */
+const INSTALLED_AT = new Date().toISOString();
+
+/**
+ * Starter message templates — CONFIGURATION, not sample data: every shop-specific
+ * value is a `{placeholder}` filled at send time from real records.
+ */
 const SEED_TEMPLATES: SmsTemplate[] = [
   {
     id: 'tmpl_thanks',
@@ -40,7 +51,7 @@ const SEED_TEMPLATES: SmsTemplate[] = [
     body: 'Dear {customer_name}, thank you for shopping at {shop_name}. Invoice {invoice_no} for ৳{amount}. Visit again!',
     language: 'en',
     active: true,
-    createdAt: new Date(Date.now() - 30 * 86400000).toISOString(),
+    createdAt: INSTALLED_AT,
   },
   {
     id: 'tmpl_thanks_bn',
@@ -49,7 +60,7 @@ const SEED_TEMPLATES: SmsTemplate[] = [
     body: 'প্রিয় {customer_name}, {shop_name}-এ কেনাকাটার জন্য ধন্যবাদ। ইনভয়েস {invoice_no}, মূল্য ৳{amount}। আবার আসবেন।',
     language: 'bn',
     active: true,
-    createdAt: new Date(Date.now() - 30 * 86400000).toISOString(),
+    createdAt: INSTALLED_AT,
   },
   {
     id: 'tmpl_payment',
@@ -58,7 +69,7 @@ const SEED_TEMPLATES: SmsTemplate[] = [
     body: 'Payment of ৳{amount} received for {invoice_no}. Outstanding due: ৳{due}. — {shop_name}',
     language: 'en',
     active: true,
-    createdAt: new Date(Date.now() - 25 * 86400000).toISOString(),
+    createdAt: INSTALLED_AT,
   },
   {
     id: 'tmpl_due',
@@ -67,7 +78,7 @@ const SEED_TEMPLATES: SmsTemplate[] = [
     body: 'Reminder: ৳{due} is outstanding on your account at {shop_name}. Please clear at your earliest convenience.',
     language: 'en',
     active: true,
-    createdAt: new Date(Date.now() - 20 * 86400000).toISOString(),
+    createdAt: INSTALLED_AT,
   },
   {
     id: 'tmpl_promo',
@@ -76,7 +87,7 @@ const SEED_TEMPLATES: SmsTemplate[] = [
     body: 'Eid Special! {discount}% off all hardware items at {shop_name}. Valid till {date}. Visit our shop today!',
     language: 'en',
     active: true,
-    createdAt: new Date(Date.now() - 10 * 86400000).toISOString(),
+    createdAt: INSTALLED_AT,
   },
   {
     id: 'tmpl_birthday',
@@ -85,7 +96,7 @@ const SEED_TEMPLATES: SmsTemplate[] = [
     body: 'Happy Birthday {customer_name}! Thank you for being our valued customer. Enjoy a special discount on your next visit. — {shop_name}',
     language: 'en',
     active: true,
-    createdAt: new Date(Date.now() - 5 * 86400000).toISOString(),
+    createdAt: INSTALLED_AT,
   },
 ];
 
@@ -99,27 +110,33 @@ export interface SmsGroup {
   createdAt: string;
 }
 
+/**
+ * Starter segments. These are CONFIGURATION (empty named buckets the shop fills
+ * from its own customer list), not sample data — the member lists start empty.
+ * The previous defaults claimed fixed members ('cu1','cu2','cu4', …) and a
+ * two-month-old creation date, which is invented membership on a new install.
+ */
 const SEED_GROUPS: SmsGroup[] = [
   {
     id: 'g_all_retail',
     name: 'All Retail Customers',
     description: 'Auto-built from customer group = Retail',
-    memberIds: ['cu1', 'cu2', 'cu3'],
-    createdAt: new Date(Date.now() - 60 * 86400000).toISOString(),
+    memberIds: [],
+    createdAt: INSTALLED_AT,
   },
   {
     id: 'g_contractors',
     name: 'Contractors',
     description: 'Builders + tradesmen segment',
-    memberIds: ['cu4', 'cu5'],
-    createdAt: new Date(Date.now() - 60 * 86400000).toISOString(),
+    memberIds: [],
+    createdAt: INSTALLED_AT,
   },
   {
     id: 'g_due',
     name: 'Customers with Due',
     description: 'Auto-built from customer.due > 0',
-    memberIds: ['cu2', 'cu4'],
-    createdAt: new Date(Date.now() - 14 * 86400000).toISOString(),
+    memberIds: [],
+    createdAt: INSTALLED_AT,
   },
 ];
 
@@ -141,86 +158,12 @@ export interface SmsLogEntry {
   errorReason?: string;
 }
 
-const now = Date.now();
-const SEED_HISTORY: SmsLogEntry[] = [
-  {
-    id: 'sms1',
-    toName: 'Walk-in Customer',
-    toPhone: '01711-100001',
-    body: 'Dear customer, thank you for shopping at Hardware POS. Invoice INV-2026-0451 for ৳4,520. Visit again!',
-    templateId: 'tmpl_thanks',
-    status: 'delivered',
-    cost: 0.4,
-    parts: 1,
-    sentAt: new Date(now - 5 * 60000).toISOString(),
-    by: 'Seam',
-  },
-  {
-    id: 'sms2',
-    toName: 'Rahim Construction',
-    toPhone: '01711-200002',
-    body: 'Reminder: ৳12,400 is outstanding on your account at Hardware POS. Please clear at your earliest convenience.',
-    templateId: 'tmpl_due',
-    status: 'delivered',
-    cost: 0.4,
-    parts: 1,
-    sentAt: new Date(now - 30 * 60000).toISOString(),
-    by: 'Faruq',
-  },
-  {
-    id: 'sms3',
-    toName: 'New Era Builders',
-    toPhone: '01711-300003',
-    body: 'Payment of ৳50,000 received for INV-2026-0445. Outstanding due: ৳33,000. — Hardware POS',
-    templateId: 'tmpl_payment',
-    status: 'sent',
-    cost: 0.4,
-    parts: 1,
-    sentAt: new Date(now - 90 * 60000).toISOString(),
-    by: 'Seam',
-  },
-  {
-    id: 'sms4',
-    toName: 'Karim Mia',
-    toPhone: '01711-400004',
-    body: 'Eid Special! 10% off all hardware items at Hardware POS. Valid till 30 Jun. Visit our shop today!',
-    templateId: 'tmpl_promo',
-    groupId: 'g_all_retail',
-    status: 'failed',
-    cost: 0,
-    parts: 1,
-    sentAt: new Date(now - 4 * 3600000).toISOString(),
-    by: 'Seam',
-    errorReason: 'Invalid number format',
-  },
-  {
-    id: 'sms5',
-    toName: 'Hassan Ahmed',
-    toPhone: '01711-500005',
-    body: 'Happy Birthday Hassan! Thank you for being our valued customer. Enjoy a special discount on your next visit. — Hardware POS',
-    templateId: 'tmpl_birthday',
-    status: 'delivered',
-    cost: 0.4,
-    parts: 1,
-    sentAt: new Date(now - 24 * 3600000).toISOString(),
-    by: 'Seam',
-  },
-  // Group blast — multiple entries
-  ...Array.from({ length: 5 }).map((_, i) => ({
-    id: `sms_blast_${i}`,
-    toName: `Customer ${i + 1}`,
-    toPhone: `01711-90000${i + 1}`,
-    body: 'Eid Special! 10% off all hardware items at Hardware POS. Valid till 30 Jun.',
-    templateId: 'tmpl_promo',
-    groupId: 'g_all_retail',
-    status: (i === 2 ? 'failed' : 'delivered') as SmsStatus,
-    cost: i === 2 ? 0 : 0.4,
-    parts: 1,
-    sentAt: new Date(now - 2 * 86400000 + i * 1000).toISOString(),
-    by: 'Seam',
-    errorReason: i === 2 ? 'Number unreachable' : undefined,
-  })),
-];
+/**
+ * Message history starts EMPTY. It previously shipped five invented "sent"
+ * messages (fake customer names, invoice numbers and a fake delivery failure),
+ * which read as real send history on a brand-new install.
+ */
+const SEED_HISTORY: SmsLogEntry[] = [];
 
 // ---------- Gateway ----------
 export type GatewayProvider =
@@ -308,11 +251,14 @@ export const useSms = create<State>()(
       groups: [...SEED_GROUPS],
       history: SEED_HISTORY,
       gateway: { ...DEFAULT_GATEWAY },
+      // No credit until the shop actually buys some. The old defaults claimed a
+      // ৳250 balance from ৳500 purchased — invented money on a fresh install.
+      // `smsRate` stays as a configuration default (typical BD per-SMS price).
       credit: {
-        balance: 250.0,
+        balance: 0,
         smsRate: 0.4,
-        totalPurchased: 500.0,
-        totalSpent: 250.0,
+        totalPurchased: 0,
+        totalSpent: 0,
       },
 
       addTemplate: (data) => {
@@ -400,7 +346,9 @@ export const useSms = create<State>()(
         })),
       setCredit: (patch) => set((s) => ({ credit: { ...s.credit, ...patch } })),
     }),
-    { name: 'pos-sms' },
+    // v2: drops the cached fake send history and the invented ৳250 credit
+    // balance that shipped before the mock removal.
+    { name: 'pos-sms', version: 2 },
   ),
 );
 

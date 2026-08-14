@@ -8,7 +8,7 @@ import {
 } from '@/components/reports/ReportToolbar';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
-import { useStock, type AdjustmentType } from '@/stores/stock';
+import { type AdjustmentType } from '@/stores/stock';
 import { useReport, useBranchId } from '@/hooks/useReport';
 import { hasBackend } from '@/lib/api';
 import { formatBDT, formatNumber } from '@/lib/utils';
@@ -50,46 +50,36 @@ interface BackendAdjustment {
 }
 
 export default function StockAdjustmentReportPage() {
-  const adjustments = useStock((s) => s.adjustments);
   const [range, setRange] = useState<DateRange>(DEFAULT_RANGE);
   const [branch, setBranch] = useState('');
   const [type, setType] = useState<AdjustmentType | ''>('');
 
   // Backend wiring: `adjustments.list {}` returns all rows; the type + date-range
-  // (isInRange) + branch filters stay client-side, matching the mock path.
+  // (isInRange) + branch filters stay client-side because the channel takes no
+  // filter payload.
+  // BACKEND WORK NEEDED: range/branch/type filter args on `adjustments.list` so
+  // the whole table does not have to be fetched and filtered in the renderer.
   const branchId = useBranchId(branch);
-  const { data: beAdjustments, loading, backend, error } = useReport<BackendAdjustment[]>(
+  const { data: beAdjustments, loading, error } = useReport<BackendAdjustment[]>(
     'adjustments.list',
     hasBackend() ? {} : null,
     [],
   );
 
-  // Normalize the source (backend rows mapped to the page shape, else the store)
-  // BEFORE applying the shared client-side filters below.
+  // Backend rows mapped to the page shape (empty until they arrive — no store
+  // fallback) BEFORE applying the shared client-side filters below.
   const source: AdjRow[] = useMemo(() => {
-    // On a real backend error, do NOT fall back to the mock store — show empty.
-    if (backend && error) return [];
-    if (backend && beAdjustments) {
-      return beAdjustments.map((a) => ({
-        id: a.id,
-        refNo: a.ref_no,
-        date: a.date,
-        branch: a.branch_id,
-        type: normalizeType(a.type),
-        createdBy: a.created_by ?? '',
-        lines: a.lines.map((l) => ({ qty: l.qty, unitCost: l.unit_cost })),
-      }));
-    }
-    return adjustments.map((a) => ({
+    if (!beAdjustments) return [];
+    return beAdjustments.map((a) => ({
       id: a.id,
-      refNo: a.refNo,
+      refNo: a.ref_no,
       date: a.date,
-      branch: a.branch,
-      type: a.type,
-      createdBy: a.createdBy,
-      lines: a.lines.map((l) => ({ qty: l.qty, unitCost: l.unitCost })),
+      branch: a.branch_id,
+      type: normalizeType(a.type),
+      createdBy: a.created_by ?? '',
+      lines: a.lines.map((l) => ({ qty: l.qty, unitCost: l.unit_cost })),
     }));
-  }, [backend, beAdjustments, adjustments, error]);
+  }, [beAdjustments]);
 
   const filtered = useMemo(() => {
     return source
@@ -208,7 +198,11 @@ export default function StockAdjustmentReportPage() {
           {filtered.length === 0 && (
             <div className="px-4 py-12 text-center text-sm text-muted-foreground">
               <Sliders className="size-6 mx-auto mb-2 opacity-50" />
-              {backend && loading ? 'Loading…' : backend && error ? 'Couldn’t load — backend error. Check connection and retry.' : 'No adjustments in this range.'}
+              {loading
+                ? 'Loading…'
+                : error
+                  ? 'Couldn’t load — backend error. Check connection and retry.'
+                  : 'No adjustments in this range.'}
             </div>
           )}
           {filtered.map((adj) => {
@@ -247,7 +241,8 @@ export default function StockAdjustmentReportPage() {
                 >
                   {formatBDT(netValue)}
                 </div>
-                <div className="text-muted-foreground truncate">{adj.createdBy}</div>
+                {/* `created_by` is nullable in activity/adjustment rows — show a dash, never a guess. */}
+                <div className="text-muted-foreground truncate">{adj.createdBy || '—'}</div>
               </div>
             );
           })}

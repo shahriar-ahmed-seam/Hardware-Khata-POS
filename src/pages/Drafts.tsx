@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Plus, Search, Trash2, ArrowRightCircle, Eye } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { Pagination } from '@/components/ui/Pagination';
 import { useSales } from '@/stores/sales';
+import { confirm } from '@/stores/confirm';
 import { formatBDT } from '@/lib/utils';
 import { hasBackend } from '@/lib/api';
 import { SkeletonTable } from '@/components/ui/Skeleton';
@@ -16,29 +18,52 @@ export default function Drafts() {
   const sales = useSales((s) => s.sales);
   const deleteSale = useSales((s) => s.deleteSale);
   const loading = useSales((s) => s.loading);
-  const hydrate = useSales((s) => s.hydrate);
+  const total = useSales((s) => s.total);
+  const query = useSales((s) => s.query);
+  const loadPage = useSales((s) => s.loadPage);
   const [q, setQ] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
   const backend = hasBackend();
 
-  // Hydrate from the backend on mount so the store is populated when this page
-  // is the entry point (mirrors Purchases.tsx). No-op outside Electron.
+  // This page owns its query: only drafts, one page at a time. The server does
+  // the status filtering, so there is no client-side `status === 'draft'` pass.
+  // The other sales screens share this store, so their filters are cleared here.
   useEffect(() => {
-    void hydrate();
-  }, [hydrate]);
+    void loadPage({
+      statuses: ['draft'],
+      page: 1,
+      q: undefined,
+      customerId: undefined,
+      userId: undefined,
+      method: undefined,
+      from: undefined,
+      to: undefined,
+    });
+  }, [loadPage]);
 
-  const list = useMemo(() => {
-    const drafts = sales.filter((s) => s.status === 'draft');
-    if (!q) return drafts;
-    const t = q.toLowerCase();
-    return drafts.filter((s) => `${s.invoiceNo} ${s.customerName}`.toLowerCase().includes(t));
-  }, [sales, q]);
+  // Search hits the database (reference + customer name) — debounced ~300ms so
+  // typing doesn't fire a query per keystroke. First run skipped: the mount
+  // effect already loaded page 1.
+  const searchMounted = useRef(false);
+  useEffect(() => {
+    if (!searchMounted.current) {
+      searchMounted.current = true;
+      return;
+    }
+    const handle = setTimeout(() => {
+      void loadPage({ q: q.trim() || undefined });
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [q, loadPage]);
+
+  // Rows come from the server already filtered; `total` is the full match count.
+  const list = sales;
 
   return (
     <div>
       <PageHeader
         title="Drafts"
-        subtitle={`${list.length} drafts saved`}
+        subtitle={`${total} drafts saved`}
         actions={
           <Link to="/sales/new?status=draft">
             <Button>
@@ -109,8 +134,14 @@ export default function Drafts() {
                         <ArrowRightCircle className="size-3.5 text-primary" />
                       </button>
                       <button
-                        onClick={() => {
-                          if (confirm(`Delete draft ${d.invoiceNo}?`)) deleteSale(d.id);
+                        onClick={async () => {
+                          if (
+                            await confirm({
+                              title: `Delete draft ${d.invoiceNo}?`,
+                              variant: 'destructive',
+                            })
+                          )
+                            deleteSale(d.id);
                         }}
                         className="size-7 grid place-items-center rounded hover:bg-destructive/10 hover:text-destructive"
                         title="Delete"
@@ -131,6 +162,15 @@ export default function Drafts() {
             </tbody>
           </table>
           )}
+          <Pagination
+            page={query.page}
+            pageSize={query.pageSize}
+            total={total}
+            onPageChange={(page) => void loadPage({ page })}
+            onPageSizeChange={(pageSize) => void loadPage({ pageSize })}
+            label="drafts"
+            busy={loading}
+          />
         </Card>
       </div>
 

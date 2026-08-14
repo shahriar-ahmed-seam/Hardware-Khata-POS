@@ -6,8 +6,8 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
+import { Pagination } from '@/components/ui/Pagination';
 import { useStock, type AdjustmentType } from '@/stores/stock';
-import { hasBackend } from '@/lib/api';
 import { SkeletonTable } from '@/components/ui/Skeleton';
 import { formatBDT, cn } from '@/lib/utils';
 
@@ -26,10 +26,14 @@ export default function StockAdjustments() {
   const hydrate = useStock((s) => s.hydrate);
   const [q, setQ] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | AdjustmentType>('all');
-  const backend = hasBackend();
+
+  // Client-side paging: `adjustments.list` is header-only and this list grows
+  // slowly, so every row is already in memory — we slice the filtered set.
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
 
   // Mirror Purchases.tsx: hydrate from the backend on mount so the store is
-  // populated when this page is the entry point. No-op without backend.
+  // populated when this page is the entry point.
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
@@ -48,6 +52,22 @@ export default function StockAdjustments() {
     return arr.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [adjustments, q, typeFilter]);
 
+  // Any filter change resets to page 1 — staying on page 5 of a narrower result
+  // set would show an empty table.
+  useEffect(() => {
+    setPage(1);
+  }, [q, typeFilter, pageSize]);
+
+  // Clamp so a shrinking list can never leave the user past the last page.
+  const pageCount = Math.max(1, Math.ceil(list.length / pageSize));
+  const current = Math.min(page, pageCount);
+  const pageRows = useMemo(
+    () => list.slice((current - 1) * pageSize, current * pageSize),
+    [list, current, pageSize],
+  );
+
+  // Summed over the FULL filtered set, not just this page — all rows are in
+  // memory, so there is no reason to scope these to the visible slice.
   const totals = {
     count: list.length,
     impact: list.reduce(
@@ -98,11 +118,12 @@ export default function StockAdjustments() {
         </Card>
 
         <Card className="overflow-hidden">
-          {backend && loading && adjustments.length === 0 ? (
+          {loading && adjustments.length === 0 ? (
             <div className="p-4">
               <SkeletonTable count={6} />
             </div>
           ) : (
+          <>
           <table className="w-full text-sm">
             <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50">
               <tr>
@@ -119,7 +140,7 @@ export default function StockAdjustments() {
               </tr>
             </thead>
             <tbody>
-              {list.map((a) => {
+              {pageRows.map((a) => {
                 const netQty = a.lines.reduce((s, l) => s + l.qty, 0);
                 const netValue = a.lines.reduce((s, l) => s + l.qty * l.unitCost, 0);
                 return (
@@ -175,6 +196,15 @@ export default function StockAdjustments() {
               )}
             </tbody>
           </table>
+          <Pagination
+            page={current}
+            pageSize={pageSize}
+            total={list.length}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+            label="adjustments"
+          />
+          </>
           )}
         </Card>
       </div>

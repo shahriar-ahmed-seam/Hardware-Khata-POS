@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { api, hasBackend } from '@/lib/api';
+import { api } from '@/lib/api';
 import { toast } from '@/stores/toast';
 import {
   resolveBranchId,
@@ -149,102 +149,49 @@ interface State {
 const CURRENT_USER = 'u_admin';
 const DEFAULT_BRANCH = 'br_mp';
 
-let shiftCounter = 1234; // mock starting
+/**
+ * How many recent shifts to hydrate with their derived totals. Each one costs a
+ * `cash.shiftTotals` call, so this caps the work regardless of how much history
+ * the shop has accumulated. Full history lives in the Register Report.
+ */
+const SHIFT_HISTORY_LIMIT = 30;
 
 function seedNow() {
   return new Date().toISOString();
 }
 
-const SEED_SHIFT: Shift = {
-  id: 'sh_seed1',
-  shiftNo: 1234,
-  branch: 'Mirpur Branch',
-  status: 'open',
-  openedBy: 'Seam',
-  openedAt: '2026-05-26T09:00:00',
-  openingCash: 5000,
-  openingNote: 'Regular Tuesday float',
-};
-
-const SEED_MOVEMENTS: CashMovement[] = [
-  { id: 'mv1', shiftId: 'sh_seed1', type: 'sale_cash', amount: 685, reference: 'INV-2026-0448', cashier: 'Seam', at: '2026-05-26T10:31:00' },
-  { id: 'mv2', shiftId: 'sh_seed1', type: 'manual_out', amount: 200, reason: 'Other', note: 'Tea expense', cashier: 'Seam', at: '2026-05-26T10:50:00' },
-  { id: 'mv3', shiftId: 'sh_seed1', type: 'expense', amount: 3200, reference: 'EXP-0024', note: 'Petty cash · transport', cashier: 'Seam', at: '2026-05-26T10:54:00' },
-  { id: 'mv4', shiftId: 'sh_seed1', type: 'sale_cash', amount: 1302, reference: 'INV-2026-0450', cashier: 'Seam', at: '2026-05-26T11:18:00' },
-  { id: 'mv5', shiftId: 'sh_seed1', type: 'payment_received', amount: 10000, reference: 'INV-2026-0451 · Rahim', cashier: 'Seam', at: '2026-05-26T11:42:00' },
-  // some closed shift history
-];
-
-// A handful of past closed shifts for the Register Report demo
-const HISTORY: Shift[] = [
-  {
-    id: 'sh_h1',
-    shiftNo: 1233,
-    branch: 'Mirpur Branch',
-    status: 'closed',
-    openedBy: 'Seam',
-    openedAt: '2026-05-25T09:05:00',
-    openingCash: 5000,
-    closedBy: 'Seam',
-    closedAt: '2026-05-25T21:14:00',
-    countedTotal: 88200,
-    variance: -50,
-    carriedFloat: 5000,
-    totals: {
-      cashIn: 96400,
-      cashOut: 13200,
-      expected: 88250,
-      salesCount: 52,
-      salesTotal: 142800,
-      byMethod: { Cash: 96400, bKash: 22000, Nagad: 8400, Card: 16000 },
-    },
-  },
-  {
-    id: 'sh_h2',
-    shiftNo: 1232,
-    branch: 'Mirpur Branch',
-    status: 'closed',
-    openedBy: 'Faruq',
-    openedAt: '2026-05-24T09:00:00',
-    openingCash: 5000,
-    closedBy: 'Seam',
-    closedAt: '2026-05-24T21:30:00',
-    countedTotal: 76300,
-    variance: 0,
-    carriedFloat: 5000,
-    totals: {
-      cashIn: 82400,
-      cashOut: 11100,
-      expected: 76300,
-      salesCount: 41,
-      salesTotal: 121600,
-      byMethod: { Cash: 82400, bKash: 18000, Nagad: 5200, Card: 11000, Bank: 5000 },
-    },
-  },
-];
-
 export const useCashRegister = create<State>()(
   persist(
     (set, get) => ({
-      // When the backend is present we start empty and let hydrate() replace the
-      // arrays from the DB (so stale persisted data is reconciled). Without a
-      // backend we keep the mock seed data.
-      shifts: hasBackend() ? [] : [SEED_SHIFT, ...HISTORY],
-      movements: hasBackend() ? [] : SEED_MOVEMENTS,
+      // We start empty and let hydrate() replace the arrays from the DB (so any
+      // stale persisted data is reconciled).
+      shifts: [],
+      movements: [],
       loading: false,
       varianceWarnThreshold: 100,
       varianceBlockThreshold: 1000,
 
       /**
        * Load shifts + the open shift's movements from the backend. REPLACES the
-       * arrays so any stale persisted data is reconciled. No-op without backend.
+       * arrays so any stale persisted data is reconciled.
        */
       hydrate: async () => {
-        if (!hasBackend()) return;
         set({ loading: true });
         try {
-          const rows = await api<BackendShift[]>('shifts.list', {});
-          // Pull derived totals per shift (expected drawer cash is never stored).
+          const allRows = await api<BackendShift[]>('shifts.list', {});
+          // PERFORMANCE: expected drawer cash is DERIVED, so it needs one
+          // `cash.shiftTotals` call per shift. A shop accumulates ~2 shifts a
+          // day, so after a year that loop alone is ~700 synchronous IPC calls
+          // and it blocks the app on every hydrate.
+          //
+          // The screen only ever shows the open shift plus recent history, so we
+          // bound it: keep the open shift (wherever it sits) plus the newest
+          // SHIFT_HISTORY_LIMIT rows. Older shifts stay reachable through the
+          // Register Report, which queries the backend directly.
+          const openRow = allRows.find((r) => r.status === 'open');
+          const recent = allRows.slice(0, SHIFT_HISTORY_LIMIT);
+          const rows =
+            openRow && !recent.some((r) => r.id === openRow.id) ? [openRow, ...recent] : recent;
           const shifts = await Promise.all(
             rows.map(async (row) => {
               const totals = await api<BackendShiftTotals>('cash.shiftTotals', {
@@ -255,7 +202,6 @@ export const useCashRegister = create<State>()(
           );
           // Movements list only needs the OPEN shift up front; closed shifts are
           // fetched on demand via ensureShiftMovements (X/Z reports, close modal).
-          const openRow = rows.find((r) => r.status === 'open');
           let movements: CashMovement[] = [];
           if (openRow) {
             const mvRows = await api<BackendMovement[]>('shifts.movements', {
@@ -274,11 +220,10 @@ export const useCashRegister = create<State>()(
 
       /**
        * Fetch a specific shift's movements on demand (used to view a closed /
-       * historical shift). Merges into the store (dedup by id). No-op without
-       * backend or if we already have movements for that shift.
+       * historical shift). Merges into the store (dedup by id). No-op if we
+       * already have movements for that shift.
        */
       ensureShiftMovements: async (shiftId) => {
-        if (!hasBackend()) return;
         if (get().movements.some((m) => m.shiftId === shiftId)) return;
         try {
           const mvRows = await api<BackendMovement[]>('shifts.movements', { shiftId });
@@ -294,36 +239,22 @@ export const useCashRegister = create<State>()(
       },
 
       openShift: ({ openingCash, note, cashier, branch }) => {
-        if (hasBackend()) {
-          // Fire the write, then hydrate to pull the real shift. A "shift already
-          // open" rejection is swallowed after a hydrate so the UI just shows the
-          // existing open shift. The modal ignores the returned (optimistic) shift
-          // and the brief gap is covered by `loading`.
-          void api('cash.openShift', {
-            branchId: resolveBranchId(branch),
-            userId: CURRENT_USER,
-            openingCash,
-            note,
-          })
-            .then(() => get().hydrate())
-            .catch(() => get().hydrate());
-          // Optimistic shape only — NOT pushed to state under backend.
-          return {
-            id: 'sh_pending',
-            shiftNo: 0,
-            branch,
-            status: 'open',
-            openedBy: cashier,
-            openedAt: seedNow(),
-            openingCash,
-            openingNote: note,
-          };
-        }
-        shiftCounter += 1;
-        const id = 'sh_' + Date.now();
-        const shift: Shift = {
-          id,
-          shiftNo: shiftCounter,
+        // Fire the write, then hydrate to pull the real shift. A "shift already
+        // open" rejection is swallowed after a hydrate so the UI just shows the
+        // existing open shift. The modal ignores the returned (optimistic) shift
+        // and the brief gap is covered by `loading`.
+        void api('cash.openShift', {
+          branchId: resolveBranchId(branch),
+          userId: CURRENT_USER,
+          openingCash,
+          note,
+        })
+          .then(() => get().hydrate())
+          .catch(() => get().hydrate());
+        // Optimistic shape only — NOT pushed to state; the row arrives via hydrate().
+        return {
+          id: 'sh_pending',
+          shiftNo: 0,
           branch,
           status: 'open',
           openedBy: cashier,
@@ -331,53 +262,34 @@ export const useCashRegister = create<State>()(
           openingCash,
           openingNote: note,
         };
-        set((s) => ({ shifts: [shift, ...s.shifts] }));
-        return shift;
       },
 
       recordMovement: ({ shiftId, type, amount, reference, note, reason, cashier }) => {
         if (amount <= 0) return null;
-        if (hasBackend()) {
-          if (!shiftId) return null;
-          const direction = MOVEMENT_DIRECTION[type];
-          // Manual movements carry their own reason; everything else auto-posts
-          // from its own slice, so under the backend `type` doubles as the reason.
-          const backendReason =
-            type === 'manual_in' ? 'manual_in' : type === 'manual_out' ? 'manual_out' : type;
-          void api('cash.move', {
-            shiftId,
-            branchId: DEFAULT_BRANCH,
-            direction,
-            reason: backendReason,
-            amount,
-            note,
-            userId: CURRENT_USER,
-          })
-            .then(() => get().hydrate())
-            .catch((e: unknown) => {
-              toast.error(e instanceof Error ? e.message : 'Failed to record cash movement');
-              void get().hydrate();
-            });
-          // Optimistic shape only — NOT pushed to state under backend.
-          return {
-            id: 'mv_pending',
-            shiftId,
-            type,
-            amount,
-            reference,
-            note,
-            reason,
-            cashier,
-            at: seedNow(),
-          };
-        }
-        const branch = get().shifts.find((s) => s.id === shiftId)?.branch ?? 'Mirpur Branch';
-        const sid =
-          shiftId ?? get().shifts.find((s) => s.status === 'open' && s.branch === branch)?.id;
-        if (!sid) return null;
-        const m: CashMovement = {
-          id: 'mv_' + Date.now(),
-          shiftId: sid,
+        if (!shiftId) return null;
+        const direction = MOVEMENT_DIRECTION[type];
+        // Manual movements carry their own reason; everything else auto-posts
+        // from its own slice, so `type` doubles as the backend reason.
+        const backendReason =
+          type === 'manual_in' ? 'manual_in' : type === 'manual_out' ? 'manual_out' : type;
+        void api('cash.move', {
+          shiftId,
+          branchId: DEFAULT_BRANCH,
+          direction,
+          reason: backendReason,
+          amount,
+          note,
+          userId: CURRENT_USER,
+        })
+          .then(() => get().hydrate())
+          .catch((e: unknown) => {
+            toast.error(e instanceof Error ? e.message : 'Failed to record cash movement');
+            void get().hydrate();
+          });
+        // Optimistic shape only — NOT pushed to state; the row arrives via hydrate().
+        return {
+          id: 'mv_pending',
+          shiftId,
           type,
           amount,
           reference,
@@ -386,79 +298,36 @@ export const useCashRegister = create<State>()(
           cashier,
           at: seedNow(),
         };
-        set((s) => ({ movements: [m, ...s.movements] }));
-        return m;
       },
 
-      closeShift: (shiftId, { countedDenominations, carriedFloat, note, closedBy }) => {
-        if (hasBackend()) {
-          // DEFERRED (denominations not persisted): the backend stores only the
-          // counted_cash TOTAL — the per-note DenominationCount is frontend-only
-          // and is lost on reload (toShift leaves countedDenominations undefined).
-          const countedCash = denominationsTotal(countedDenominations);
-          void api('cash.closeShift', {
-            shiftId,
-            countedCash,
-            carriedFloat,
-            note,
-          })
-            .then(() => get().hydrate())
-            .catch((e: unknown) => {
-              toast.error(e instanceof Error ? e.message : 'Failed to close shift');
-              void get().hydrate();
-            });
-          // The closed shift comes back via hydrate; nothing to return optimistically.
-          return null;
-        }
-        const state = get();
-        const shift = state.shifts.find((s) => s.id === shiftId);
-        if (!shift || shift.status !== 'open') return null;
-
-        const movements = state.movements.filter((m) => m.shiftId === shiftId);
-        const cashIn = movements
-          .filter((m) => MOVEMENT_DIRECTION[m.type] === 'in')
-          .reduce((s, m) => s + m.amount, 0);
-        const cashOut = movements
-          .filter((m) => MOVEMENT_DIRECTION[m.type] === 'out')
-          .reduce((s, m) => s + m.amount, 0);
-        const expected = shift.openingCash + cashIn - cashOut;
-        const counted = denominationsTotal(countedDenominations);
-        const variance = counted - expected;
-
-        const updated: Shift = {
-          ...shift,
-          status: 'closed',
-          closedAt: seedNow(),
-          closedBy,
-          countedDenominations,
-          countedTotal: counted,
-          variance,
+      closeShift: (shiftId, { countedDenominations, carriedFloat, note }) => {
+        // DEFERRED (denominations not persisted): the backend stores only the
+        // counted_cash TOTAL — the per-note DenominationCount is frontend-only
+        // and is lost on reload (toShift leaves countedDenominations undefined).
+        const countedCash = denominationsTotal(countedDenominations);
+        void api('cash.closeShift', {
+          shiftId,
+          countedCash,
           carriedFloat,
-          closingNote: note,
-          totals: {
-            cashIn,
-            cashOut,
-            expected,
-            salesCount: movements.filter((m) => m.type === 'sale_cash').length,
-            salesTotal: movements
-              .filter((m) => m.type === 'sale_cash')
-              .reduce((s, m) => s + m.amount, 0),
-            byMethod: { Cash: cashIn },
-          },
-        };
-
-        set((s) => ({ shifts: s.shifts.map((x) => (x.id === shiftId ? updated : x)) }));
-        return updated;
+          note,
+        })
+          .then(() => get().hydrate())
+          .catch((e: unknown) => {
+            toast.error(e instanceof Error ? e.message : 'Failed to close shift');
+            void get().hydrate();
+          });
+        // The closed shift comes back via hydrate; nothing to return optimistically.
+        return null;
       },
 
-      getCurrentShift: (branch) => {
-        // Under the backend, single-branch assumption: ignore the branch string
-        // and return the one open shift.
-        if (hasBackend()) return get().shifts.find((s) => s.status === 'open');
-        return get().shifts.find((s) => s.status === 'open' && s.branch === branch);
+      getCurrentShift: () => {
+        // Single-branch assumption: ignore the branch string and return the one
+        // open shift the backend reports.
+        return get().shifts.find((s) => s.status === 'open');
       },
     }),
-    { name: 'pos-cash-register' },
+    // v2: drops cached demo shifts/movements. `hydrate()` refills from the DB.
+    { name: 'pos-cash-register', version: 2 },
   ),
 );
 

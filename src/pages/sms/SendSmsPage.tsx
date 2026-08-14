@@ -23,7 +23,7 @@ import {
   renderTemplate,
   TEMPLATE_VARIABLES,
 } from '@/stores/sms';
-import { useCustomers } from '@/stores/contacts';
+import { useCustomersQuery } from '@/hooks/useCustomers';
 import { useSettings } from '@/stores/settings';
 import { confirm } from '@/stores/confirm';
 import { toast } from '@/stores/toast';
@@ -40,7 +40,16 @@ interface Recipient {
 
 export default function SendSmsPage() {
   const navigate = useNavigate();
-  const customers = useCustomers((s) => s.items);
+  /**
+   * RECIPIENTS — read from the UNPAGED `customers.list` (via useCustomersQuery),
+   * NOT `useCustomers().items`, which is one page of 50: a recipient picker that
+   * silently omits most of the customer book is worse than a slow one, and group
+   * sends resolve `memberIds` against this list, so a truncated list would drop
+   * real members from a blast. The store's `options` is not usable here — it is
+   * id+name only, and both the picker and the send itself need `phone`.
+   */
+  const customersQuery = useCustomersQuery();
+  const customers = customersQuery.data ?? [];
   const groups = useSms((s) => s.groups);
   const templates = useSms((s) => s.templates);
   const credit = useSms((s) => s.credit);

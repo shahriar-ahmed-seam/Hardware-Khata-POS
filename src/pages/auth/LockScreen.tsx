@@ -27,6 +27,7 @@ export default function LockScreen() {
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [shake, setShake] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(new Date());
 
   useEffect(() => {
@@ -34,27 +35,41 @@ export default function LockScreen() {
     return () => clearInterval(t);
   }, []);
 
-  const pinLength = user?.pin?.length ?? 4;
+  /**
+   * PIN bounds, NOT the stored PIN's length.
+   *
+   * This used to be `user?.pin?.length ?? 4` and auto-unlock when the typed
+   * length matched. But the PIN is bcrypt-hashed in the database and is never
+   * sent to the renderer, so that value was always 4: a 5- or 6-digit PIN fired
+   * a failed unlock on the 4th digit, which also cleared the field, and the user
+   * could never get in. Unlocking is explicit now.
+   */
+  const MIN_PIN = 4;
+  const MAX_PIN = 6;
+  const dots = Math.max(MIN_PIN, pin.length);
+  const canSubmit = pin.length >= MIN_PIN && !busy;
 
-  const tryUnlock = (value: string) => {
-    void unlock(value).then((r) => {
-      if (!r.ok) {
-        setError(r.error ?? 'Incorrect PIN');
-        setShake(true);
-        setTimeout(() => setShake(false), 400);
-        setPin('');
-      } else {
-        toast.success('Unlocked');
-      }
-    });
+  const tryUnlock = () => {
+    if (!canSubmit) return;
+    setBusy(true);
+    void unlock(pin)
+      .then((r) => {
+        if (!r.ok) {
+          setError(r.error ?? 'Incorrect PIN');
+          setShake(true);
+          setTimeout(() => setShake(false), 400);
+          setPin('');
+        } else {
+          toast.success('Unlocked');
+        }
+      })
+      .finally(() => setBusy(false));
   };
 
   const press = (d: string) => {
-    if (pin.length >= 6) return;
-    const next = pin + d;
-    setPin(next);
+    if (pin.length >= MAX_PIN) return;
+    setPin((p) => p + d);
     setError('');
-    if (next.length === pinLength) setTimeout(() => tryUnlock(next), 120);
   };
 
   // Allow physical keyboard entry
@@ -62,11 +77,13 @@ export default function LockScreen() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key >= '0' && e.key <= '9') press(e.key);
       else if (e.key === 'Backspace') setPin((p) => p.slice(0, -1));
+      else if (e.key === 'Enter') tryUnlock();
+      else if (e.key === 'Escape') setPin('');
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pin]);
+  }, [pin, canSubmit]);
 
   return (
     <div className="h-screen w-screen flex flex-col items-center justify-center bg-gradient-to-br from-background via-background to-secondary/40 relative">
@@ -96,7 +113,7 @@ export default function LockScreen() {
         </div>
 
         <div className={cn('flex items-center justify-center gap-3 mb-5', shake && 'animate-[wiggle_0.4s]')}>
-          {Array.from({ length: pinLength }).map((_, i) => (
+          {Array.from({ length: dots }).map((_, i) => (
             <span
               key={i}
               className={cn(
@@ -143,8 +160,17 @@ export default function LockScreen() {
           </button>
         </div>
 
-        <div className="mt-5 text-[11px] text-muted-foreground">
-          Enter your PIN to unlock · or sign out to switch user
+        {/* Explicit unlock — see the note on MIN_PIN above. */}
+        <button
+          onClick={tryUnlock}
+          disabled={!canSubmit}
+          className="mt-4 h-12 w-[260px] rounded-lg bg-primary text-primary-foreground text-base font-semibold transition hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none"
+        >
+          {busy ? 'Unlocking…' : 'Unlock'}
+        </button>
+
+        <div className="mt-4 text-xs text-muted-foreground">
+          Enter your 4 to 6 digit PIN · or sign out to switch user
         </div>
       </div>
     </div>

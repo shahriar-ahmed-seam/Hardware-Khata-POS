@@ -7,10 +7,8 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { NumberField } from '@/components/ui/NumberField';
 import { ProductImage } from '@/components/products/ProductImage';
-import { products as MOCK_PRODUCTS } from '@/mocks/data';
 import { useProducts } from '@/hooks/useProducts';
 import { useBranches } from '@/stores/branches';
-import { hasBackend } from '@/lib/api';
 import {
   nextTransferRef,
   useStock,
@@ -25,12 +23,12 @@ export default function AddStockTransfer() {
   const addTransfer = useStock((s) => s.addTransfer);
 
   // Branch dropdown sources from the branches store so it matches real branches
-  // (and the names resolve back to IDs on save). Product picker uses backend
-  // products when available so the productIds we send are real backend ids.
+  // (and the names resolve back to IDs on save). Product picker uses the real
+  // catalogue so the productIds we send are real backend ids.
   const branches = useBranches((s) => s.items);
   const branchNames = branches.map((b) => b.name);
   const { data: beProducts } = useProducts();
-  const products = hasBackend() && beProducts ? beProducts : MOCK_PRODUCTS;
+  const products = beProducts ?? [];
 
   const [fromBranch, setFromBranch] = useState(branchNames[0] ?? 'Mirpur Branch');
   const [toBranch, setToBranch] = useState(branchNames[1] ?? 'Uttara Branch');

@@ -1,15 +1,14 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { TrendingUp, TrendingDown, Flame, Package } from 'lucide-react';
 import {
   ReportToolbar,
   DEFAULT_RANGE,
-  resolveRange,
   type DateRange,
 } from '@/components/reports/ReportToolbar';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
-import { useSales } from '@/stores/sales';
-import { products as ALL_PRODUCTS, categories as ALL_CATEGORIES } from '@/mocks/data';
+import { useCategories } from '@/hooks/useCatalog';
 import { useReport, useBranchId } from '@/hooks/useReport';
 import { hasBackend } from '@/lib/api';
 import { formatBDT, formatNumber } from '@/lib/utils';
@@ -47,7 +46,7 @@ interface BackendProductRow {
 }
 
 export default function TrendingPage() {
-  const sales = useSales((s) => s.sales);
+  const nav = useNavigate();
   const [range, setRange] = useState<DateRange>(DEFAULT_RANGE);
   const [branch, setBranch] = useState('');
   const [metric, setMetric] = useState<Metric>('qty');
@@ -56,7 +55,7 @@ export default function TrendingPage() {
   // Backend wiring: pass the metric toggle through to the channel; join category
   // names client-side via products.list (fetched once).
   const branchId = useBranchId(branch);
-  const { data: beRows, loading, backend, error } = useReport<BackendTrendRow[]>(
+  const { data: beRows, loading, error } = useReport<BackendTrendRow[]>(
     'reports.trending',
     hasBackend() ? { range, branchId, metric } : null,
     [range, branchId, metric],
@@ -67,75 +66,17 @@ export default function TrendingPage() {
     [],
   );
 
-  const mockRows = useMemo(() => {
-    const { from, to } = resolveRange(range);
-    const periodMs = to.getTime() - from.getTime();
-    const prevFrom = new Date(from.getTime() - periodMs);
-    const prevTo = new Date(from.getTime() - 1);
-
-    const acc = new Map<string, TrendRow>();
-
-    const accumulate = (start: Date, end: Date, target: 'current' | 'previous') => {
-      for (const sale of sales) {
-        if (sale.status !== 'final') continue;
-        if (branch && sale.branch !== branch) continue;
-        const t = new Date(sale.date).getTime();
-        if (t < start.getTime() || t > end.getTime()) continue;
-        for (const line of sale.lines) {
-          const product = ALL_PRODUCTS.find((p) => p.sku === line.sku || p.id === line.productId);
-          const productId = product?.id ?? line.productId;
-          const cat = product
-            ? ALL_CATEGORIES.find((c) => c.id === product.categoryId)
-            : undefined;
-          if (categoryId && cat?.id !== categoryId) continue;
-          const value =
-            metric === 'qty'
-              ? line.qty
-              : line.unitPrice * line.qty * (1 - line.discountPct / 100) - line.discountFlat;
-          let row = acc.get(productId);
-          if (!row) {
-            row = {
-              productId,
-              name: product?.name ?? line.name,
-              sku: line.sku,
-              category: cat?.name ?? '—',
-              current: 0,
-              previous: 0,
-              deltaPct: 0,
-              trend14: new Array(14).fill(0),
-            };
-            acc.set(productId, row);
-          }
-          row[target] += value;
-          // sparkline based on the current period: bucket into 14 even slices
-          if (target === 'current') {
-            const periodTotal = to.getTime() - from.getTime();
-            if (periodTotal > 0) {
-              const idx = Math.min(13, Math.floor(((t - from.getTime()) / periodTotal) * 14));
-              row.trend14[idx] += value;
-            }
-          }
-        }
-      }
-    };
-
-    accumulate(from, to, 'current');
-    accumulate(prevFrom, prevTo, 'previous');
-
-    const list = Array.from(acc.values()).filter((r) => r.current > 0);
-    list.forEach((r) => {
-      r.deltaPct = r.previous > 0 ? ((r.current - r.previous) / r.previous) * 100 : r.current > 0 ? 100 : 0;
-    });
-    list.sort((a, b) => b.current - a.current);
-    return list.slice(0, 50);
-  }, [sales, range, branch, metric, categoryId]);
+  // Real catalog for the category filter dropdown (backend-backed).
+  const categoriesQuery = useCategories();
+  const categories = categoriesQuery.data ?? [];
 
   // Map backend rows; join category client-side and apply the category filter.
-  // The backend doesn't return a per-bucket sparkline, so trend14 stays empty
-  // (the Sparkline renders a flat baseline) when backed — DEFERRED.
+  // The backend doesn't return a per-bucket sparkline, so trend14 stays all
+  // zeros and the Sparkline renders nothing — DEFERRED until the channel emits
+  // buckets. NOTE: no mock/sample fallback — empty backend result = empty page.
   const backendRows: TrendRow[] | null = useMemo(() => {
-    if (!backend || !beRows) return null;
-    const catNameById = new Map(ALL_CATEGORIES.map((c) => [c.id, c.name]));
+    if (!beRows) return null;
+    const catNameById = new Map(categories.map((c) => [c.id, c.name]));
     const prodCat = new Map<string, { id?: string; name: string }>();
     for (const p of beProducts ?? []) {
       prodCat.set(p.sku, {
@@ -159,9 +100,9 @@ export default function TrendingPage() {
     });
     if (categoryId) list = list.filter((r) => r.categoryId === categoryId);
     return list.map(({ categoryId: _omit, ...rest }) => rest);
-  }, [backend, beRows, beProducts, categoryId]);
+  }, [beRows, beProducts, categories, categoryId]);
 
-  const rows: TrendRow[] = backend && error ? [] : (backendRows ?? mockRows);
+  const rows: TrendRow[] = backendRows ?? [];
 
   return (
     <div>
@@ -180,7 +121,7 @@ export default function TrendingPage() {
               className="h-7 rounded-md border border-input bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-ring/50"
             >
               <option value="">All categories</option>
-              {ALL_CATEGORIES.map((c) => (
+              {categories.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.emoji} {c.name}
                 </option>
@@ -210,7 +151,7 @@ export default function TrendingPage() {
         {rows.length === 0 ? (
           <Card className="p-12 text-center text-sm text-muted-foreground">
             <Package className="size-6 mx-auto mb-2 opacity-50" />
-            {backend && loading ? 'Loading…' : backend && error ? 'Couldn’t load — backend error. Check connection and retry.' : 'No sales in this range.'}
+            {loading ? 'Loading…' : error ? 'Couldn’t load — backend error. Check connection and retry.' : 'No data in this range.'}
           </Card>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -218,7 +159,7 @@ export default function TrendingPage() {
               <Card
                 key={r.productId}
                 className="p-4 hover:shadow-md hover:border-primary transition cursor-pointer"
-                onClick={() => alert(`Drill: open ${r.sku}`)}
+                onClick={() => nav(`/products/${r.productId}`)}
               >
                 <div className="flex items-start gap-3">
                   <div className="size-9 rounded-md bg-primary/10 text-primary grid place-items-center text-xs font-bold shrink-0">
@@ -261,6 +202,10 @@ export default function TrendingPage() {
 }
 
 function Sparkline({ values }: { values: number[] }) {
+  // Business rule: never draw a shape that isn't backed by data. The trending
+  // channel doesn't return per-bucket values yet, so an all-zero series renders
+  // nothing instead of a flat baseline that could read as "no movement".
+  if (!values.some((v) => v > 0)) return null;
   const max = Math.max(...values, 1);
   return (
     <div className="flex items-end gap-0.5 h-8">

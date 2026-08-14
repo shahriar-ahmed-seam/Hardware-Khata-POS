@@ -26,7 +26,7 @@ import {
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
-import { useActivity, type ActivityAction, type ActivityEntity } from '@/stores/activity';
+import { type ActivityAction, type ActivityEntity } from '@/stores/activity';
 import { useUsers } from '@/stores/users';
 import { useBranches } from '@/stores/branches';
 import { useReport } from '@/hooks/useReport';
@@ -126,7 +126,8 @@ interface EventRow {
 }
 
 export default function ActivityLogPage() {
-  const events = useActivity((s) => s.events);
+  // Stores kept because the activity feed itself supplies neither the full user
+  // list (for the "All users" filter) nor branch display names for branch_id.
   const users = useUsers((s) => s.users);
   const branches = useBranches((s) => s.items);
 
@@ -141,8 +142,10 @@ export default function ActivityLogPage() {
   // rows. DEFERRED: the feed is limit-capped (500) with NO server-side
   // range/user/entity filters yet, so very large histories beyond the cap won't
   // appear. ALL filtering (range/user/action/entity/search) + day-grouping
-  // below stays CLIENT-SIDE over the fetched set, identical to the mock path.
-  const { data: beActivity, loading, backend, error } = useReport<BackendActivity[]>(
+  // below stays CLIENT-SIDE over the fetched set.
+  // BACKEND WORK NEEDED: range/user/action/entity filter args (and paging) on
+  // `dashboard.activityFeed` so history beyond the 500-row cap is reachable.
+  const { data: beActivity, loading, error } = useReport<BackendActivity[]>(
     'dashboard.activityFeed',
     hasBackend() ? { limit: 500 } : null,
     [],
@@ -153,27 +156,23 @@ export default function ActivityLogPage() {
     [branches],
   );
 
-  // Normalize the source set (backend rows mapped to the page shape, else store)
-  // before the existing client-side filtering runs.
+  // Backend rows mapped to the page shape (empty until they arrive — no store
+  // fallback) before the client-side filtering runs.
   const sourceEvents: EventRow[] = useMemo(() => {
-    // On a real backend error, do NOT fall back to the mock store — show empty.
-    if (backend && error) return [];
-    if (backend && beActivity) {
-      return beActivity.map((r) => ({
-        id: r.id,
-        at: r.at,
-        by: r.by_user ?? '',
-        action: normalizeAction(r.action),
-        entity: normalizeEntity(r.entity),
-        entityId: r.entity_id ?? undefined,
-        entityRef: r.entity_ref ?? undefined,
-        message: r.message ?? '',
-        amount: r.amount ?? undefined,
-        branch: r.branch_id ? (branchNameById.get(r.branch_id) ?? r.branch_id) : undefined,
-      }));
-    }
-    return events;
-  }, [backend, beActivity, events, branchNameById, error]);
+    if (!beActivity) return [];
+    return beActivity.map((r) => ({
+      id: r.id,
+      at: r.at,
+      by: r.by_user ?? '',
+      action: normalizeAction(r.action),
+      entity: normalizeEntity(r.entity),
+      entityId: r.entity_id ?? undefined,
+      entityRef: r.entity_ref ?? undefined,
+      message: r.message ?? '',
+      amount: r.amount ?? undefined,
+      branch: r.branch_id ? (branchNameById.get(r.branch_id) ?? r.branch_id) : undefined,
+    }));
+  }, [beActivity, branchNameById]);
 
   const filtered = useMemo(() => {
     return sourceEvents.filter((e) => {
@@ -273,7 +272,11 @@ export default function ActivityLogPage() {
         {grouped.length === 0 && (
           <Card className="p-10 text-center text-sm text-muted-foreground">
             <ActivityIcon className="size-6 mx-auto mb-2 opacity-50" />
-            {backend && loading ? 'Loading…' : backend && error ? 'Couldn’t load — backend error. Check connection and retry.' : 'No activity matches your filters.'}
+            {loading
+              ? 'Loading…'
+              : error
+                ? 'Couldn’t load — backend error. Check connection and retry.'
+                : 'No activity matches your filters.'}
           </Card>
         )}
 
@@ -304,7 +307,8 @@ export default function ActivityLogPage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-semibold text-sm">{e.by}</span>
+                        {/* activity_log.by_user is nullable — dash, never a guessed name. */}
+                        <span className="font-semibold text-sm">{e.by || '—'}</span>
                         <span className="text-sm text-muted-foreground">{e.action}</span>
                         <Badge variant="default">{ENTITY_LABELS[e.entity]}</Badge>
                         {e.entityRef && (
@@ -331,7 +335,7 @@ export default function ActivityLogPage() {
                       </div>
                     </div>
                     <div className="size-7 rounded-full bg-secondary text-muted-foreground grid place-items-center text-[10px] font-bold shrink-0">
-                      {initials(e.by)}
+                      {e.by ? initials(e.by) : '—'}
                     </div>
                   </div>
                 );

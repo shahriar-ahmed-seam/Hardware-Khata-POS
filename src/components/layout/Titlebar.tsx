@@ -1,11 +1,10 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Minus,
   Square,
   Copy,
   X,
-  Wifi,
-  CloudOff,
   Sun,
   Moon,
   ChevronDown,
@@ -36,7 +35,6 @@ export function Titlebar() {
   const density = useUI((s) => s.density);
   const setDensity = useUI((s) => s.setDensity);
   const [maximized, setMaximized] = useState(false);
-  const [online] = useState(true);
   // Real business identity + branch from the settings/branches stores.
   const business = useSettings((s) => s.business);
   const branches = useBranches((s) => s.items);
@@ -55,6 +53,25 @@ export function Titlebar() {
   const currentUser = users.find((u) => u.id === currentUserId) ?? null;
   const currentRoleName = roles.find((r) => r.id === currentUser?.roleId)?.name ?? 'User';
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuBtnRef = useRef<HTMLButtonElement>(null);
+  // Viewport coords for the portalled account menu (see the portal comment below).
+  const [menuRect, setMenuRect] = useState({ top: 48, right: 8 });
+
+  // Close the account menu on Escape or when the window is resized, so it can
+  // never linger detached from its (re-measured) trigger.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuOpen(false);
+    };
+    const onResize = () => setMenuOpen(false);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [menuOpen]);
 
   useEffect(() => {
     window.api?.window.isMaximized().then(setMaximized);
@@ -81,66 +98,67 @@ export function Titlebar() {
   };
 
   return (
-    <div className="titlebar-drag flex h-12 items-center gap-2 border-b border-border bg-card/80 backdrop-blur px-3 select-none">
-      {/* Brand */}
-      <div className="titlebar-no-drag flex items-center gap-2 pr-3">
+    // `relative z-40` keeps the bar itself above the sidebar/content that follow
+    // it in the DOM; the account menu is portalled (see below) because
+    // backdrop-blur would otherwise trap it inside this stacking context.
+    <div className="titlebar-drag relative z-40 flex h-12 items-center gap-2 border-b border-border bg-card/80 backdrop-blur px-3 select-none">
+      {/* Brand — the text half is hidden on narrow windows so the search box
+          and the shift pill keep their room (the mark stays as an anchor). */}
+      <div className="titlebar-no-drag flex items-center gap-2 pr-1 lg:pr-3 shrink-0">
         <div className="grid place-items-center size-7 rounded-md bg-gradient-to-br from-primary via-purple-500 to-accent text-primary-foreground font-bold text-sm shadow-sm">
           <BrandMark />
         </div>
-        <div className="leading-tight">
-          <div className="text-sm font-semibold">{businessName}</div>
-          <div className="text-[10px] text-muted-foreground -mt-0.5">
-            {lang === 'bn' ? `অফলাইন · ${branchName}` : `Offline · ${branchName}`}
+        {/* Shop name + the one place the branch is named. The old separate
+            branch-switcher button repeated this same name and had no action
+            wired to it, so it is gone. */}
+        <div className="leading-tight hidden md:block min-w-0 max-w-[220px]">
+          <div className="text-sm font-semibold truncate" data-no-i18n>
+            {businessName}
+          </div>
+          <div className="text-[11px] text-muted-foreground -mt-0.5 flex items-center gap-1">
+            <Store className="size-3 shrink-0" />
+            <span className="truncate" data-no-i18n>
+              {branchName}
+            </span>
           </div>
         </div>
       </div>
 
-      {/* Branch switcher */}
-      <button className="titlebar-no-drag flex items-center gap-1.5 px-2.5 py-1 rounded-md hover:bg-secondary text-xs font-medium">
-        <Store className="size-3.5" />
-        {branchName}
-        <ChevronDown className="size-3" />
-      </button>
-
       {/* Search */}
       <GlobalSearch />
 
-      {/* Status pills */}
-      <div className="titlebar-no-drag flex items-center gap-1.5">
+      {/* Shift state — the only live status indicator. The old "Synced · 2m"
+          pill was hard-coded (there is no sync layer yet), so it was removed
+          rather than left showing a number nobody can trust. */}
+      <div className="titlebar-no-drag flex items-center gap-1.5 shrink-0">
         <button
           onClick={() => nav('/cash-register')}
           title="Open Cash Register"
           className={cn(
-            'flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-medium transition',
+            'flex items-center gap-1.5 px-2 lg:px-2.5 py-1.5 rounded-md text-xs font-semibold transition',
             shift
-              ? 'bg-success/10 text-success hover:bg-success/15'
-              : 'bg-warning/10 text-warning hover:bg-warning/15',
+              ? 'bg-success/15 text-success hover:bg-success/25'
+              : 'bg-warning/15 text-warning hover:bg-warning/25',
           )}
         >
           <span
             className={cn(
-              'size-1.5 rounded-full',
+              'size-2 rounded-full shrink-0',
               shift ? 'bg-success animate-pulse' : 'bg-warning',
             )}
           />
-          {shift
-            ? `${t('titlebar.shift.open')} · #${shift.shiftNo}`
-            : 'No active shift'}
+          {/* Narrow windows keep the coloured dot as the signal and drop the label */}
+          <span className="hidden xl:inline whitespace-nowrap">
+            {shift ? `${t('titlebar.shift.open')} · #${shift.shiftNo}` : 'No active shift'}
+          </span>
+          <span className="xl:hidden whitespace-nowrap">{shift ? `#${shift.shiftNo}` : '—'}</span>
         </button>
-        <div
-          className={cn(
-            'flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-medium',
-            online ? 'bg-primary/10 text-primary' : 'bg-warning/10 text-warning',
-          )}
-        >
-          {online ? <Wifi className="size-3" /> : <CloudOff className="size-3" />}
-          {online ? `${t('titlebar.synced')} · 2m` : t('titlebar.offline')}
-        </div>
       </div>
 
-      <div className="titlebar-no-drag flex items-center gap-0.5">
-        {/* Density toggle */}
+      <div className="titlebar-no-drag flex items-center gap-0.5 shrink-0">
+        {/* Density toggle — least essential control, so it is the first to go */}
         <IconBtn
+          className="hidden lg:grid"
           onClick={() => setDensity(density === 'compact' ? 'comfortable' : 'compact')}
           title={density === 'compact' ? 'Comfortable density' : 'Compact density'}
         >
@@ -166,55 +184,91 @@ export function Titlebar() {
 
         <div className="relative">
           <button
-            onClick={() => setMenuOpen((o) => !o)}
+            ref={menuBtnRef}
+            onClick={() => {
+              // Measure the trigger so the portalled menu can anchor to it.
+              const r = menuBtnRef.current?.getBoundingClientRect();
+              if (r) setMenuRect({ top: r.bottom + 4, right: window.innerWidth - r.right });
+              setMenuOpen((o) => !o);
+            }}
             className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-md hover:bg-secondary"
           >
-            <div className="grid place-items-center size-6 rounded-full bg-gradient-to-br from-primary to-accent text-[10px] font-bold text-white">
-              {currentUser ? initials(currentUser.name) : 'SM'}
+            <div className="grid place-items-center size-7 shrink-0 rounded-full bg-gradient-to-br from-primary to-accent text-[10px] font-bold text-white">
+              {currentUser ? initials(currentUser.name) : '—'}
             </div>
-            <div className="leading-tight text-left">
-              <div className="text-[11px] font-semibold">{currentUser?.name ?? 'Guest'}</div>
-              <div className="text-[9px] text-muted-foreground -mt-0.5">
+            {/* Name/role collapse into the avatar on narrow windows */}
+            <div className="leading-tight text-left hidden xl:block min-w-0 max-w-[120px]">
+              <div className="text-[11px] font-semibold truncate" data-no-i18n>
+                {currentUser?.name ?? 'Guest'}
+              </div>
+              <div className="text-[9px] text-muted-foreground -mt-0.5 truncate">
                 {currentRoleName}
               </div>
             </div>
-            <ChevronDown className="size-3 text-muted-foreground" />
+            <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
           </button>
 
           {menuOpen && (
-            <>
-              <div className="fixed inset-0 z-30" onClick={() => setMenuOpen(false)} />
-              <div className="absolute right-0 top-full mt-1 z-40 w-44 bg-card border border-border rounded-md shadow-lg py-1 animate-scale-in">
-                <button
-                  onClick={() => {
-                    setMenuOpen(false);
-                    nav('/settings/users');
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-secondary text-left"
+            /**
+             * PORTALLED ON PURPOSE.
+             *
+             * The titlebar uses `backdrop-blur`, and any element with a
+             * backdrop-filter creates its own stacking context. An absolutely
+             * positioned menu inside it is therefore TRAPPED behind the sidebar
+             * and page content below (they are later siblings), which is why the
+             * menu appeared underneath other UI and its items could not be
+             * clicked. Rendering into document.body with fixed coordinates takes
+             * it out of that stacking context entirely.
+             *
+             * `titlebar-no-drag` is required too: without it the menu sits over
+             * the OS drag region and swallows clicks as window drags.
+             */
+            createPortal(
+              // `print:hidden` — this menu is portalled to <body>, i.e. outside
+              // the #root that print hides, so it needs marking explicitly.
+              <div className="titlebar-no-drag print:hidden">
+                <div
+                  className="fixed inset-0 z-[90]"
+                  onMouseDown={() => setMenuOpen(false)}
+                />
+                <div
+                  role="menu"
+                  style={{ position: 'fixed', top: menuRect.top, right: menuRect.right }}
+                  className="z-[100] w-52 bg-popover text-popover-foreground border border-border rounded-md shadow-2xl py-1 animate-scale-in"
                 >
-                  <Store className="size-3.5" /> Manage users
-                </button>
-                <button
-                  onClick={() => {
-                    setMenuOpen(false);
-                    lock();
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-secondary text-left"
-                >
-                  <Lock className="size-3.5" /> Lock screen
-                </button>
-                <button
-                  onClick={() => {
-                    setMenuOpen(false);
-                    logout();
-                    toast.info('Signed out');
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-destructive/10 hover:text-destructive text-left"
-                >
-                  <LogOut className="size-3.5" /> Sign out
-                </button>
-              </div>
-            </>
+                  <MenuItem
+                    icon={Store}
+                    onClick={() => {
+                      setMenuOpen(false);
+                      nav('/settings/users');
+                    }}
+                  >
+                    Manage users
+                  </MenuItem>
+                  <MenuItem
+                    icon={Lock}
+                    onClick={() => {
+                      setMenuOpen(false);
+                      lock();
+                    }}
+                  >
+                    Lock screen
+                  </MenuItem>
+                  <MenuItem
+                    icon={LogOut}
+                    danger
+                    onClick={() => {
+                      setMenuOpen(false);
+                      logout();
+                      toast.info('Signed out');
+                    }}
+                  >
+                    Sign out
+                  </MenuItem>
+                </div>
+              </div>,
+              document.body,
+            )
           )}
         </div>
       </div>
@@ -232,6 +286,33 @@ export function Titlebar() {
         </WinBtn>
       </div>
     </div>
+  );
+}
+
+/** One row of the account menu. Generous height — this is a touch target. */
+function MenuItem({
+  icon: Icon,
+  children,
+  onClick,
+  danger,
+}: {
+  icon: any;
+  children: ReactNode;
+  onClick: () => void;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      role="menuitem"
+      onClick={onClick}
+      className={cn(
+        'w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-left transition',
+        danger ? 'hover:bg-destructive/10 hover:text-destructive' : 'hover:bg-secondary',
+      )}
+    >
+      <Icon className="size-4 shrink-0" />
+      {children}
+    </button>
   );
 }
 
@@ -260,16 +341,21 @@ function IconBtn({
   children,
   onClick,
   title,
+  className,
 }: {
   children: ReactNode;
   onClick?: () => void;
   title?: string;
+  className?: string;
 }) {
   return (
     <button
       onClick={onClick}
       title={title}
-      className="relative size-8 grid place-items-center rounded-md hover:bg-secondary text-muted-foreground hover:text-foreground transition"
+      className={cn(
+        'relative size-8 grid place-items-center rounded-md hover:bg-secondary text-muted-foreground hover:text-foreground transition',
+        className,
+      )}
     >
       {children}
     </button>

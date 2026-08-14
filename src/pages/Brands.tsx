@@ -4,7 +4,6 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
-import { useBrands as useBrandsStore } from '@/stores/masterData';
 import {
   useBrands as useBrandsQuery,
   useCreateBrand,
@@ -12,23 +11,19 @@ import {
   useDeleteBrand,
 } from '@/hooks/useCatalog';
 import { useProducts } from '@/hooks/useProducts';
-import { products as seedProducts } from '@/mocks/data';
-import { hasBackend } from '@/lib/api';
+import { confirm } from '@/stores/confirm';
 import { toast } from '@/stores/toast';
 
 export default function Brands() {
-  const backend = hasBackend();
-
-  // ----- Data source: backend when available, else mock store -----
-  const store = useBrandsStore();
+  // ----- Data source: the SQLite backend -----
   const brandsQuery = useBrandsQuery();
   const productsQuery = useProducts();
   const createBrand = useCreateBrand();
   const updateBrand = useUpdateBrand();
   const deleteBrand = useDeleteBrand();
 
-  const items = backend ? (brandsQuery.data ?? []) : store.items;
-  const productList = backend ? (productsQuery.data ?? []) : seedProducts;
+  const items = brandsQuery.data ?? [];
+  const productList = productsQuery.data ?? [];
 
   const [q, setQ] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -45,15 +40,11 @@ export default function Brands() {
   const productCount = (id: string) => productList.filter((p) => p.brandId === id).length;
 
   const addBrand = async (name: string) => {
-    if (backend) {
-      try {
-        await createBrand.mutateAsync({ name });
-        toast.success('Brand added');
-      } catch (e) {
-        toast.error('Add failed', { description: e instanceof Error ? e.message : undefined });
-      }
-    } else {
-      store.add(name);
+    try {
+      await createBrand.mutateAsync({ name });
+      toast.success('Brand added');
+    } catch (e) {
+      toast.error('Add failed', { description: e instanceof Error ? e.message : undefined });
     }
   };
 
@@ -66,15 +57,11 @@ export default function Brands() {
       const id = editingId;
       const name = draft.trim();
       setEditingId(null);
-      if (backend) {
-        try {
-          await updateBrand.mutateAsync({ id, patch: { name } });
-          toast.success('Brand renamed');
-        } catch (e) {
-          toast.error('Rename failed', { description: e instanceof Error ? e.message : undefined });
-        }
-      } else {
-        store.update(id, name);
+      try {
+        await updateBrand.mutateAsync({ id, patch: { name } });
+        toast.success('Brand renamed');
+      } catch (e) {
+        toast.error('Rename failed', { description: e instanceof Error ? e.message : undefined });
       }
     } else {
       setEditingId(null);
@@ -83,20 +70,20 @@ export default function Brands() {
 
   const onDelete = async (id: string) => {
     const used = productCount(id);
-    if (used > 0) {
-      if (!confirm(`This brand is used by ${used} product(s). Delete anyway?`)) return;
-    } else {
-      if (!confirm('Delete this brand?')) return;
-    }
-    if (backend) {
-      try {
-        await deleteBrand.mutateAsync(id);
-        toast.success('Brand deleted');
-      } catch (e) {
-        toast.error('Delete failed', { description: e instanceof Error ? e.message : undefined });
-      }
-    } else {
-      store.remove(id);
+    const ok = await confirm({
+      title: 'Delete this brand?',
+      message:
+        used > 0
+          ? `It is used by ${used} product(s). Those products stay, but lose their brand.`
+          : undefined,
+      variant: 'destructive',
+    });
+    if (!ok) return;
+    try {
+      await deleteBrand.mutateAsync(id);
+      toast.success('Brand deleted');
+    } catch (e) {
+      toast.error('Delete failed', { description: e instanceof Error ? e.message : undefined });
     }
   };
 

@@ -9,10 +9,6 @@ import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import {
-  products as ALL_PRODUCTS,
-  categories as ALL_CATEGORIES,
-} from '@/mocks/data';
 import { useReport, useBranchId } from '@/hooks/useReport';
 import { hasBackend } from '@/lib/api';
 import { formatBDT, formatNumber } from '@/lib/utils';
@@ -60,7 +56,7 @@ export default function StockAlertReportPage() {
   // reorder_level). We split them into the low/out tabs and join category/unit
   // client-side via products.list.
   const branchId = useBranchId(branch);
-  const { data: beLowStock, loading, backend, error } = useReport<BackendLowStock[]>(
+  const { data: beLowStock, loading, error } = useReport<BackendLowStock[]>(
     'dashboard.lowStock',
     hasBackend() ? { limit: 200, branchId } : null,
     [branchId],
@@ -71,28 +67,10 @@ export default function StockAlertReportPage() {
     [],
   );
 
-  const mockItems: AlertItem[] = useMemo(
-    () =>
-      ALL_PRODUCTS.map((p) => {
-        const cat = ALL_CATEGORIES.find((c) => c.id === p.categoryId);
-        return {
-          id: p.id,
-          name: p.name,
-          sku: p.sku,
-          stock: p.stock,
-          reorderLevel: p.reorderLevel,
-          cost: p.cost,
-          unit: p.unit,
-          categoryId: p.categoryId ?? '',
-          categoryName: cat?.name,
-          categoryEmoji: cat?.emoji,
-        };
-      }),
-    [],
-  );
-
+  // NOTE: no mock/sample fallback — the alert lists come only from the backend,
+  // so an empty backend result renders as "no alerts" rather than fake items.
   const backendItems: AlertItem[] | null = useMemo(() => {
-    if (!backend || !beLowStock) return null;
+    if (!beLowStock) return null;
     const meta = new Map<string, BackendProductRow>();
     for (const p of beProducts ?? []) meta.set(p.id, p);
     return beLowStock.map((p) => {
@@ -110,9 +88,9 @@ export default function StockAlertReportPage() {
         categoryEmoji: m?.category_emoji ?? undefined,
       };
     });
-  }, [backend, beLowStock, beProducts]);
+  }, [beLowStock, beProducts]);
 
-  const allItems: AlertItem[] = backend && error ? [] : (backendItems ?? mockItems);
+  const allItems: AlertItem[] = backendItems ?? [];
 
   const lowItems = useMemo(
     () => allItems.filter((p) => p.stock > 0 && p.stock <= p.reorderLevel),
@@ -231,7 +209,7 @@ export default function StockAlertReportPage() {
           {filtered.length === 0 && (
             <div className="px-4 py-12 text-center text-sm text-muted-foreground">
               <AlertTriangle className="size-6 mx-auto mb-2 opacity-50" />
-              {backend && loading ? 'Loading…' : backend && error ? 'Couldn’t load — backend error. Check connection and retry.' : 'No items in this list.'}
+              {loading ? 'Loading…' : error ? 'Couldn’t load — backend error. Check connection and retry.' : 'No items in this list.'}
             </div>
           )}
           {filtered.map((p) => {

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   Search,
@@ -8,6 +8,7 @@ import {
   AlertTriangle,
   PackageX,
   Sliders,
+  Tags,
 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
@@ -15,13 +16,10 @@ import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { ColumnsPanel } from '@/components/ui/ColumnsPanel';
+import { Pagination } from '@/components/ui/Pagination';
 import { ProductImage } from '@/components/products/ProductImage';
-import {
-  categories as seedCategories,
-  brands as seedBrands,
-  products as seedProducts,
-  type Product,
-} from '@/mocks/data';
+import { QuickUpdateModal } from '@/components/products/QuickUpdateModal';
+import type { Product } from '@/types/domain';
 import { formatBDT, formatNumber, cn, relativeTime } from '@/lib/utils';
 import {
   ALL_STOCK_COLUMNS,
@@ -29,8 +27,7 @@ import {
   useStockUI,
   type StockColumn,
 } from '@/stores/stockUI';
-import { hasBackend } from '@/lib/api';
-import { useProducts } from '@/hooks/useProducts';
+import { useProductsPage } from '@/hooks/useProducts';
 import { useCategories, useBrands } from '@/hooks/useCatalog';
 import { SkeletonTable } from '@/components/ui/Skeleton';
 
@@ -42,54 +39,85 @@ export default function Stock() {
   const [brand, setBrand] = useState<string | 'all'>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'in' | 'low' | 'out'>('all');
   const [colsOpen, setColsOpen] = useState(false);
+  /** Row whose price/stock is being corrected in the popup. */
+  const [quickUpdateId, setQuickUpdateId] = useState<string | null>(null);
 
-  const backend = hasBackend();
-  const productsQuery = useProducts();
+  // Paging
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+
+  // The text search hits the DATABASE, so it is debounced ~300ms.
+  const [debouncedQ, setDebouncedQ] = useState(q);
+  useEffect(() => {
+    const handle = setTimeout(() => setDebouncedQ(q), 300);
+    return () => clearTimeout(handle);
+  }, [q]);
+
+  // ONE PAGE of products. Category / brand / stock state / text are all pushed
+  // down into SQL — a 5,000-row catalogue no longer lands in the renderer.
+  const productsQuery = useProductsPage({
+    page,
+    pageSize,
+    q: debouncedQ || undefined,
+    categoryId: cat,
+    brandId: brand,
+    stockState: statusFilter === 'all' ? undefined : statusFilter,
+  });
   const categoriesQuery = useCategories();
   const brandsQuery = useBrands();
 
-  const products: Product[] = backend ? (productsQuery.data ?? []) : seedProducts;
-  const categories = backend ? (categoriesQuery.data ?? []) : seedCategories;
-  const brands = backend ? (brandsQuery.data ?? []) : seedBrands;
+  const products: Product[] = productsQuery.data?.rows ?? [];
+  const total = productsQuery.data?.total ?? 0;
+  const categories = categoriesQuery.data ?? [];
+  const brands = brandsQuery.data ?? [];
   const categoryName = (id: string) => categories.find((c) => c.id === id)?.name ?? '—';
   const brandName = (id: string) => brands.find((b) => b.id === id)?.name ?? '—';
 
-  const filtered = useMemo(() => {
-    return products.filter((p) => {
-      if (cat !== 'all' && p.categoryId !== cat) return false;
-      if (brand !== 'all' && p.brandId !== brand) return false;
-      if (statusFilter === 'in' && p.stock <= 0) return false;
-      if (statusFilter === 'low' && (p.stock <= 0 || p.stock > p.reorderLevel)) return false;
-      if (statusFilter === 'out' && p.stock > 0) return false;
-      if (q && !`${p.name} ${p.sku} ${p.barcode}`.toLowerCase().includes(q.toLowerCase()))
-        return false;
-      return true;
-    });
-  }, [products, q, cat, brand, statusFilter]);
+  // Any filter change resets to page 1 — staying on page 9 of a narrower result
+  // set would show an empty table.
+  const firstFilterRun = useRef(true);
+  useEffect(() => {
+    if (firstFilterRun.current) {
+      firstFilterRun.current = false;
+      return;
+    }
+    setPage(1);
+  }, [debouncedQ, cat, brand, statusFilter, pageSize]);
 
+  // The server already applied every filter it supports, so this page's rows ARE
+  // the result set.
+  const filtered = products;
+
+  /** The row open in the price/stock popup, resolved from the loaded page. */
+  const quickUpdating = quickUpdateId ? products.find((p) => p.id === quickUpdateId) : undefined;
+
+  // Value / unit sums cover the LOADED PAGE only — the rest of the catalogue was
+  // never fetched. Only the product COUNT is a real total (from the query).
   const totals = useMemo(() => {
     return {
-      products: products.length,
+      products: total,
       units: products.reduce((s, p) => s + p.stock, 0),
       cost: products.reduce((s, p) => s + p.stock * p.cost, 0),
       retail: products.reduce((s, p) => s + p.stock * p.price, 0),
       low: products.filter((p) => p.stock > 0 && p.stock <= p.reorderLevel).length,
       out: products.filter((p) => p.stock <= 0).length,
     };
-  }, [products]);
+  }, [products, total]);
 
   return (
     <div>
       <PageHeader
         title="Stock Report"
-        subtitle={`${totals.products} products · ${formatBDT(totals.cost)} stock value`}
+        subtitle={`${formatNumber(totals.products)} products`}
         actions={
           <>
             <IconBtn title="Customize columns" onClick={() => setColsOpen(true)}>
               <Settings2 className="size-4" />
             </IconBtn>
             <Link to="/stock/alerts">
-              <Button variant="outline" size="sm">
+              {/* The badge counts THIS PAGE's rows — the full catalogue is no
+                  longer loaded here. The Alerts screen owns the real totals. */}
+              <Button variant="outline" size="sm" title="Low or out of stock on this page">
                 <AlertTriangle className="size-4" /> Alerts
                 {totals.low + totals.out > 0 && (
                   <Badge variant="warning" className="ml-1">
@@ -112,13 +140,24 @@ export default function Stock() {
       />
 
       <div className="p-6 space-y-4">
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-          <Stat label="Products" value={formatNumber(totals.products)} />
-          <Stat label="Total Units" value={formatNumber(totals.units)} />
-          <Stat label="Value @ Cost" value={formatBDT(totals.cost)} />
-          <Stat label="Value @ Retail" value={formatBDT(totals.retail)} tone="primary" />
-          <Stat label="Low Stock" value={String(totals.low)} tone="warning" />
-          <Stat label="Out of Stock" value={String(totals.out)} tone="destructive" />
+        {/* Product count is the real filtered total; everything else is
+            PAGE-SCOPED, since only this page is in memory. */}
+        <div>
+          <div className="text-[11px] text-muted-foreground mb-1.5">
+            Totals for this page only. Use Reports for full-range figures.
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+            <Stat label="Products" value={formatNumber(totals.products)} />
+            <Stat label="Total Units (this page)" value={formatNumber(totals.units)} />
+            <Stat label="Value @ Cost (this page)" value={formatBDT(totals.cost)} />
+            <Stat
+              label="Value @ Retail (this page)"
+              value={formatBDT(totals.retail)}
+              tone="primary"
+            />
+            <Stat label="Low Stock (this page)" value={String(totals.low)} tone="warning" />
+            <Stat label="Out of Stock (this page)" value={String(totals.out)} tone="destructive" />
+          </div>
         </div>
 
         <Card className="p-3 flex flex-wrap items-center gap-2">
@@ -173,7 +212,7 @@ export default function Stock() {
           </div>
         </Card>
 
-        {backend && productsQuery.isLoading ? (
+        {productsQuery.isLoading ? (
           <SkeletonTable count={8} />
         ) : (
         <Card className="overflow-hidden">
@@ -193,6 +232,7 @@ export default function Stock() {
                       {STOCK_COLUMN_META[c].label}
                     </th>
                   ))}
+                  <th className="w-28"></th>
                 </tr>
               </thead>
               <tbody>
@@ -201,11 +241,30 @@ export default function Stock() {
                     {columns.map((col) => (
                       <Cell key={col} col={col} p={p} catName={categoryName} brandNameFn={brandName} />
                     ))}
+                    {/*
+                      This screen had NO per-row action, so correcting one count
+                      meant leaving for /stock/adjustments/new and filling in a
+                      multi-line document. Counting a shelf and typing the number
+                      is the single most common stock task in a hardware shop.
+                    */}
+                    <td className="px-3 py-2.5 text-right">
+                      <button
+                        onClick={() => setQuickUpdateId(p.id)}
+                        className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-border bg-card text-xs font-medium hover:bg-secondary hover:border-primary/50 transition"
+                        title="Update price & stock"
+                      >
+                        <Tags className="size-3.5" />
+                        <span className="hidden xl:inline">Update</span>
+                      </button>
+                    </td>
                   </tr>
                 ))}
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={columns.length} className="px-4 py-12 text-center text-muted-foreground">
+                    <td
+                      colSpan={columns.length + 1}
+                      className="px-4 py-12 text-center text-muted-foreground"
+                    >
                       No products match.
                     </td>
                   </tr>
@@ -213,6 +272,15 @@ export default function Stock() {
               </tbody>
             </table>
           </div>
+          <Pagination
+            page={page}
+            pageSize={pageSize}
+            total={total}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+            label="products"
+            busy={productsQuery.isFetching}
+          />
         </Card>
         )}
       </div>
@@ -227,6 +295,10 @@ export default function Stock() {
           onReset={reset}
           onClose={() => setColsOpen(false)}
         />
+      )}
+
+      {quickUpdating && (
+        <QuickUpdateModal product={quickUpdating} onClose={() => setQuickUpdateId(null)} />
       )}
     </div>
   );

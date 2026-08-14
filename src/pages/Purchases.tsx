@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Search,
@@ -17,7 +17,8 @@ import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { ColumnsPanel } from '@/components/ui/ColumnsPanel';
-import { usePurchases, type PurchaseRecord } from '@/stores/purchases';
+import { Pagination } from '@/components/ui/Pagination';
+import { usePurchases, type PurchaseRecord, type PurchaseStatus } from '@/stores/purchases';
 import { useSuppliers } from '@/stores/contacts';
 import {
   ALL_PURCHASE_COLUMNS,
@@ -31,39 +32,100 @@ import { SkeletonTable } from '@/components/ui/Skeleton';
 import { PurchaseDetail } from '@/components/purchases/PurchaseDetail';
 import { PayBillModal } from '@/components/purchases/PayBillModal';
 
+type DateFilter = 'all' | 'today' | 'week' | 'month';
+
+/**
+ * Turn a date preset into inclusive ISO bounds for the server query. Day
+ * boundaries are local (same convention as the Reports toolbar); purchase dates
+ * are stored as ISO UTC so the SQL string comparison still orders correctly.
+ * 'all' clears both bounds.
+ */
+function presetToRange(preset: DateFilter): { from?: string; to?: string } {
+  if (preset === 'all') return { from: undefined, to: undefined };
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  if (preset === 'week') {
+    // Week starts Monday, matching resolveRange() in the Reports toolbar.
+    const dow = (start.getDay() + 6) % 7;
+    start.setDate(start.getDate() - dow);
+  }
+  if (preset === 'month') start.setDate(1);
+  return { from: start.toISOString(), to: end.toISOString() };
+}
+
 export default function Purchases() {
   const nav = useNavigate();
   const purchases = usePurchases((s) => s.purchases);
   const loading = usePurchases((s) => s.loading);
-  const hydrate = usePurchases((s) => s.hydrate);
-  const suppliers = useSuppliers((s) => s.items);
+  const total = usePurchases((s) => s.total);
+  const query = usePurchases((s) => s.query);
+  const loadPage = usePurchases((s) => s.loadPage);
+  // The supplier FILTER reads the contacts store's UNPAGED `options` (id+name):
+  // `items` is one page of suppliers, so a filter built from it would silently
+  // omit every supplier past the first page.
+  const suppliers = useSuppliers((s) => s.options);
+  const loadSupplierOptions = useSuppliers((s) => s.loadOptions);
   const { columns, toggle, move, reset } = usePurchasesUI();
   const backend = hasBackend();
 
+  // Load ONE page on mount; every filter below is pushed into the SQL query.
+  // Filters are stated explicitly so a query left over from a previous visit
+  // can't narrow the list while the controls below all read "all".
   useEffect(() => {
-    void hydrate();
-  }, [hydrate]);
+    void loadPage({
+      page: 1,
+      statuses: undefined,
+      supplierId: undefined,
+      from: undefined,
+      to: undefined,
+      q: undefined,
+    });
+    void loadSupplierOptions();
+  }, [loadPage, loadSupplierOptions]);
 
   const [q, setQ] = useState('');
   const [supplierId, setSupplierId] = useState<string | 'all'>('all');
+  const [date, setDate] = useState<DateFilter>('all');
   const [payment, setPayment] = useState<'all' | 'paid' | 'partial' | 'due'>('all');
-  const [status, setStatus] = useState<'all' | 'received' | 'ordered' | 'in-transit' | 'cancelled'>('all');
+  const [status, setStatus] = useState<'all' | PurchaseStatus>('all');
   const [colsOpen, setColsOpen] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [payBillOpen, setPayBillOpen] = useState(false);
 
-  const list = useMemo(() => {
-    return purchases.filter((p) => {
-      if (q && !`${p.refNo} ${p.supplierName}`.toLowerCase().includes(q.toLowerCase())) return false;
-      if (supplierId !== 'all' && p.supplierId !== supplierId) return false;
-      if (status !== 'all' && p.status !== status) return false;
-      if (payment === 'paid' && p.due !== 0) return false;
-      if (payment === 'partial' && (p.paid === 0 || p.due === 0)) return false;
-      if (payment === 'due' && p.paid !== 0) return false;
-      return true;
-    });
-  }, [purchases, q, supplierId, status, payment]);
+  // Search hits the database (reference + supplier name) — debounced ~300ms so
+  // typing doesn't fire a query per keystroke. First run skipped: the mount
+  // effect already loaded page 1.
+  const searchMounted = useRef(false);
+  useEffect(() => {
+    if (!searchMounted.current) {
+      searchMounted.current = true;
+      return;
+    }
+    const handle = setTimeout(() => {
+      void loadPage({ q: q.trim() || undefined });
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [q, loadPage]);
 
+  /**
+   * Paid / Partial / Due are DERIVED from `paid` / `due`, not a DB column, so
+   * they cannot be pushed into SQL — they stay CLIENT-side over the rows of the
+   * current page (the UI says so next to the chips). The lifecycle status chips
+   * (received / ordered / in-transit / cancelled) DO map to a column and go
+   * into the query.
+   */
+  const list = useMemo(() => {
+    if (payment === 'all') return purchases;
+    return purchases.filter((p) => {
+      if (payment === 'paid') return p.due === 0;
+      if (payment === 'partial') return p.paid > 0 && p.due > 0;
+      return p.paid === 0; // 'due'
+    });
+  }, [purchases, payment]);
+
+  // These sums cover the LOADED PAGE only — the rest of the range was never
+  // fetched. Labelled "this page" in the UI so they can't read as range totals.
   const totals = useMemo(() => {
     const arr = list.filter((p) => p.status !== 'cancelled');
     return {
@@ -106,13 +168,20 @@ export default function Purchases() {
       />
 
       <div className="p-6 space-y-4">
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-          <Stat label="Purchases" value={String(totals.count)} />
-          <Stat label="Total Value" value={formatBDT(totals.value)} tone="primary" />
-          <Stat label="Paid" value={formatBDT(totals.paid)} tone="success" />
-          <Stat label="Payable" value={formatBDT(totals.due)} tone="destructive" />
-          <Stat label="Tax" value={formatBDT(totals.tax)} />
-          <Stat label="Discount" value={formatBDT(totals.discount)} />
+        {/* KPI strip — PAGE-SCOPED. Only the current page is in memory, so these
+            are explicitly labelled instead of masquerading as range totals. */}
+        <div>
+          <div className="text-[11px] text-muted-foreground mb-1.5">
+            Totals for this page only. Use Reports for full-range figures.
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+            <Stat label="Purchases (this page)" value={String(totals.count)} />
+            <Stat label="Total Value (this page)" value={formatBDT(totals.value)} tone="primary" />
+            <Stat label="Paid (this page)" value={formatBDT(totals.paid)} tone="success" />
+            <Stat label="Payable (this page)" value={formatBDT(totals.due)} tone="destructive" />
+            <Stat label="Tax (this page)" value={formatBDT(totals.tax)} />
+            <Stat label="Discount (this page)" value={formatBDT(totals.discount)} />
+          </div>
         </div>
 
         <Card className="p-3 flex flex-wrap items-center gap-2">
@@ -127,7 +196,10 @@ export default function Purchases() {
           </div>
           <select
             value={supplierId}
-            onChange={(e) => setSupplierId(e.target.value)}
+            onChange={(e) => {
+              setSupplierId(e.target.value);
+              void loadPage({ supplierId: e.target.value });
+            }}
             className="h-9 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="all">All suppliers</option>
@@ -137,27 +209,49 @@ export default function Purchases() {
               </option>
             ))}
           </select>
-          <div className="flex items-center gap-0.5 p-0.5 bg-secondary rounded-md text-xs">
-            {(['all', 'paid', 'partial', 'due'] as const).map((p) => (
-              <button
-                key={p}
-                onClick={() => setPayment(p)}
-                className={cn(
-                  'px-3 py-1 rounded font-medium capitalize transition',
-                  payment === p
-                    ? 'bg-card text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground',
-                )}
-              >
-                {p}
-              </button>
-            ))}
+          <select
+            value={date}
+            onChange={(e) => {
+              const preset = e.target.value as DateFilter;
+              setDate(preset);
+              void loadPage(presetToRange(preset));
+            }}
+            className="h-9 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
+          >
+            <option value="all">All dates</option>
+            <option value="today">Today</option>
+            <option value="week">This week</option>
+            <option value="month">This month</option>
+          </select>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-0.5 p-0.5 bg-secondary rounded-md text-xs">
+              {(['all', 'paid', 'partial', 'due'] as const).map((p) => (
+                <button
+                  key={p}
+                  onClick={() => setPayment(p)}
+                  className={cn(
+                    'px-3 py-1 rounded font-medium capitalize transition',
+                    payment === p
+                      ? 'bg-card text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+            <span className="text-[11px] text-muted-foreground">
+              Paid / Partial / Due filter this page
+            </span>
           </div>
           <div className="flex items-center gap-0.5 p-0.5 bg-secondary rounded-md text-xs">
             {(['all', 'received', 'ordered', 'in-transit', 'cancelled'] as const).map((s) => (
               <button
                 key={s}
-                onClick={() => setStatus(s)}
+                onClick={() => {
+                  setStatus(s);
+                  void loadPage({ statuses: s === 'all' ? undefined : [s] });
+                }}
                 className={cn(
                   'px-3 py-1 rounded font-medium capitalize transition',
                   status === s
@@ -241,6 +335,15 @@ export default function Purchases() {
             </table>
             )}
           </div>
+          <Pagination
+            page={query.page}
+            pageSize={query.pageSize}
+            total={total}
+            onPageChange={(page) => void loadPage({ page })}
+            onPageSizeChange={(pageSize) => void loadPage({ pageSize })}
+            label="purchases"
+            busy={loading}
+          />
         </Card>
       </div>
 

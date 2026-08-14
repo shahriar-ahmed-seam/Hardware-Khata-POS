@@ -1,5 +1,6 @@
 import type { DB } from './db/connection.ts';
 import * as q from './services/queries.ts';
+import * as paged from './services/paged.ts';
 import * as sales from './services/sales.ts';
 import * as purchases from './services/purchases.ts';
 import * as returns from './services/returns.ts';
@@ -14,6 +15,8 @@ import * as contacts from './services/contacts.ts';
 import * as settings from './services/settings.ts';
 import * as auth from './services/auth.ts';
 import * as setup from './services/setup.ts';
+import * as backup from './services/backup.ts';
+import * as costing from './services/costing.ts';
 
 /**
  * The backend API surface. A flat map of `channel -> handler(db, payload)`.
@@ -28,8 +31,22 @@ export function buildApi(): Record<string, ApiHandler> {
     'products.list': (db, p) => q.listProducts(db, p ?? {}),
     'products.get': (db, p) => q.getProduct(db, p.id, p.branchId),
     'sales.list': (db, p) => q.listSales(db, p ?? {}),
+    // Paginated + batched: returns ONE page of sales with their lines/payments/
+    // audit already attached, plus the total for the pager. Use this for list
+    // screens — `sales.list` + per-row `sales.get` is an N+1 that freezes the
+    // app on a real history (see backend/services/paged.ts).
+    'sales.listPage': (db, p) => paged.listSalesPage(db, p ?? {}),
     'sales.get': (db, p) => q.getSale(db, p.id),
     'purchases.list': (db, p) => q.listPurchases(db, p ?? {}),
+    'purchases.listPage': (db, p) => paged.listPurchasesPage(db, p ?? {}),
+    // Paginated variants of the other row-heavy lists (see services/paged.ts).
+    // `products.list` recomputes stock for the whole catalogue and
+    // `customers/suppliers.list` compute derived totals PER ROW, so paging these
+    // cuts real work, not just transferred rows.
+    'products.listPage': (db, p) => paged.listProductsPage(db, p ?? {}),
+    'customers.listPage': (db, p) => paged.listCustomersPage(db, p ?? {}),
+    'suppliers.listPage': (db, p) => paged.listSuppliersPage(db, p ?? {}),
+    'expenses.listPage': (db, p) => paged.listExpensesPage(db, p ?? {}),
     'purchases.get': (db, p) => q.getPurchase(db, p.id),
     'sellReturns.list': (db, p) => q.listSellReturns(db, p ?? {}),
     'purchaseReturns.list': (db) => q.listPurchaseReturns(db),
@@ -59,6 +76,10 @@ export function buildApi(): Record<string, ApiHandler> {
 
     // ----- writes: operations -----
     'sales.create': (db, p) => sales.createSale(db, p),
+    // Correcting a finalized invoice in place. Reverses the original stock and
+    // cash and re-applies the corrected figures in one transaction, keeping the
+    // invoice number — see updateSale. Gated behind 'sales.edit' (Admin).
+    'sales.update': (db, p) => sales.updateSale(db, p.saleId, p.input),
     'sales.addPayment': (db, p) => sales.addSalePayment(db, p.saleId, p.payment, p.userId),
     'sales.void': (db, p) => sales.voidSale(db, p.saleId, p.userId, p.reason),
     'sales.delete': (db, p) => sales.deleteSale(db, p.saleId),
@@ -90,7 +111,22 @@ export function buildApi(): Record<string, ApiHandler> {
     // ----- catalog CRUD -----
     'products.create': (db, p) => catalog.createProduct(db, p),
     'products.update': (db, p) => catalog.updateProduct(db, p.id, p.patch),
-    'products.delete': (db, p) => catalog.deleteProduct(db, p.id),
+    'products.delete': (db, p) => catalog.deleteProduct(db, p.id, { force: !!p.force }),
+    // Retire / restore a product. Archiving is the honest answer for a product
+    // that already appears on a document, where a hard delete would rewrite
+    // history (and is refused by SQLite anyway). Reversible.
+    'products.archive': (db, p) => catalog.archiveProduct(db, p.id, p.userId),
+    'products.unarchive': (db, p) => catalog.unarchiveProduct(db, p.id, p.userId),
+    // OPEN read: how many documents reference a product, so the UI can offer
+    // Delete or Archive truthfully instead of guessing and failing.
+    'products.usage': (db, p) => catalog.productUsage(db, p.id),
+    // ----- purchase-price (cost) history -----
+    // The buying price is not constant, so it is recorded as an append-only
+    // history and `products.cost` / `avg_cost` / `cost_updated_at` are caches
+    // recomputed from it. See backend/services/costing.ts.
+    'products.setCost': (db, p) => costing.setProductCost(db, p),
+    'products.costHistory': (db, p) => costing.listCostHistory(db, p.productId, p.limit),
+    'products.costInfo': (db, p) => costing.costInfo(db, p.productId),
     'categories.create': (db, p) => catalog.createCategory(db, p),
     'categories.update': (db, p) => catalog.updateCategory(db, p.id, p.patch),
     'categories.delete': (db, p) => catalog.deleteCategory(db, p.id),
@@ -156,6 +192,19 @@ export function buildApi(): Record<string, ApiHandler> {
     // self-disabling (completeSetup throws 'Setup already completed').
     'setup.status': (db) => setup.setupStatus(db),
     'setup.complete': (db, p) => setup.completeSetup(db, p),
+
+    // ----- backup / cloud saving -----
+    // A snapshot is a verified `VACUUM INTO` copy of the whole database. "Cloud"
+    // means the snapshot folder is one the user's own OneDrive/Drive/Dropbox
+    // client already syncs — this app makes no outbound request of its own.
+    // See backend/services/backup.ts. Anything needing a native dialog or an app
+    // relaunch (folder picker, RESTORE) lives in electron/backup.ts instead,
+    // because those cannot run in the Node verify harness.
+    'backup.status': (db) => backup.backupStatus(db),
+    'backup.configure': (db, p) => backup.setBackupConfig(db, p ?? {}),
+    'backup.run': (db, p) => backup.runBackup(db, p ?? {}),
+    'backup.verify': (_db, p) => backup.verifySnapshot(p.file),
+    'backup.export': (db, p) => backup.exportCsvFile(db, p),
 
     // ----- aggregations -----
     'dashboard.stats': (db, p) => dashboard.getStats(db, p.range, p.branchId),

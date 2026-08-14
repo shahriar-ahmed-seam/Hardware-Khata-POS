@@ -136,7 +136,7 @@ export function ReportToolbar({
         <div className="flex items-center gap-3 min-w-0">
           <Link
             to={backTo}
-            className="inline-flex items-center gap-1 px-2 h-9 rounded-md hover:bg-secondary text-sm text-muted-foreground hover:text-foreground transition"
+            className="inline-flex items-center gap-1 px-2 h-9 rounded-md hover:bg-secondary text-sm text-muted-foreground hover:text-foreground transition print:hidden"
           >
             <ArrowLeft className="size-4" /> Reports
           </Link>
@@ -147,14 +147,23 @@ export function ReportToolbar({
             )}
           </div>
         </div>
+        {/* Export/print controls are chrome — they never belong on the paper. */}
+        {/* Excel and PDF render ONLY when the report actually passes a handler.
+            They used to always show and pop an "wires up at backend stage" alert
+            — a button that does nothing is a defect, and the native alert was
+            also costing the window its keyboard focus. Print always works. */}
         {!hideExport && (
-          <div className="flex items-center gap-1">
-            <Button variant="outline" size="sm" onClick={onExportExcel ?? (() => alert('Excel export — wires up at backend stage.'))}>
-              <FileSpreadsheet className="size-4" /> Excel
-            </Button>
-            <Button variant="outline" size="sm" onClick={onExportPDF ?? (() => alert('PDF export — wires up at backend stage.'))}>
-              <FileText className="size-4" /> PDF
-            </Button>
+          <div className="flex items-center gap-1 print:hidden">
+            {onExportExcel && (
+              <Button variant="outline" size="sm" onClick={onExportExcel}>
+                <FileSpreadsheet className="size-4" /> Excel
+              </Button>
+            )}
+            {onExportPDF && (
+              <Button variant="outline" size="sm" onClick={onExportPDF}>
+                <FileText className="size-4" /> PDF
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={onPrint ?? (() => window.print())}>
               <Printer className="size-4" /> Print
             </Button>
@@ -168,7 +177,9 @@ export function ReportToolbar({
           <div className="inline-flex items-center gap-1 text-muted-foreground text-xs px-1">
             <Calendar className="size-3.5" /> Date
           </div>
-          <div className="flex items-center gap-1 flex-wrap">
+          {/* Interactive filters are chrome too; the resolved range at the end
+              of the row is the part worth printing. */}
+          <div className="flex items-center gap-1 flex-wrap print:hidden">
             {presets.map((p) => (
               <button
                 key={p}
@@ -200,7 +211,7 @@ export function ReportToolbar({
           </div>
 
           {range.preset === 'custom' && (
-            <div className="flex items-center gap-1 ml-1">
+            <div className="flex items-center gap-1 ml-1 print:hidden">
               <input
                 type="date"
                 value={range.from?.slice(0, 10) ?? ''}
@@ -226,7 +237,7 @@ export function ReportToolbar({
               <select
                 value={branch}
                 onChange={(e) => onBranchChange(e.target.value)}
-                className="h-7 rounded-md border border-input bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-ring/50"
+                className="h-7 rounded-md border border-input bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-ring/50 print:hidden"
               >
                 <option value="">All branches</option>
                 {branches.map((b) => (
@@ -241,7 +252,7 @@ export function ReportToolbar({
           {filters && (
             <>
               <div className="w-px h-5 bg-border mx-1" />
-              <div className="flex items-center gap-2 flex-wrap">{filters}</div>
+              <div className="flex items-center gap-2 flex-wrap print:hidden">{filters}</div>
             </>
           )}
 

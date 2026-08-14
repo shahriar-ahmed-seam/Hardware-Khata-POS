@@ -6,6 +6,9 @@ import { NumberField } from '@/components/ui/NumberField';
 import { Banknote, Smartphone, CreditCard, Building2, Save } from 'lucide-react';
 import { cn, formatBDT } from '@/lib/utils';
 import { useSuppliers } from '@/stores/contacts';
+import { api } from '@/lib/api';
+import { toSupplier, type BackendSupplier } from '@/hooks/contactAdapter';
+import type { Supplier } from '@/types/domain';
 
 const METHODS: { id: 'Cash' | 'bKash' | 'Nagad' | 'Card' | 'Bank'; icon: any; label: string; needsRef?: boolean }[] = [
   { id: 'Cash', icon: Banknote, label: 'Cash' },
@@ -22,8 +25,37 @@ interface Props {
 }
 
 export function PaySupplierModal({ open, onClose, supplierId }: Props) {
-  const supplier = useSuppliers((s) => s.items.find((x) => x.id === supplierId));
+  const storeSupplier = useSuppliers((s) => s.items.find((x) => x.id === supplierId)) ?? null;
   const paySupplier = useSuppliers((s) => s.paySupplier);
+
+  // The contacts store holds ONE PAGE of suppliers. This modal usually opens
+  // from a row on that page, but not always (a deep-linked SupplierDetail), so
+  // fall back to a single-record read rather than rendering nothing. Store row
+  // wins when present — `suppliers.pay` rehydrates it, so the payable shown here
+  // stays live.
+  const hasStoreSupplier = !!storeSupplier;
+  const [fetched, setFetched] = useState<Supplier | null>(null);
+
+  useEffect(() => {
+    if (!open || !supplierId || hasStoreSupplier) {
+      setFetched(null);
+      return;
+    }
+    let alive = true;
+    void api<BackendSupplier | null>('suppliers.get', { id: supplierId })
+      .then((row) => {
+        if (alive && row) setFetched(toSupplier(row));
+      })
+      .catch(() => {
+        // Channel error or running outside Electron — leave the modal empty.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open, supplierId, hasStoreSupplier]);
+
+  const supplier = storeSupplier ?? fetched;
+
   const [amount, setAmount] = useState(0);
   const [method, setMethod] = useState<(typeof METHODS)[number]['id']>('Cash');
   const [reference, setReference] = useState('');

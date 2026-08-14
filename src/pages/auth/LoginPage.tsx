@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Hammer, Delete, KeyRound, User as UserIcon, ArrowRight, Lock } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Hammer, Delete, KeyRound, User as UserIcon, ArrowRight, Lock, AlertCircle } from 'lucide-react';
 import { useAuth } from '@/stores/auth';
 import { useUsers } from '@/stores/users';
 import { useSettings } from '@/stores/settings';
@@ -7,6 +7,10 @@ import { toast } from '@/stores/toast';
 import { cn } from '@/lib/utils';
 
 type Mode = 'pin' | 'password';
+
+/** PIN bounds accepted by the first-run wizard and Settings → Users. */
+const MIN_PIN = 4;
+const MAX_PIN = 6;
 
 function initials(name: string): string {
   return name
@@ -20,20 +24,48 @@ function initials(name: string): string {
 
 export default function LoginPage() {
   const business = useSettings((s) => s.business);
-  const users = useUsers((s) => s.users).filter((u) => u.status === 'active');
+  const allUsers = useUsers((s) => s.users);
+  const usersLoading = useUsers((s) => s.loading);
+  const users = allUsers.filter((u) => u.status === 'active');
   const loginWithPin = useAuth((s) => s.loginWithPin);
   const loginWithPassword = useAuth((s) => s.loginWithPassword);
 
   const [mode, setMode] = useState<Mode>('pin');
-  const [selectedUserId, setSelectedUserId] = useState<string>(users[0]?.id ?? '');
+  const [selectedUserId, setSelectedUserId] = useState<string>('');
   const [pin, setPin] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [shake, setShake] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [forgotOpen, setForgotOpen] = useState(false);
 
+  /**
+   * LOAD THE ACCOUNT LIST HERE.
+   *
+   * This screen used to render whatever happened to be in the users store, and
+   * nothing hydrated that store before login — `hydrate()` was only called from
+   * the first-run wizard and from pages that live BEHIND the login. So on a
+   * normal launch (and on a freshly installed copy) the account list was empty,
+   * no account buttons rendered, `selectedUserId` stayed '' and there was
+   * literally no way to sign in. The login screen has to be self-sufficient.
+   */
+  useEffect(() => {
+    void useUsers.getState().hydrate();
+  }, []);
+
+  /**
+   * Select the first account once the list actually arrives. The initial state
+   * above cannot do this: `users` is empty on the first render, and a `useState`
+   * initialiser never re-runs.
+   */
+  useEffect(() => {
+    if (selectedUserId && users.some((u) => u.id === selectedUserId)) return;
+    if (users.length > 0) setSelectedUserId(users[0].id);
+  }, [users, selectedUserId]);
+
   const selectedUser = users.find((u) => u.id === selectedUserId);
+  const canSubmitPin = !!selectedUserId && pin.length >= MIN_PIN && !busy;
 
   const fail = (msg: string) => {
     setError(msg);
@@ -42,23 +74,57 @@ export default function LoginPage() {
     setPin('');
   };
 
-  const submitPin = (value: string) => {
-    void loginWithPin(selectedUserId, value).then((r) => {
-      if (!r.ok) fail(r.error ?? 'Login failed');
-      else toast.success(`Welcome back, ${selectedUser?.name.split(' ')[0] ?? ''}`);
-    });
+  const submitPin = () => {
+    if (!canSubmitPin) return;
+    setBusy(true);
+    void loginWithPin(selectedUserId, pin)
+      .then((r) => {
+        if (!r.ok) fail(r.error ?? 'Login failed');
+        else toast.success(`Welcome back, ${selectedUser?.name.split(' ')[0] ?? ''}`);
+      })
+      .finally(() => setBusy(false));
   };
 
+  /**
+   * NOTE: there is deliberately no "auto-submit at N digits" any more.
+   *
+   * It used to fire at `selectedUser?.pin?.length ?? 4`, but `users.list`
+   * returns sanitized rows — the PIN is bcrypt-hashed in the database and is
+   * never sent to the renderer — so that expression was ALWAYS 4. Anyone whose
+   * PIN was 5 or 6 digits (the wizard accepts up to 6) got a failed login fired
+   * at the 4th digit, which also cleared the field: their PIN could never be
+   * entered at all. Submitting is now explicit.
+   */
   const pressDigit = (d: string) => {
-    if (pin.length >= 6) return;
-    const next = pin + d;
-    setPin(next);
+    if (pin.length >= MAX_PIN) return;
+    setPin((p) => p + d);
     setError('');
-    if (next.length === (selectedUser?.pin?.length ?? 4)) {
-      // auto-submit when reaching the expected length
-      setTimeout(() => submitPin(next), 120);
-    }
   };
+
+  // A shop counter has a real keyboard and a numeric keypad; typing should work
+  // without hunting for the on-screen buttons.
+  useEffect(() => {
+    if (mode !== 'pin') return;
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (document.activeElement?.tagName ?? '').toLowerCase();
+      if (['input', 'textarea', 'select'].includes(tag)) return;
+      if (/^[0-9]$/.test(e.key)) {
+        e.preventDefault();
+        pressDigit(e.key);
+      } else if (e.key === 'Backspace') {
+        e.preventDefault();
+        setPin((p) => p.slice(0, -1));
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        submitPin();
+      } else if (e.key === 'Escape') {
+        setPin('');
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, pin, selectedUserId, canSubmitPin]);
 
   const submitPassword = () => {
     void loginWithPassword(username, password).then((r) => {
@@ -97,8 +163,9 @@ export default function LoginPage() {
             hardware trade.
           </p>
         </div>
+        {/* No invented address fallback — an unset field prints nothing. */}
         <div className="relative z-10 text-white/50 text-xs">
-          {business.address ?? 'Mirpur, Dhaka'} · Offline-first
+          {business.address ? `${business.address} · ` : ''}Offline-first
         </div>
       </div>
 
@@ -149,34 +216,62 @@ export default function LoginPage() {
 
           {mode === 'pin' ? (
             <>
-              {/* User chooser */}
-              <div className="flex gap-2 flex-wrap mb-5">
-                {users.map((u) => (
+              {/* Account chooser — with real loading and empty states, so an
+                  empty list can never present a dead PIN pad again. */}
+              {usersLoading && users.length === 0 ? (
+                <div className="mb-5 text-sm text-muted-foreground">Loading accounts…</div>
+              ) : users.length === 0 ? (
+                <div className="mb-5 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
+                  <div className="flex items-start gap-2 text-destructive">
+                    <AlertCircle className="size-4 mt-0.5 shrink-0" />
+                    <div>
+                      <div className="font-semibold">No accounts found on this computer</div>
+                      <div className="mt-1 text-foreground/80">
+                        If you set a password for your account, sign in with that. Otherwise
+                        restore a backup from Settings on a working copy.
+                      </div>
+                    </div>
+                  </div>
                   <button
-                    key={u.id}
                     onClick={() => {
-                      setSelectedUserId(u.id);
-                      setPin('');
+                      setMode('password');
                       setError('');
                     }}
-                    className={cn(
-                      'flex items-center gap-2 px-2.5 py-1.5 rounded-lg border transition',
-                      selectedUserId === u.id
-                        ? 'border-primary bg-primary/10'
-                        : 'border-border hover:bg-secondary',
-                    )}
+                    className="mt-2.5 h-9 px-3 rounded-md bg-primary text-primary-foreground text-sm font-medium"
                   >
-                    <div className="size-7 rounded-full bg-primary/15 text-primary grid place-items-center text-[11px] font-bold">
-                      {initials(u.name)}
-                    </div>
-                    <span className="text-sm font-medium">{u.name.split(' ')[0]}</span>
+                    Use password instead
                   </button>
-                ))}
-              </div>
+                </div>
+              ) : (
+                <div className="flex gap-2 flex-wrap mb-5">
+                  {users.map((u) => (
+                    <button
+                      key={u.id}
+                      onClick={() => {
+                        setSelectedUserId(u.id);
+                        setPin('');
+                        setError('');
+                      }}
+                      className={cn(
+                        'flex items-center gap-2 px-3 py-2 rounded-lg border transition',
+                        selectedUserId === u.id
+                          ? 'border-primary bg-primary/10'
+                          : 'border-border hover:bg-secondary',
+                      )}
+                    >
+                      <div className="size-8 rounded-full bg-primary/15 text-primary grid place-items-center text-xs font-bold">
+                        {initials(u.name)}
+                      </div>
+                      <span className="text-sm font-medium">{u.name.split(' ')[0]}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
 
-              {/* PIN dots */}
+              {/* PIN dots. The dot count follows what has been TYPED (min 4), not
+                  the stored PIN length — the renderer never receives that. */}
               <div className={cn('flex items-center justify-center gap-3 mb-5', shake && 'animate-[wiggle_0.4s]')}>
-                {Array.from({ length: selectedUser?.pin?.length ?? 4 }).map((_, i) => (
+                {Array.from({ length: Math.max(MIN_PIN, pin.length) }).map((_, i) => (
                   <span
                     key={i}
                     className={cn(
@@ -207,9 +302,17 @@ export default function LoginPage() {
                 </PadButton>
               </div>
 
-              <div className="text-center mt-4 text-[11px] text-muted-foreground">
-                Demo PINs: Seam <span className="font-mono">1234</span> · Rana{' '}
-                <span className="font-mono">1111</span>
+              {/* Explicit submit. A 5- or 6-digit PIN was impossible to enter
+                  while submitting depended on guessing the PIN's length. */}
+              <button
+                onClick={submitPin}
+                disabled={!canSubmitPin}
+                className="mt-4 h-12 w-full max-w-[260px] mx-auto rounded-lg bg-primary text-primary-foreground text-base font-semibold inline-flex items-center justify-center gap-2 transition hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none"
+              >
+                {busy ? 'Signing in…' : 'Sign in'} <ArrowRight className="size-4" />
+              </button>
+              <div className="text-center text-xs text-muted-foreground mt-2">
+                Enter your 4 to 6 digit PIN, then press Sign in.
               </div>
             </>
           ) : (
@@ -257,10 +360,6 @@ export default function LoginPage() {
               >
                 Sign in <ArrowRight className="size-4" />
               </button>
-              <div className="text-center text-[11px] text-muted-foreground">
-                Demo: username <span className="font-mono">seam</span> · password{' '}
-                <span className="font-mono">admin123</span>
-              </div>
             </form>
           )}
 
@@ -274,9 +373,8 @@ export default function LoginPage() {
             {forgotOpen && (
               <div className="mt-3 text-left text-[12px] text-muted-foreground bg-secondary/40 rounded-md p-3 border border-border">
                 Offline recovery: PINs are reset by the shop owner from{' '}
-                <span className="font-semibold text-foreground">Settings → Users</span>. If you're
-                the owner and locked out, restore from a backup or contact support with your license
-                key. (Backend will add a secure offline reset code.)
+                <span className="font-semibold text-foreground">Settings → Users</span>. If you are
+                the owner and locked out, restore from a backup.
               </div>
             )}
           </div>

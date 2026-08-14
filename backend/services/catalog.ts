@@ -56,11 +56,21 @@ export function createProduct(db: DB, input: ProductInput) {
   return tx(db, () => {
     const id = input.id ?? newId('p');
     const now = new Date().toISOString();
+    
+    // Auto-assign default category and brand if not provided
+    const categoryId = input.categoryId || 'cat_none';
+    const brandId = input.brandId || 'b_none';
+    
     db.prepare(
-      `INSERT INTO products (id, sku, barcode, name, category_id, brand_id, unit, cost, price,
+      // avg_cost starts equal to cost and cost_updated_at to now: a brand-new
+      // product has exactly one known buying price, so the average IS that price.
+      // Leaving avg_cost at its 0 default would print ৳0.00 in the product list.
+      `INSERT INTO products (id, sku, barcode, name, category_id, brand_id, unit, cost, avg_cost,
+         cost_updated_at, price,
          wholesale_price, contractor_price, reorder_level, tax_pct, warranty_id, image_url, description,
          manage_stock, allow_negative_sale, allow_discount, show_in_pos, not_for_sale, created_at, updated_at)
-       VALUES (@id, @sku, @barcode, @name, @categoryId, @brandId, @unit, @cost, @price,
+       VALUES (@id, @sku, @barcode, @name, @categoryId, @brandId, @unit, @cost, @cost,
+         @now, @price,
          @wholesale, @contractor, @reorder, @tax, @warrantyId, @imageUrl, @description,
          @manageStock, @allowNeg, @allowDisc, @showInPos, @notForSale, @now, @now)`,
     ).run({
@@ -68,8 +78,8 @@ export function createProduct(db: DB, input: ProductInput) {
       sku: input.sku,
       barcode: input.barcode ?? null,
       name: input.name,
-      categoryId: input.categoryId ?? null,
-      brandId: input.brandId ?? null,
+      categoryId,
+      brandId,
       unit: input.unit ?? 'pc',
       cost: input.cost ?? 0,
       price: input.price ?? 0,
@@ -88,6 +98,22 @@ export function createProduct(db: DB, input: ProductInput) {
       now,
     });
     syncProductFts(db, id);
+
+    // Open the buying-price history with the product's starting cost, so the
+    // very first price change has something to compare against and the average
+    // is built from a complete record rather than starting mid-story.
+    if ((input.cost ?? 0) > 0) {
+      db.prepare(
+        `INSERT INTO product_cost_history (id, product_id, cost, at, user_id, source, note)
+         VALUES (@id, @productId, @cost, @at, @userId, 'initial', 'Opening buying price')`,
+      ).run({
+        id: newId('pch'),
+        productId: id,
+        cost: input.cost ?? 0,
+        at: now,
+        userId: input.userId ?? null,
+      });
+    }
 
     if (input.openingStock && input.openingStock !== 0 && input.branchId) {
       recordMovement(db, {
@@ -179,31 +205,177 @@ export function updateProduct(db: DB, id: string, patch: Partial<ProductInput>) 
   });
 }
 
-export function deleteProduct(db: DB, id: string) {
+/** Tables whose rows are historical documents referencing a product. */
+const PRODUCT_DOC_REFS = [
+  ['sale_lines', 'sales history'],
+  ['purchase_lines', 'purchase history'],
+  ['sell_return_lines', 'sell-return history'],
+  ['purchase_return_lines', 'purchase-return history'],
+  ['stock_transfer_lines', 'transfer history'],
+  ['stock_adjustment_lines', 'adjustment history'],
+] as const;
+
+/**
+ * How many historical documents reference this product, and of what kind.
+ * Read-only — the UI calls it to decide whether Delete can be offered at all,
+ * or whether the honest option is Archive.
+ */
+export function productUsage(db: DB, id: string) {
+  const used: { table: string; label: string; count: number }[] = [];
+  for (const [table, label] of PRODUCT_DOC_REFS) {
+    const c = db.prepare(`SELECT COUNT(*) c FROM ${table} WHERE product_id = ?`).get(id) as {
+      c: number;
+    };
+    if (c.c > 0) used.push({ table, label, count: c.c });
+  }
+  const stock = stockOnHand(db, id);
+  const archived = !!(
+    db.prepare('SELECT archived_at FROM products WHERE id = ?').get(id) as
+      | { archived_at: string | null }
+      | undefined
+  )?.archived_at;
+  return {
+    documents: used,
+    documentCount: used.reduce((s, u) => s + u.count, 0),
+    /** True when the product can be hard-deleted (no document references it). */
+    deletable: used.length === 0,
+    stock,
+    archived,
+  };
+}
+
+export interface DeleteProductOptions {
+  /**
+   * Admin override for the "still has stock" guard only. It does NOT bypass the
+   * document check — see below.
+   */
+  force?: boolean;
+}
+
+/**
+ * Hard-delete a product.
+ *
+ * TWO GUARDS, AND ONLY ONE OF THEM IS OVERRIDABLE.
+ *
+ *  1. DOCUMENT REFERENCES — never overridable, by anyone. `sale_lines`,
+ *     `purchase_lines` etc. declare `product_id REFERENCES products(id)` with no
+ *     ON DELETE clause, so SQLite itself refuses the delete; and even if it did
+ *     not, removing the row would silently rewrite the shop's history — past
+ *     invoices, COGS and every report that joins on the product. Retiring such a
+ *     product is `archiveProduct`, which is reversible and keeps history intact.
+ *
+ *  2. REMAINING STOCK — overridable with `force` (gated behind the
+ *     `products.delete` permission at the IPC boundary, i.e. Admin). It is a
+ *     safety prompt, not an integrity rule: this function deletes the product's
+ *     stock_movements anyway, and with no document referencing the product those
+ *     movements cannot be part of any figure that outlives it. Without the
+ *     override the owner would have to post a fake zeroing adjustment first,
+ *     which invents a stock event that never happened.
+ */
+export function deleteProduct(db: DB, id: string, opts: DeleteProductOptions = {}) {
   return tx(db, () => {
-    // Guard: don't delete a product referenced by any historical document — keeps
-    // audit history intact. Suggest "not for sale" instead for retired products.
-    const refs = [
-      ['sale_lines', 'sales history'],
-      ['purchase_lines', 'purchase history'],
-      ['sell_return_lines', 'sell-return history'],
-      ['purchase_return_lines', 'purchase-return history'],
-      ['stock_transfer_lines', 'transfer history'],
-      ['stock_adjustment_lines', 'adjustment history'],
-    ] as const;
-    for (const [table, label] of refs) {
-      const c = db.prepare(`SELECT COUNT(*) c FROM ${table} WHERE product_id = ?`).get(id) as { c: number };
+    const existing = db.prepare('SELECT name FROM products WHERE id = ?').get(id) as
+      | { name: string }
+      | undefined;
+    if (!existing) throw new Error('Product not found');
+
+    for (const [table, label] of PRODUCT_DOC_REFS) {
+      const c = db.prepare(`SELECT COUNT(*) c FROM ${table} WHERE product_id = ?`).get(id) as {
+        c: number;
+      };
       if (c.c > 0) {
-        throw new Error(`Cannot delete: product has ${label}. Mark it "not for sale" instead.`);
+        throw new Error(
+          `Cannot delete: product has ${label}. Archive it instead — it disappears from the catalogue and the POS, and past documents stay intact.`,
+        );
       }
     }
-    const hasStock = stockOnHand(db, id);
-    if (Math.abs(hasStock) > 0.001) {
-      throw new Error('Cannot delete: product still has stock. Adjust stock to zero first.');
+
+    if (!opts.force) {
+      const hasStock = stockOnHand(db, id);
+      if (Math.abs(hasStock) > 0.001) {
+        throw new Error(
+          `Cannot delete: product still has ${hasStock} in stock. Adjust stock to zero first, or delete anyway to discard it.`,
+        );
+      }
     }
+
+    db.prepare('DELETE FROM product_cost_history WHERE product_id = ?').run(id);
     db.prepare('DELETE FROM stock_movements WHERE product_id = ?').run(id);
     db.prepare('DELETE FROM fts_products WHERE product_id = ?').run(id);
     db.prepare('DELETE FROM products WHERE id = ?').run(id);
+
+    logActivity(db, {
+      action: 'deleted',
+      entity: 'product',
+      entityId: id,
+      message: `Deleted product: ${existing.name}`,
+      at: new Date().toISOString(),
+    });
+    return { id };
+  });
+}
+
+/**
+ * Retire a product without touching history. This is the answer for a product
+ * that has already been sold or purchased: it leaves the catalogue and the POS,
+ * but every past invoice, report and COGS figure still resolves.
+ *
+ * `show_in_pos` is forced to 0 as well so an archived product can never be added
+ * to a cart. `not_for_sale` is deliberately LEFT ALONE — it is a different fact
+ * about the product ("purchase-only item") and un-archiving must restore exactly
+ * what the owner had set.
+ */
+export function archiveProduct(db: DB, id: string, userId?: string) {
+  return tx(db, () => {
+    const existing = db.prepare('SELECT name, archived_at FROM products WHERE id = ?').get(id) as
+      | { name: string; archived_at: string | null }
+      | undefined;
+    if (!existing) throw new Error('Product not found');
+    if (existing.archived_at) return { id, archivedAt: existing.archived_at };
+
+    const now = new Date().toISOString();
+    db.prepare(
+      'UPDATE products SET archived_at = ?, show_in_pos = 0, updated_at = ? WHERE id = ?',
+    ).run(now, now, id);
+    // Out of the search index too, so it stops appearing in the POS scanner and
+    // the global search. Re-added verbatim by unarchiveProduct.
+    db.prepare('DELETE FROM fts_products WHERE product_id = ?').run(id);
+
+    logActivity(db, {
+      by: userId,
+      action: 'archived',
+      entity: 'product',
+      entityId: id,
+      message: `Archived product: ${existing.name}`,
+      at: now,
+    });
+    return { id, archivedAt: now };
+  });
+}
+
+/** Bring an archived product back into the catalogue and the POS. */
+export function unarchiveProduct(db: DB, id: string, userId?: string) {
+  return tx(db, () => {
+    const existing = db.prepare('SELECT name, archived_at FROM products WHERE id = ?').get(id) as
+      | { name: string; archived_at: string | null }
+      | undefined;
+    if (!existing) throw new Error('Product not found');
+    if (!existing.archived_at) return { id };
+
+    const now = new Date().toISOString();
+    db.prepare(
+      'UPDATE products SET archived_at = NULL, show_in_pos = 1, updated_at = ? WHERE id = ?',
+    ).run(now, id);
+    syncProductFts(db, id);
+
+    logActivity(db, {
+      by: userId,
+      action: 'restored',
+      entity: 'product',
+      entityId: id,
+      message: `Restored product: ${existing.name}`,
+      at: now,
+    });
     return { id };
   });
 }
