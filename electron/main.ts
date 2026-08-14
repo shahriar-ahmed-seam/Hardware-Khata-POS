@@ -5,6 +5,14 @@ import { initDb, closeDb } from './db.ts';
 import { registerIpc } from './ipc.ts';
 import { initBackupDefaults, startAutoBackup, stopAutoBackup } from './backup.ts';
 import { initInvoicePdfDefaults } from './invoicePdf.ts';
+import { initUpdater } from './updater.ts';
+import { applyPerfFlagsBeforeReady } from './perf.ts';
+
+// MODULE SCOPE, ON PURPOSE. `app.disableHardwareAcceleration()` throws once the
+// app is ready, so the owner's performance preference has to be read and applied
+// before anything else happens — including before the database is opened, which
+// is why the flags live in their own JSON file. See electron/perf.ts.
+applyPerfFlagsBeforeReady();
 
 const isDev = !app.isPackaged;
 
@@ -193,6 +201,10 @@ app.whenReady().then(() => {
   registerIpc();
   createSplash();
   createWindow();
+  // In-app updates. Reads the owner's preference from the database, so it must
+  // run after initDb(). Deliberately last and self-contained: initUpdater never
+  // throws, because a failing update check must not stop the shop trading.
+  initUpdater();
 });
 
 app.on('window-all-closed', () => {

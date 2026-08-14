@@ -8,13 +8,17 @@
 
 ## 1. Prove the state before touching anything
 
+> **Version is now 0.2.0 and the app UPDATES ITSELF** from GitHub Releases.
+> Bump `package.json` version + `npm run release:win` to ship — see `RELEASE.md`.
+> Editing the frontend? `docs/08-FRONTEND-MAP.md` says which file draws what.
+
 ```bash
 npm install                        # if node_modules is missing
 npm run backend:verify:all         # must print 962 checks across SEVEN suites
 npx tsc --noEmit -p tsconfig.json  # frontend typecheck — clean
 npx tsc --noEmit -p tsconfig.backend.json
 npm run build                      # renderer + main + preload
-npm run i18n:check                 # 32 checks, 2,252 Bangla phrases
+npm run i18n:check                 # 32 checks, 2,290 Bangla phrases
 npm run rebuild:electron           # LEAVE IT ON THE ELECTRON ABI (see §6)
 ```
 

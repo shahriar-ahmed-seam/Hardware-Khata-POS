@@ -30,6 +30,38 @@ export default defineConfig({
       '@': path.resolve(__dirname, 'src'),
     },
   },
+  build: {
+    /**
+     * SPLIT THE VENDOR CODE OUT OF THE APP BUNDLE.
+     *
+     * It was one ~1.7 MB file, which the low-end shop PC had to read, parse and
+     * compile as a single blocking unit on every launch. Splitting does not
+     * reduce the total bytes, but it lets Chromium parse the pieces in parallel
+     * and — because the vendor chunks change far less often than app code — an
+     * update only invalidates the parts that actually changed, so the V8 code
+     * cache for React/recharts survives.
+     *
+     * Grouped by how often each changes, NOT one chunk per package: hundreds of
+     * tiny chunks would cost more in requests than they save in parsing.
+     */
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Never changes unless React itself is upgraded.
+          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+          // NOTE: `recharts` is deliberately NOT named here. Naming it produced a
+          // `vendor-charts` chunk that Vite then added to index.html as a
+          // <link rel="modulepreload">, so the browser fetched AND compiled
+          // ~410 KB of charting code during startup — exactly what lazy-loading
+          // the widgets was meant to avoid. Left unnamed, it is folded into the
+          // dynamically-imported widgets chunk and only loads with it.
+          // Icons: a large module graph, but tree-shaken and stable.
+          'vendor-icons': ['lucide-react'],
+          'vendor-data': ['@tanstack/react-query', 'zustand', 'date-fns'],
+        },
+      },
+    },
+  },
   plugins: [
     react(),
     electron([

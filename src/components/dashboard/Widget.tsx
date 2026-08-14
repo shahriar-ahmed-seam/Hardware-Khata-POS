@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import { ReactNode, Suspense } from 'react';
 import { Link } from 'react-router-dom';
 import { ChevronRight, X, GripVertical } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/Card';
@@ -89,7 +89,24 @@ export function Widget({
           </div>
         </div>
       </CardHeader>
-      <CardContent className="pt-2 flex-1 min-h-0 flex flex-col">{children}</CardContent>
+      {/* The widget BODIES are code-split (see lazyWidgets.ts), so every widget
+          needs a Suspense boundary. It lives here rather than around the whole
+          grid on purpose: one boundary per card means each widget appears as soon
+          as it can, and the dashboard frame — titles, links, layout — is on screen
+          immediately instead of being replaced wholesale by a spinner. */}
+      <CardContent className="pt-2 flex-1 min-h-0 flex flex-col">
+        <Suspense fallback={<WidgetSkeleton />}>{children}</Suspense>
+      </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Placeholder while a widget body loads. It only needs to hold the card's height
+ * steady so the grid does not jump when the chart arrives.
+ */
+function WidgetSkeleton() {
+  return (
+    <div className="flex-1 min-h-[6rem] rounded-md bg-secondary/40 animate-pulse" aria-hidden />
   );
 }

@@ -15,6 +15,8 @@ import {
   ShoppingCart,
   Lock,
   HandCoins,
+  RefreshCw,
+  Gauge,
 } from 'lucide-react';
 import { useCanAll } from '@/hooks/useCan';
 import { cn } from '@/lib/utils';
@@ -57,6 +59,8 @@ const tiles: Tile[] = [
   { group: 'app', to: '/settings/shortcuts',        icon: Keyboard,     label: 'Keyboard Shortcuts',     desc: 'Customize F-keys and combos' },
   // System
   { group: 'system', to: '/settings/backup',        icon: CloudUpload,  label: 'Backup & Cloud',         desc: 'Save a copy, restore, export CSV', needs: 'settings.backup' },
+  { group: 'system', to: '/settings/updates',       icon: RefreshCw,    label: 'Updates',                desc: 'Get the newest version of this app', needs: 'settings.business' },
+  { group: 'system', to: '/settings/performance',   icon: Gauge,        label: 'Performance',            desc: 'Settings for an older or slower computer', needs: 'settings.business' },
 ];
 
 /** Every distinct permission the tiles above reference. */

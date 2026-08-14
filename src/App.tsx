@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { Suspense, lazy, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AppShell } from './components/layout/AppShell';
 import { AuthGate } from './components/auth/AuthGate';
@@ -10,6 +10,7 @@ import { useSettings } from './stores/settings';
 import { useUI } from './stores/ui';
 import { useAuth } from './stores/auth';
 import { useFocusRescue } from './hooks/useFocusRescue';
+import { initReduceAnimations } from './lib/perf';
 import { applyPersistedLang } from './lib/i18n';
 
 import Dashboard from './pages/Dashboard';
@@ -55,44 +56,73 @@ import ExpenseCategories from './pages/ExpenseCategories';
 import ImportExpenses from './pages/ImportExpenses';
 import ImportHub from './pages/ImportHub';
 import Reports from './pages/Reports';
-import ProfitLossPage from './pages/reports/ProfitLossPage';
-import ActivityLogPage from './pages/reports/ActivityLogPage';
-import ProductSellPage from './pages/reports/ProductSellPage';
-import ProductPurchasePage from './pages/reports/ProductPurchasePage';
-import SellPaymentPage from './pages/reports/SellPaymentPage';
-import PurchasePaymentPage from './pages/reports/PurchasePaymentPage';
-import TaxReportPage from './pages/reports/TaxReportPage';
-import TrendingPage from './pages/reports/TrendingPage';
-import SalesRepPage from './pages/reports/SalesRepPage';
-import CustomerGroupPage from './pages/reports/CustomerGroupPage';
-import ContactsReportPage from './pages/reports/ContactsReportPage';
-import StockReportPage from './pages/reports/StockReportPage';
-import StockAlertReportPage from './pages/reports/StockAlertReportPage';
-import StockAdjustmentReportPage from './pages/reports/StockAdjustmentReportPage';
-import StockTransfersReportPage from './pages/reports/StockTransfersReportPage';
-import ItemsReportPage from './pages/reports/ItemsReportPage';
+
+/**
+ * REPORTS AND SETTINGS ARE LOADED ON DEMAND.
+ *
+ * These 33 screens were part of the single startup bundle, so the shop's slow PC
+ * parsed and compiled every report and every settings form before it could show
+ * the dashboard — including the charting library, which only the dashboard
+ * widgets and these reports use. None of them is ever the first screen: the app
+ * opens on the dashboard or the POS.
+ *
+ * They are ordinary default exports, so this is purely a change of WHEN the code
+ * is fetched. The files themselves are unchanged, and because everything is on
+ * the local disk the load is a few milliseconds — the <Suspense> fallback below
+ * is barely seen. Frequently used screens (POS, Sales, Products, Contacts) are
+ * deliberately left eager: a delay at the counter is not worth the saved memory.
+ */
+const ProfitLossPage = lazy(() => import('./pages/reports/ProfitLossPage'));
+const ActivityLogPage = lazy(() => import('./pages/reports/ActivityLogPage'));
+const ProductSellPage = lazy(() => import('./pages/reports/ProductSellPage'));
+const ProductPurchasePage = lazy(() => import('./pages/reports/ProductPurchasePage'));
+const SellPaymentPage = lazy(() => import('./pages/reports/SellPaymentPage'));
+const PurchasePaymentPage = lazy(() => import('./pages/reports/PurchasePaymentPage'));
+const TaxReportPage = lazy(() => import('./pages/reports/TaxReportPage'));
+const TrendingPage = lazy(() => import('./pages/reports/TrendingPage'));
+const SalesRepPage = lazy(() => import('./pages/reports/SalesRepPage'));
+const CustomerGroupPage = lazy(() => import('./pages/reports/CustomerGroupPage'));
+const ContactsReportPage = lazy(() => import('./pages/reports/ContactsReportPage'));
+const StockReportPage = lazy(() => import('./pages/reports/StockReportPage'));
+const StockAlertReportPage = lazy(() => import('./pages/reports/StockAlertReportPage'));
+const StockAdjustmentReportPage = lazy(() => import('./pages/reports/StockAdjustmentReportPage'));
+const StockTransfersReportPage = lazy(() => import('./pages/reports/StockTransfersReportPage'));
+const ItemsReportPage = lazy(() => import('./pages/reports/ItemsReportPage'));
 // SMS pages are intentionally NOT routed — the whole feature had no backend, so
 // its credit balance, delivery status and history were placeholder values. The
 // files remain under src/pages/sms/ for whenever a real BD gateway is wired up.
 import Settings from './pages/Settings';
-import BusinessInfoPage from './pages/settings/BusinessInfoPage';
-import BranchesPage from './pages/settings/BranchesPage';
-import TaxRatesPage from './pages/settings/TaxRatesPage';
-import InvoiceSchemesPage from './pages/settings/InvoiceSchemesPage';
-import ReceiptTemplatePage from './pages/settings/ReceiptTemplatePage';
-import BarcodeSettingsPage from './pages/settings/BarcodeSettingsPage';
-import PrintersPage from './pages/settings/PrintersPage';
-import AppearancePage from './pages/settings/AppearancePage';
-import POSPrefsPage from './pages/settings/POSPrefsPage';
-import CashRegisterPrefsPage from './pages/settings/CashRegisterPrefsPage';
-import ShortcutsPage from './pages/settings/ShortcutsPage';
-import UsersPage from './pages/settings/UsersPage';
-import RolesPage from './pages/settings/RolesPage';
-import SalesAgentsPage from './pages/settings/SalesAgentsPage';
-import BackupPage from './pages/settings/BackupPage';
+const BusinessInfoPage = lazy(() => import('./pages/settings/BusinessInfoPage'));
+const BranchesPage = lazy(() => import('./pages/settings/BranchesPage'));
+const TaxRatesPage = lazy(() => import('./pages/settings/TaxRatesPage'));
+const InvoiceSchemesPage = lazy(() => import('./pages/settings/InvoiceSchemesPage'));
+const ReceiptTemplatePage = lazy(() => import('./pages/settings/ReceiptTemplatePage'));
+const BarcodeSettingsPage = lazy(() => import('./pages/settings/BarcodeSettingsPage'));
+const PrintersPage = lazy(() => import('./pages/settings/PrintersPage'));
+const AppearancePage = lazy(() => import('./pages/settings/AppearancePage'));
+const POSPrefsPage = lazy(() => import('./pages/settings/POSPrefsPage'));
+const CashRegisterPrefsPage = lazy(() => import('./pages/settings/CashRegisterPrefsPage'));
+const ShortcutsPage = lazy(() => import('./pages/settings/ShortcutsPage'));
+const UsersPage = lazy(() => import('./pages/settings/UsersPage'));
+const RolesPage = lazy(() => import('./pages/settings/RolesPage'));
+const SalesAgentsPage = lazy(() => import('./pages/settings/SalesAgentsPage'));
+const BackupPage = lazy(() => import('./pages/settings/BackupPage'));
+const UpdatesPage = lazy(() => import('./pages/settings/UpdatesPage'));
+const PerformancePage = lazy(() => import('./pages/settings/PerformancePage'));
 import CashRegister from './pages/CashRegister';
 import RegisterReport from './pages/RegisterReport';
 import Placeholder from './pages/Placeholder';
+
+/**
+ * Shown while an on-demand screen is fetched. Deliberately plain: a skeleton that
+ * mimics a page the user has not seen yet reads as a rendering glitch, and this
+ * is on screen for milliseconds from a local disk.
+ */
+function RouteLoading() {
+  return (
+    <div className="p-6 text-sm text-muted-foreground">Loading…</div>
+  );
+}
 
 export default function App() {
   const init = useTheme((s) => s.init);
@@ -122,6 +152,12 @@ export default function App() {
     applyPersistedLang();
   }, []);
 
+  // Per-machine performance preference (Settings → Performance). Silent on
+  // failure — see src/lib/perf.ts.
+  useEffect(() => {
+    void initReduceAnimations();
+  }, []);
+
   // Apply persisted appearance on app load and on changes
   useEffect(() => {
     const root = document.documentElement;
@@ -136,6 +172,9 @@ export default function App() {
     <>
       <AuthGate>
         <AppShell>
+          {/* Boundary for the on-demand report/settings screens above. Everything
+              is on the local disk, so this is on screen for a few milliseconds. */}
+          <Suspense fallback={<RouteLoading />}>
           <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<Dashboard />} />
@@ -222,8 +261,11 @@ export default function App() {
         <Route path="/settings/roles" element={<RolesPage />} />
         <Route path="/settings/sales-agents" element={<SalesAgentsPage />} />
         <Route path="/settings/backup" element={<BackupPage />} />
+        <Route path="/settings/updates" element={<UpdatesPage />} />
+        <Route path="/settings/performance" element={<PerformancePage />} />
         <Route path="*" element={<Placeholder title="Not Found" />} />
         </Routes>
+          </Suspense>
       </AppShell>
     </AuthGate>
 

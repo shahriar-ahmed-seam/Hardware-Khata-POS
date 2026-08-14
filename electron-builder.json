@@ -15,6 +15,14 @@
     "node_modules/better-sqlite3/**/*"
   ],
   "npmRebuild": true,
+  "publish": [
+    {
+      "provider": "github",
+      "owner": "shahriar-ahmed-seam",
+      "repo": "Hardware-Khata-POS",
+      "releaseType": "release"
+    }
+  ],
   "win": {
     "icon": "build/icon.png",
     "target": [

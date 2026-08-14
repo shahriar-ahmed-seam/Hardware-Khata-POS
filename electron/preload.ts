@@ -22,4 +22,17 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('api:invoke', channel, payload),
     channels: () => ipcRenderer.invoke('api:channels'),
   },
+  /**
+   * In-app updates. The CALLS go through db.invoke like everything else (so they
+   * pass the same permission gate); this only adds a PUSH channel, because
+   * download progress arrives from the main process unprompted and polling it
+   * would be both wasteful and laggy.
+   */
+  updates: {
+    onState: (cb: (state: unknown) => void) => {
+      const listener = (_: unknown, state: unknown) => cb(state);
+      ipcRenderer.on('update:state', listener);
+      return () => ipcRenderer.removeListener('update:state', listener);
+    },
+  },
 });

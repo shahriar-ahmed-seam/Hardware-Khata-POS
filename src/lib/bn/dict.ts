@@ -2920,3 +2920,65 @@ Object.assign(BN, {
     'একাধিক ড্রাইভ লাগানো আছে — কোনটি তা বেছে নিন।',
   'That drive is no longer connected.': 'ওই ড্রাইভটি আর লাগানো নেই।',
 });
+
+// ---------------------------------------------------------------------------
+// APPEND-ONLY BLOCK — Settings → Updates and Settings → Performance.
+// ('Loading…', 'Never', 'Cancel' and friends already exist above.)
+// ---------------------------------------------------------------------------
+Object.assign(BN, {
+  // ---- settings tiles ----
+  Updates: 'হালনাগাদ',
+  'Get the newest version of this app': 'এই অ্যাপের নতুন সংস্করণ নিন',
+  Performance: 'কর্মক্ষমতা',
+  'Settings for an older or slower computer': 'পুরোনো বা ধীর কম্পিউটারের জন্য সেটিংস',
+
+  // ---- updates screen ----
+  'Get the newest version without copying files between computers':
+    'এক কম্পিউটার থেকে আরেক কম্পিউটারে ফাইল কপি না করেই নতুন সংস্করণ নিন',
+  'Check for updates': 'হালনাগাদ খুঁজুন',
+  'This app': 'এই অ্যাপ',
+  'Up to date': 'সর্বশেষ সংস্করণ',
+  'Update available': 'নতুন সংস্করণ এসেছে',
+  'Ready to install': 'ইনস্টলের জন্য প্রস্তুত',
+  'Not checked yet': 'এখনো দেখা হয়নি',
+  'Updates only work in the installed app, not while running from source.':
+    'হালনাগাদ কেবল ইনস্টল করা অ্যাপে কাজ করে, সোর্স থেকে চালালে নয়।',
+  'Download update': 'হালনাগাদ ডাউনলোড করুন',
+  'Restart and install': 'বন্ধ করে ইনস্টল করুন',
+  'The app will close, install, and open again. Finish any sale on screen first.':
+    'অ্যাপটি বন্ধ হবে, ইনস্টল হবে, তারপর আবার খুলবে। পর্দায় কোনো বিক্রয় থাকলে আগে শেষ করুন।',
+  'Could not check for updates': 'হালনাগাদ খোঁজা যায়নি',
+  'This is usually just the internet being down. You can also download the installer by hand.':
+    'সাধারণত ইন্টারনেট বন্ধ থাকলেই এটি হয়। চাইলে ইনস্টলারটি নিজে ডাউনলোড করতে পারেন।',
+  'Open downloads page': 'ডাউনলোড পাতা খুলুন',
+  'Check automatically': 'নিজে থেকে খুঁজবে',
+  'Looks for a new version a few seconds after the app opens. Nothing is ever downloaded or installed without you pressing the button.':
+    'অ্যাপ খোলার কয়েক সেকেন্ড পর নতুন সংস্করণ আছে কিনা দেখে। আপনি বোতাম না চাপলে কিছুই ডাউনলোড বা ইনস্টল হয় না।',
+  'This is the only thing in the app that uses the internet. It asks GitHub whether a newer version exists and sends nothing about your shop — no sales, no customers, no names. Turn it off and the app never connects to anything.':
+    'অ্যাপের ভেতরে কেবল এই কাজটিই ইন্টারনেট ব্যবহার করে। এটি গিটহাবকে জিজ্ঞেস করে নতুন সংস্করণ আছে কিনা, আর আপনার দোকানের কোনো তথ্য পাঠায় না — বিক্রয় নয়, গ্রাহক নয়, নাম নয়। বন্ধ করে দিলে অ্যাপ কোথাও সংযোগ করে না।',
+  'You are on the latest version': 'আপনি সর্বশেষ সংস্করণেই আছেন',
+  'Download failed': 'ডাউনলোড ব্যর্থ হয়েছে',
+  'Could not start the installer': 'ইনস্টলার চালু করা যায়নি',
+  'Automatic update checks on': 'স্বয়ংক্রিয় হালনাগাদ খোঁজা চালু',
+  'Automatic update checks off': 'স্বয়ংক্রিয় হালনাগাদ খোঁজা বন্ধ',
+  'Could not save the setting': 'সেটিংটি সংরক্ষণ করা যায়নি',
+  'Could not open the downloads page': 'ডাউনলোড পাতা খোলা যায়নি',
+
+  // ---- performance screen ----
+  'Turn off graphics acceleration': 'গ্রাফিক্স অ্যাক্সিলারেশন বন্ধ করুন',
+  'Draws the screen using the processor instead of the graphics chip. On an older PC with old graphics drivers this is often smoother and more stable. Needs a restart.':
+    'গ্রাফিক্স চিপের বদলে প্রসেসর দিয়ে পর্দা আঁকে। পুরোনো গ্রাফিক্স ড্রাইভারের পুরোনো পিসিতে এটি প্রায়ই বেশি মসৃণ ও স্থির হয়। আবার চালু করা লাগবে।',
+  'Reduce animations': 'অ্যানিমেশন কমান',
+  'Removes the fade and slide effects when menus and popups open. Less work for a slow machine on every click. Takes effect straight away.':
+    'মেনু ও পপআপ খোলার সময়ের ফেড ও স্লাইড প্রভাব সরিয়ে দেয়। ধীর মেশিনে প্রতিটি ক্লিকে কম কাজ পড়ে। সঙ্গে সঙ্গে কাজ করে।',
+  'Close the app and open it again to apply the graphics setting.':
+    'গ্রাফিক্স সেটিংটি কাজ করাতে অ্যাপটি বন্ধ করে আবার খুলুন।',
+  'Close and open the app for this to take effect':
+    'এটি কার্যকর করতে অ্যাপটি বন্ধ করে আবার খুলুন',
+  'Animations reduced': 'অ্যানিমেশন কমানো হয়েছে',
+  'Animations restored': 'অ্যানিমেশন ফিরিয়ে আনা হয়েছে',
+  'These two settings are stored per computer, not in your shop data, so the fast PC and the slow PC can be set differently.':
+    'এই দুটি সেটিং প্রতিটি কম্পিউটারে আলাদাভাবে জমা থাকে, আপনার দোকানের তথ্যে নয় — তাই দ্রুত পিসি আর ধীর পিসিতে আলাদা রাখা যায়।',
+  'If the slow PC still struggles, the next biggest win is closing other programs — a browser with many tabs open will take memory this app needs.':
+    'ধীর পিসিতে এখনো সমস্যা হলে সবচেয়ে বড় উপকার হবে অন্য প্রোগ্রাম বন্ধ করা — অনেক ট্যাব খোলা ব্রাউজার এই অ্যাপের দরকারি মেমোরি নিয়ে নেয়।',
+});

@@ -99,9 +99,16 @@ export function Titlebar() {
 
   return (
     // `relative z-40` keeps the bar itself above the sidebar/content that follow
-    // it in the DOM; the account menu is portalled (see below) because
-    // backdrop-blur would otherwise trap it inside this stacking context.
-    <div className="titlebar-drag relative z-40 flex h-12 items-center gap-2 border-b border-border bg-card/80 backdrop-blur px-3 select-none">
+    // it in the DOM; the account menu is still portalled (see below).
+    //
+    // NO `backdrop-blur` HERE ANY MORE — it was `bg-card/80 backdrop-blur`.
+    // A `backdrop-filter` on an element that is on screen 100% of the time forces
+    // Chromium to keep compositing everything underneath it on the GPU, every
+    // frame, forever. On the shop's low-end Windows 7 machine (old Intel
+    // integrated graphics) that is a permanent tax for an effect nobody asked
+    // for. The bar is now simply opaque, which also means the titlebar no longer
+    // creates a backdrop-filter stacking context.
+    <div className="titlebar-drag relative z-40 flex h-12 items-center gap-2 border-b border-border bg-card px-3 select-none">
       {/* Brand — the text half is hidden on narrow windows so the search box
           and the shift pill keep their room (the mark stays as an anchor). */}
       <div className="titlebar-no-drag flex items-center gap-2 pr-1 lg:pr-3 shrink-0">

@@ -1,155 +1,170 @@
-# Hardware Khata POS - Release Package
+# Hardware Khata POS — Releasing & Updating
 
-## Version 0.1.0
-
-### 🎉 Package Created Successfully
-
-**Installer Location:** `release/Hardware Shop POS Setup 0.1.0.exe`  
-**Installer Size:** 83.7 MB  
-**Platform:** Windows x64  
-**Build Date:** June 4, 2026
+**Current version: 0.2.0** · Windows x64 · NSIS installer, per-user (no admin needed)
+Installer: `release/HardwareKhataPOS-Setup-0.2.0.exe` (~82 MB)
 
 ---
 
-## 📦 What's Included
+## 1. How updating works now
 
-- **Complete Hardware Shop POS System**
-  - Offline-first Electron desktop application
-  - SQLite database with full data persistence
-  - All core modules fully functional and tested (860 checks passed)
+From 0.2.0 onward **the app updates itself**. No copying installers between PCs.
 
-- **Core Features:**
-  - Point of Sale with real-time inventory updates
-  - Purchase Management (with/without stock)
-  - Stock Management with transfer operations
-  - Customer & Supplier Management
-  - Cash Flow tracking with shift management
-  - Expense Management
-  - Returns (Sales & Purchase)
-  - Comprehensive Reports (Sales, Purchase, Stock, Cash, Customer, Profit)
-  - Multi-user authentication with roles
-  - Backup & Cloud saving — verified database snapshots, retention, restore and CSV export
-
----
-
-## 🚀 Installation
-
-1. **Run the Installer:**
-   - Double-click `Hardware Shop POS Setup 0.1.0.exe`
-   - Follow the setup wizard
-   - Choose installation directory
-   - Desktop shortcut will be created
-
-2. **First Launch:**
-   - The app will create a fresh database on first run
-   - Default admin user will be seeded
-   - Sample master data can be generated using the seed script
-
-3. **Default Credentials:**
-   - Check the backend seed scripts for default login credentials
-
----
-
-## 📊 System Status
-
-### ✅ Fully Implemented & Tested
-- **Frontend:** All pages, forms, and UI components wired to real database
-- **Backend:** 19 service modules with complete CRUD operations
-- **Database:** Schema with 28 tables, FTS indexes, proper constraints
-- **Verification:** 860 checks across 146 registered channels (all green)
-- **Data Flow:** No mock data in production paths (sell→stock→cash→reports)
-
-### 📝 Deferred / Post-MVP (Non-blocking)
-
-The three deferrals listed in earlier releases are now **closed**: AddSale/AddPurchase pickers
-run on real master data, Shipments has its own table + service + channels, and Warranties &
-Price Groups have real backend CRUD. There is no mock data path anywhere in the app.
-
-What genuinely remains is external or explicitly post-MVP:
-- **SMS gateway:** needs a Bangladeshi provider account (frontend is done)
-- **Hosted multi-device sync:** off-machine safety is covered by Backup & Cloud; live
-  row-level sync between machines would need a hosted account + conflict resolution
-- **Thermal/ESC-POS printing** and cash-drawer kick
-- **Multi-branch context:** writes currently assume the single default branch
-
-None of these affect core business operations.
-
----
-
-## 🔧 Technical Details
-
-### Stack
-- **Frontend:** React 18 + TypeScript + Vite + Tailwind CSS
-- **Backend:** Node.js services with better-sqlite3
-- **Desktop:** Electron 31 with IPC bridge
-- **State:** Zustand + React Query
-
-### Database
-- **Engine:** SQLite 3 (better-sqlite3)
-- **Location:** User data directory (persistent)
-- **Size:** Starts ~50KB, grows with transactions
-- **Backup:** Built in — `Settings → Backup & Cloud` takes a verified `VACUUM INTO` snapshot
-  (`pos-backup-YYYYMMDD-HHMMSS.sqlite3`), keeps the newest N (default 14), and can restore one.
-  Point the folder at a OneDrive / Google Drive / Dropbox folder the machine already syncs and
-  the copy leaves the shop; the app itself makes no network request and needs no account.
-
-### Performance
-- Offline-first architecture (no network required)
-- Instant search with FTS5 full-text indexing
-- Transaction-based data integrity
-- Optimistic UI updates
-
----
-
-## 📖 Documentation
-
-Full project documentation is available in the `docs/` folder:
-- **00-OVERVIEW.md** - Project architecture and structure
-- **01-FRONTEND.md** - Frontend implementation details
-- **02-BACKEND.md** - Backend services and database schema
-- **03-WHATS-LEFT.md** - Known deferrals and future work
-- **04-AGENT-HANDOFF.md** - Agent context for future development
-- **05-CONTEXT-AND-HISTORY.md** - Project history and decisions
-- **06-E2E-AND-SMOKE-TEST.md** - Testing strategy
-
----
-
-## 🐛 Known Issues
-
-None at this time. All 860 verification checks are passing.
-
----
-
-## 📞 Support
-
-For issues, questions, or contributions:
-- **GitHub:** https://github.com/shahriar-ahmed-seam/Hardware-Khata-POS
-- **Issues:** https://github.com/shahriar-ahmed-seam/Hardware-Khata-POS/issues
-
----
-
-## 🔄 Building from Source
-
-```bash
-# Install dependencies
-npm install
-
-# Run in development mode
-npm run dev
-
-# Build for production
-npm run build
-
-# Package Windows installer
-npm run build:win
+```
+you: npm run release:win
+        │
+        ├── builds the app + installer
+        └── uploads installer + latest.yml to a GitHub Release
+                                │
+shop PC: opens the app ─────────┘
+        ├── checks GitHub a few seconds after launch
+        ├── tells the owner "Version X is available"
+        └── they press Download, then Restart and install
 ```
 
+- **Where it looks:** GitHub Releases of
+  `shahriar-ahmed-seam/Hardware-Khata-POS`. The repo is **public**, so the app
+  carries no token and needs no login.
+- **What decides "newer":** the `version` in `package.json`, compared against
+  `latest.yml` in the newest published release. **Bump the version or nothing
+  updates.**
+- **Never automatic:** the app downloads only when the owner presses the button
+  (their internet is unreliable and may be metered, and swapping the binary
+  mid-sale is not acceptable). Auto-*check* can be switched off in
+  Settings → Updates, after which the app makes no network request at all.
+- **The only outbound request in the whole product.** It sends nothing about the
+  shop — no sales, customers, names or telemetry.
+- Code: `electron/updater.ts` (main), `src/stores/updates.ts` +
+  `src/pages/settings/UpdatesPage.tsx` (UI). Version pinned to
+  **electron-updater 6.x** — v7 needs Node ≥ 22 and would break Electron 22,
+  which is the last version that supports Windows 7.
+
+### Publishing a new version
+
+```powershell
+# 1. bump the version (this is what clients compare against)
+#    package.json → "version": "0.3.0"
+
+# 2. prove it still works
+npm run backend:verify:all          # 962 checks, seven suites
+npx tsc --noEmit -p tsconfig.json
+npm run i18n:check
+npm run rebuild:electron            # leave the native module on the Electron ABI
+
+# 3. build AND upload
+$env:GH_TOKEN = gh auth token
+npm run release:win
+```
+
+Then open the release on GitHub and **publish** it (electron-builder uploads it
+as a draft). Draft releases are invisible to clients, so a half-uploaded
+installer is never offered to the shop.
+
+`npm run build:win` builds the installer **without** uploading (`--publish never`).
+
+### If in-app update ever fails
+Settings → Updates has an **Open downloads page** button, and the installer can
+always be run by hand — it upgrades in place and never touches the database.
+
 ---
 
-## 📜 License
+## 2. Where the shop's data lives
 
-See LICENSE file in the project root.
+`%APPDATA%\pos\pos.db` — **outside** the install folder, so installing,
+upgrading and uninstalling never touch it.
+
+- Schema is at **v5**; migrations run automatically on launch and are additive.
+- Backups: Settings → Backup & Cloud writes verified `VACUUM INTO` snapshots
+  (`pos-backup-YYYYMMDD-HHMMSS.sqlite3`) and keeps the newest N (default 14).
+  Point the folder at OneDrive/Drive/Dropbox and the copy leaves the shop.
+- **Pendrive copy:** the dashboard has a *Backup to Pendrive* button, plus a card
+  in Settings → Backup. That is the copy that survives a stolen or dead PC.
 
 ---
 
-**Built with ❤️ for Hardware Shop owners**
+## 3. What's in 0.2.0
+
+- **Fixed:** text boxes across the app could stop accepting the cursor. Cause was
+  the native browser dialogs (`confirm`/`alert`/`prompt`) losing the window's
+  keyboard focus on Windows; all 24 call sites replaced.
+- **Sale editing.** A finalized invoice can be corrected in place, keeping its
+  invoice number. Reverses the original stock and cash and re-applies the
+  corrected figures in one transaction. A reason is required and recorded.
+  **Admin only.**
+- **Product archiving.** A product that has been sold can't be deleted (that
+  would rewrite history), so it is archived instead — gone from the catalogue and
+  the POS, past invoices intact, reversible. Delete still works for never-traded
+  products.
+- **Roles enforced in the UI.** Staff no longer see Edit/Void/Delete or the
+  owner-only settings screens.
+- **POS:** each cart line shows buying / average buying / selling price,
+  colour-coded. Product list view puts brand under the code and keeps
+  price/stock visible when the divider is dragged narrow.
+- **In-app updates** and a **Performance** screen (see below).
+- **SMS removed** from the menu — it had no backend, so every figure it showed
+  was invented.
+
+### Performance work (for the slow Windows 7 PC)
+- Removed `backdrop-blur` from the always-visible titlebar — it forced continuous
+  GPU compositing of the whole window, every frame.
+- Startup JavaScript cut from ~1,688 KB to ~1,128 KB: reports, settings screens
+  and the chart widgets now load on demand, so the charting library is no longer
+  parsed before the dashboard can appear.
+- The dashboard's 30-second auto-refresh pauses while the window is hidden.
+- **Settings → Performance** adds two opt-in switches (both default OFF, stored
+  per computer): *turn off graphics acceleration* — often smoother and more
+  stable on old Intel graphics drivers, needs a restart — and *reduce
+  animations*, which takes effect immediately.
+
+---
+
+## 4. Verification
+
+962 checks across seven suites, all green:
+
+| Suite | Checks |
+|---|---:|
+| `all.ts` | 378 |
+| `api.ts` | 209 (150 channels) |
+| `run.ts` | 56 |
+| `e2e.ts` | 68 |
+| `paging.ts` | 80 |
+| `backup.ts` | 120 |
+| `costing.ts` | 51 |
+
+Plus `npm run i18n:check` — 32 checks, 2,290 Bangla phrases.
+`npm run lint` does **not** work (eslint is not installed); `tsc` is the gate.
+
+---
+
+## 5. Stack
+
+- React 18 · TypeScript · Vite · Tailwind · Zustand · TanStack Query
+- Electron **22** — deliberately: the last release supporting **Windows 7**
+- better-sqlite3 (SQLite 3, FTS5 search)
+- electron-builder (NSIS) + electron-updater 6.x
+
+> **Native module ABI:** the verify suites need a **Node** build of
+> better-sqlite3, the app needs an **Electron** one. Always finish a session with
+> `npm run rebuild:electron`. A running app locks the `.node` file, so close the
+> app before rebuilding.
+
+---
+
+## 6. Not implemented
+
+- **Code signing** — installers are unsigned, so Windows SmartScreen warns on a
+  new PC ("More info" → "Run anyway"). Needs a bought certificate.
+- Thermal/ESC-POS direct printing and cash-drawer kick.
+- Live multi-device sync (backups cover off-machine safety).
+- Multi-branch writes assume the single default branch.
+- SMS sending (needs a Bangladeshi gateway account).
+
+---
+
+## 7. Docs
+
+`docs/` — `00-OVERVIEW` · `01-FRONTEND` · `02-BACKEND` · `03-WHATS-LEFT` ·
+`04-AGENT-HANDOFF` · `05-CONTEXT-AND-HISTORY` · `06-E2E-AND-SMOKE-TEST` ·
+`07-CONTINUE-HERE` (start here) · **`08-FRONTEND-MAP`** (which file draws what)
+
+Repo: https://github.com/shahriar-ahmed-seam/Hardware-Khata-POS

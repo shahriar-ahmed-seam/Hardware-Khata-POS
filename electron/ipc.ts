@@ -19,6 +19,15 @@ import {
   revealPdfFolder,
   saveInvoicePdf,
 } from './invoicePdf.ts';
+import {
+  checkForUpdates,
+  downloadUpdate,
+  openReleasesPage,
+  quitAndInstall,
+  setUpdatePrefs,
+  updateState,
+} from './updater.ts';
+import { readPerfFlags, writePerfFlags, type PerfFlags } from './perf.ts';
 
 const api = buildApi();
 
@@ -49,6 +58,25 @@ const ELECTRON_INVOICE_CHANNELS = new Set([
   'invoice.listPdfs',
   'invoice.openPdf',
 ]);
+
+/**
+ * In-app updates. Electron-only by nature: this talks to GitHub Releases,
+ * downloads an installer and relaunches the app. See electron/updater.ts.
+ */
+const ELECTRON_UPDATE_CHANNELS = new Set([
+  'update.state',
+  'update.check',
+  'update.download',
+  'update.install',
+  'update.setPrefs',
+  'update.openReleases',
+]);
+
+/**
+ * Performance flags for old hardware. Electron-only because they are decided
+ * before the app is ready and live outside the database — see electron/perf.ts.
+ */
+const ELECTRON_PERF_CHANNELS = new Set(['perf.get', 'perf.set']);
 
 /**
  * SESSION + PERMISSION ENFORCEMENT (the IPC boundary)
@@ -185,6 +213,22 @@ export function registerIpc(): void {
       const denied = permissionError(channel);
       if (denied) return { ok: false, error: denied };
       return handleElectronInvoice(channel, payload);
+    }
+
+    if (channel.startsWith('update.') && ELECTRON_UPDATE_CHANNELS.has(channel)) {
+      const denied = permissionError(channel);
+      if (denied) return { ok: false, error: denied };
+      return handleElectronUpdate(channel, payload);
+    }
+
+    if (channel.startsWith('perf.') && ELECTRON_PERF_CHANNELS.has(channel)) {
+      const denied = permissionError(channel);
+      if (denied) return { ok: false, error: denied };
+      if (channel === 'perf.get') return { ok: true, data: readPerfFlags() };
+      return {
+        ok: true,
+        data: writePerfFlags((payload ?? {}) as Partial<PerfFlags>),
+      };
     }
 
     // ---- 2. Generic backend channels (gated) ----
@@ -372,6 +416,49 @@ async function handleElectronBackup(channel: string, payload: unknown) {
         const drive = (payload as { drive?: string } | undefined)?.drive;
         return { ok: true, data: await backupToUsb(drive) };
       }
+
+      default:
+        return { ok: false, error: `Unknown API channel: ${channel}` };
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    // eslint-disable-next-line no-console
+    console.error(`[ipc] ${channel} failed:`, message);
+    return { ok: false, error: message };
+  }
+}
+
+/**
+ * In-app update channels. `update.state` is a plain read so the Updates screen
+ * can always render; the three that touch the network, the disk or the running
+ * app are gated (see CHANNEL_PERMISSIONS).
+ */
+async function handleElectronUpdate(channel: string, payload: unknown) {
+  try {
+    switch (channel) {
+      case 'update.state':
+        return { ok: true, data: updateState() };
+
+      case 'update.check':
+        return { ok: true, data: await checkForUpdates({ silent: false }) };
+
+      case 'update.download':
+        return { ok: true, data: await downloadUpdate() };
+
+      case 'update.install':
+        return { ok: true, data: quitAndInstall() };
+
+      case 'update.setPrefs': {
+        const autoCheck = (payload as { autoCheck?: boolean } | undefined)?.autoCheck;
+        const prefs = setUpdatePrefs(
+          typeof autoCheck === 'boolean' ? { autoCheck } : {},
+        );
+        return { ok: true, data: { ...updateState(), autoCheck: prefs.autoCheck } };
+      }
+
+      case 'update.openReleases':
+        await openReleasesPage();
+        return { ok: true, data: null };
 
       default:
         return { ok: false, error: `Unknown API channel: ${channel}` };

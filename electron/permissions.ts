@@ -148,6 +148,25 @@ export const CHANNEL_PERMISSIONS: Record<string, string> = {
   'backup.usbDrives': 'settings.backup',
   'backup.toUsb': 'settings.backup',
 
+  // ----- performance flags (old hardware) -----
+  // These change how the app renders for EVERYONE on that PC and one of them
+  // needs a restart, so they are an owner decision, not a personal preference.
+  // `perf.get` is gated too: there is nothing useful a cashier can do with it.
+  'perf.get': 'settings.business',
+  'perf.set': 'settings.business',
+
+  // ----- in-app updates -----
+  // `update.state` is an OPEN read so the Updates screen always renders, and so
+  // a cashier can SEE which version the shop is running (useful on the phone to
+  // the owner). Everything that reaches the network, writes an installer to disk,
+  // relaunches the app, or changes whether the app phones home at all is gated:
+  // installing software on the shop's till is an owner decision.
+  'update.check': 'settings.business',
+  'update.download': 'settings.business',
+  'update.install': 'settings.business',
+  'update.setPrefs': 'settings.business',
+  'update.openReleases': 'settings.business',
+
   // ----- invoice PDFs -----
   // Saving an invoice PDF is part of completing a sale, so it sits behind the
   // same permission as making one — a cashier must be able to do it. Listing and

@@ -160,6 +160,25 @@ textarea,
   -webkit-app-region: no-drag;
 }
 
+/* ==========================================================================
+   REDUCE ANIMATIONS (Settings → Performance, and the OS-level preference)
+   Every animation in this app is decorative — a fade or a slide as a panel
+   opens. On a low-end PC each one is real compositing work on every click, so
+   the owner can switch them off. Not `animation: none`, because a few effects
+   rely on their end state: collapsing the duration keeps the final frame and
+   skips the work of getting there.
+   ========================================================================== */
+html.reduce-motion *,
+html.reduce-motion *::before,
+html.reduce-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-delay: 0ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  transition-delay: 0ms !important;
+  scroll-behavior: auto !important;
+}
+
 .app-shell {
   border-radius: 12px;
   overflow: hidden;

@@ -21,6 +21,15 @@ declare global {
         ) => Promise<{ ok: true; data: T } | { ok: false; error: string }>;
         channels: () => Promise<string[]>;
       };
+      /**
+       * PUSH channel for update progress. The update COMMANDS go through
+       * `db.invoke` like everything else so they pass the permission gate; this
+       * exists only because download progress arrives unprompted from the main
+       * process. Returns an unsubscribe function.
+       */
+      updates?: {
+        onState: (cb: (state: unknown) => void) => () => void;
+      };
     };
   }
 }

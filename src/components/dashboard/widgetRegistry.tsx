@@ -1,6 +1,8 @@
 import type { WidgetId } from '@/stores/dashboard';
 import { Widget } from './Widget';
-import * as W from './widgets';
+// Loaded after first paint — see lazyWidgets.ts. Same names, same props as
+// ./widgets; <Widget> holds the Suspense boundary they resolve against.
+import * as W from './lazyWidgets';
 
 export interface WidgetMeta {
   id: WidgetId;

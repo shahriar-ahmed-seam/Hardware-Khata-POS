@@ -30,10 +30,29 @@ function DashboardContent() {
   const [editing, setEditing] = useState(false);
   const [profitOpen, setProfitOpen] = useState(false);
 
-  // 30s auto-refresh: full refetch of the backend bundle (no-op on mock).
+  /**
+   * 30s auto-refresh: a full refetch of the dashboard bundle.
+   *
+   * SKIPPED WHILE THE WINDOW IS HIDDEN. This fires every 30 seconds forever, and
+   * each tick re-runs every dashboard query and re-renders the charts. On the
+   * shop's slow PC that is a visible hitch — and it was happening even while the
+   * app was minimised behind the accounting software, where nobody could see the
+   * result. `visibilitychange` also fires an immediate catch-up refresh when the
+   * owner comes back, so the numbers are never stale on screen.
+   */
   useEffect(() => {
-    const id = setInterval(() => refresh(), 30_000);
-    return () => clearInterval(id);
+    const tick = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+    const id = setInterval(tick, 30_000);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [refresh]);
 
   return (
