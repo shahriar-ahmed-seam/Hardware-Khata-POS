@@ -32,8 +32,9 @@ import { toast } from '@/stores/toast';
 import { promptText } from '@/stores/prompt';
 import { useCan } from '@/hooks/useCan';
 import { ProductImage } from '@/components/products/ProductImage';
-import { NewProductDrawer } from '@/components/products/NewProductDrawer';
 import { CustomerPicker } from '@/components/pos/CustomerPicker';
+import { DateTimeField, DateField } from '@/components/ui/DateTimeField';
+import { toLocalInput, fromLocalInput, localDateInputPlusDays } from '@/lib/datetime';
 import type { Product } from '@/types/domain';
 
 export default function AddSale() {
@@ -88,9 +89,17 @@ export default function AddSale() {
   const [status, setStatus] = useState<SaleStatus>(editing?.status ?? initialStatus);
   const [customerId, setCustomerId] = useState(defaultCustomerId);
   const [branch, setBranch] = useState(defaultBranchName);
-  const [date, setDate] = useState((editing?.date ?? new Date().toISOString()).slice(0, 16));
+  /**
+   * Defaults to RIGHT NOW on the shop's clock, and stays editable.
+   *
+   * It used to be `new Date().toISOString().slice(0, 16)`, which is UTC — so at
+   * 10:02 in Dhaka the box read 04:02. Worse, "correcting" it to 10:02 then wrote
+   * an instant six hours in the future, which could push the sale into tomorrow's
+   * takings. See lib/datetime.ts.
+   */
+  const [date, setDate] = useState(toLocalInput(editing?.date));
   const [validUntil, setValidUntil] = useState(
-    editing?.validUntil ?? new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10),
+    editing?.validUntil ?? localDateInputPlusDays(14),
   );
   const [notes, setNotes] = useState(editing?.notes ?? '');
   const [orderDiscFlat, setOrderDiscFlat] = useState(editing?.orderDiscountFlat ?? 0);
@@ -101,7 +110,6 @@ export default function AddSale() {
   const [lines, setLines] = useState<SaleLine[]>(editing?.lines ?? []);
   const [searchQ, setSearchQ] = useState('');
   const [newCustomerOpen, setNewCustomerOpen] = useState(false);
-  const [newProductOpen, setNewProductOpen] = useState(false);
   // Guarded: the list can be empty (backend still loading) — never crash.
   const customer = customers.find((c) => c.id === customerId);
 
@@ -200,7 +208,10 @@ export default function AddSale() {
       id: editing?.id ?? 'sl_' + Date.now(),
       invoiceNo: editing?.invoiceNo ?? nextInvoiceNo(newStatus),
       status: newStatus,
-      date,
+      // The box holds LOCAL wall-clock time; the database stores a UTC instant,
+      // exactly as the POS does. Converting here is what keeps a form sale in the
+      // same reporting day and cash shift as a counter sale.
+      date: fromLocalInput(date),
       customerId,
       customerName: customer?.name ?? 'Walk-in Customer',
       branch,
@@ -358,11 +369,7 @@ export default function AddSale() {
               </div>
             </Field>
             <Field label="Date" required>
-              <Input
-                type="datetime-local"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-              />
+              <DateTimeField value={date} onChange={setDate} />
             </Field>
             <Field label="Business Location" required>
               <select
@@ -390,18 +397,22 @@ export default function AddSale() {
             </Field>
             {status === 'quotation' && (
               <Field label="Valid until">
-                <Input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />
+                <DateField value={validUntil} onChange={setValidUntil} />
               </Field>
             )}
           </Card>
 
           <Card className="p-4">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-sm font-semibold">Add items</div>
-              <Button variant="outline" size="sm" onClick={() => setNewProductOpen(true)}>
-                <Plus className="size-3.5" /> Add new product
-              </Button>
-            </div>
+            {/*
+              NO "Add new product" HERE — deliberately.
+              You cannot sell something you have not bought: a product created on
+              a sale would have zero stock and the sale would either be refused or
+              drive the stock negative. Stock enters through a purchase (or an
+              opening-stock / adjustment entry), so the button belongs on the
+              PURCHASE form, where it is. The drawer component is still wired up
+              and one line away if this is ever wanted for a service item.
+            */}
+            <div className="text-sm font-semibold mb-2">Add items</div>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
               <Input
@@ -421,10 +432,20 @@ export default function AddSale() {
                       <ProductImage url={p.image} categoryId={p.categoryId} size={28} />
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-medium truncate">{p.name}</div>
-                        <div className="text-[10px] text-muted-foreground font-mono">{p.sku}</div>
+                        <div className="text-[10px] text-muted-foreground font-mono">
+                          {p.sku} · stock {p.stock} {p.unit}
+                        </div>
                       </div>
-                      <div className="text-sm font-mono tabular">{formatBDT(p.price, { withSymbol: false })}</div>
-                      <Plus className="size-3.5 text-primary" />
+                      {/* What it cost us, what it usually costs us, and what we
+                          sell it for — so the price can be judged before the line
+                          is even added. Colour carries the meaning: amber = paid
+                          out, blue = average paid, green = coming in. */}
+                      <PriceTriplet
+                        cost={p.cost}
+                        avgCost={p.avgCost ?? p.cost}
+                        price={p.price}
+                      />
+                      <Plus className="size-3.5 text-primary shrink-0" />
                     </button>
                   ))}
                 </div>
@@ -437,8 +458,13 @@ export default function AddSale() {
                   <tr>
                     <th className="text-left px-3 py-2 font-medium w-8">#</th>
                     <th className="text-left px-2 py-2 font-medium">Item</th>
+                    {/* Read-only reference columns: what this item cost us, and
+                        the average we normally pay. The shopkeeper bargains at the
+                        counter and needs both before agreeing a price. */}
+                    <th className="text-right px-2 py-2 font-medium w-[92px]">Buy price</th>
+                    <th className="text-right px-2 py-2 font-medium w-[92px]">Avg buy</th>
                     <th className="text-right px-2 py-2 font-medium">Qty</th>
-                    <th className="text-right px-2 py-2 font-medium">Price</th>
+                    <th className="text-right px-2 py-2 font-medium">Sell price</th>
                     <th className="text-right px-2 py-2 font-medium">Disc %</th>
                     <th className="text-right px-2 py-2 font-medium">Subtotal</th>
                     <th className="w-10"></th>
@@ -447,12 +473,23 @@ export default function AddSale() {
                 <tbody>
                   {lines.map((l, i) => {
                     const sub = l.unitPrice * l.qty - l.discountFlat - l.unitPrice * l.qty * (l.discountPct / 100);
+                    // Looked up live from the catalogue rather than copied onto the
+                    // line: a stored cost would go stale the moment a new buying
+                    // price is recorded. Unknown product renders '—', never 0,
+                    // which would read as "this cost us nothing".
+                    const cat = products.find((p) => p.id === l.productId);
                     return (
                       <tr key={i} className="border-t border-border">
                         <td className="px-3 py-2 text-xs text-muted-foreground">{i + 1}</td>
                         <td className="px-2 py-2">
                           <div className="font-medium">{l.name}</div>
                           <div className="text-[11px] text-muted-foreground font-mono">{l.sku}</div>
+                        </td>
+                        <td className="px-2 py-2 text-right font-mono tabular text-xs text-warning">
+                          {cat ? formatBDT(cat.cost, { withSymbol: false }) : '—'}
+                        </td>
+                        <td className="px-2 py-2 text-right font-mono tabular text-xs text-primary">
+                          {cat ? formatBDT(cat.avgCost ?? cat.cost, { withSymbol: false }) : '—'}
                         </td>
                         <td className="px-2 py-2 text-right">
                           <NumberField
@@ -491,7 +528,7 @@ export default function AddSale() {
                   })}
                   {lines.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground text-sm">
+                      <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground text-sm">
                         Search above to add items.
                       </td>
                     </tr>
@@ -565,8 +602,10 @@ export default function AddSale() {
         </div>
       </div>
 
-      {/* Add a customer / a product without abandoning this sale. Both save to
-          the real backend and are selected or added here immediately. */}
+      {/* Add a customer without abandoning this sale. Saves to the real backend
+          and is selected here immediately.
+          (The product drawer is intentionally NOT mounted here — see the note
+          above the item search.) */}
       <CustomerPicker
         open={newCustomerOpen}
         onClose={() => setNewCustomerOpen(false)}
@@ -574,15 +613,44 @@ export default function AddSale() {
         onSelect={setCustomerId}
         startInAdd
       />
-      <NewProductDrawer
-        open={newProductOpen}
-        onClose={() => setNewProductOpen(false)}
-        onCreated={(p) => {
-          addLineFromProduct(p);
-          void productsQuery.refetch();
-        }}
-        subtitle="Saved to your catalogue and added to this sale."
-      />
+    </div>
+  );
+}
+
+/**
+ * Buy / average buy / sell, side by side, for a product in a search result.
+ *
+ * Colour is the label for someone who will not read three words every time:
+ * amber = money that went out, blue = the average we have paid, green = money
+ * coming in. `avgCost` is the simple mean of recorded buying prices, NOT the
+ * quantity-weighted cost that drives COGS — two different figures that must not
+ * be conflated (see backend/services/costing.ts).
+ */
+function PriceTriplet({
+  cost,
+  avgCost,
+  price,
+}: {
+  cost: number;
+  avgCost: number;
+  price: number;
+}) {
+  return (
+    <div className="shrink-0 flex items-center gap-3 text-right">
+      <Cell label="Buy" value={cost} tone="text-warning" />
+      <Cell label="Avg" value={avgCost} tone="text-primary" />
+      <Cell label="Sell" value={price} tone="text-success" />
+    </div>
+  );
+}
+
+function Cell({ label, value, tone }: { label: string; value: number; tone: string }) {
+  return (
+    <div>
+      <div className="text-[9px] uppercase text-muted-foreground leading-none">{label}</div>
+      <div className={cn('mt-0.5 text-xs font-mono tabular font-semibold', tone)}>
+        {formatBDT(value, { withSymbol: false })}
+      </div>
     </div>
   );
 }

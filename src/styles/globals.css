@@ -5,6 +5,15 @@
 :root {
   --radius: 0.625rem;
 
+  /* Tell the browser which way round the UI is.
+     This is not decoration. Chromium draws NATIVE widgets from it — the calendar
+     glyph inside a date input, the calendar popup itself, <select> dropdowns,
+     scrollbars and text-selection colours. Without it Chromium assumes light, so
+     in dark mode it painted a dark calendar icon onto a dark input: the date
+     picker looked like it did not exist, which is why every date in the app had
+     to be typed by hand. */
+  color-scheme: light;
+
   /* LIGHT MODE — text is pushed near-black and "muted" text is darkened a lot,
      so nothing on a white background sits below a comfortable contrast ratio. */
   --background: 220 20% 98%;
@@ -53,6 +62,10 @@
 }
 
 .dark {
+  /* See the note on :root. This is what makes the native calendar popup and the
+     date input's own picker glyph render light-on-dark instead of invisibly. */
+  color-scheme: dark;
+
   /* DARK MODE — text is pushed to near-white and "muted" text is brightened a
      lot, so grey-on-dark labels stay readable for older eyes. */
   --background: 222 28% 7%;
@@ -233,6 +246,31 @@ input[type='number'] {
       transparent 0
     );
   background-size: 24px 24px;
+}
+
+/* The native calendar glyph inside a date / datetime input.
+   Chromium ships it at roughly 12px with no padding, which is not a target an
+   elderly user can aim at. Enlarged, with a hover state so it reads as a button.
+   `DateTimeField` also puts an explicit calendar button beside the input; this
+   rule is what makes the built-in one usable on the inputs that are NOT wrapped
+   in that component (the report toolbar, the dashboard range popover). */
+input[type='date']::-webkit-calendar-picker-indicator,
+input[type='datetime-local']::-webkit-calendar-picker-indicator,
+input[type='month']::-webkit-calendar-picker-indicator,
+input[type='time']::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  padding: 3px;
+  margin-left: 2px;
+  border-radius: 4px;
+  opacity: 0.75;
+  transform: scale(1.15);
+}
+input[type='date']::-webkit-calendar-picker-indicator:hover,
+input[type='datetime-local']::-webkit-calendar-picker-indicator:hover,
+input[type='month']::-webkit-calendar-picker-indicator:hover,
+input[type='time']::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+  background: hsl(var(--secondary));
 }
 
 /* A mounted <PrintSheet> is always black-on-white. It is a direct child of

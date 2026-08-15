@@ -1,7 +1,7 @@
 {
   "name": "pos",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Offline-first POS for hardware shop",
   "main": "dist-electron/main.js",
   "scripts": {

@@ -1,7 +1,7 @@
 # Hardware Khata POS — Releasing & Updating
 
-**Current version: 0.4.0** · Windows x64 · NSIS installer, per-user (no admin needed)
-Installer: `release/HardwareKhataPOS-Setup-0.4.0.exe` (~82 MB)
+**Current version: 0.5.0** · Windows x64 · NSIS installer, per-user (no admin needed)
+Installer: `release/HardwareKhataPOS-Setup-0.5.0.exe` (~82 MB)
 
 ---
 
@@ -42,7 +42,7 @@ shop PC: opens the app ─────────┘
 
 ```powershell
 # 1. bump the version (this is what clients compare against)
-#    package.json → "version": "0.4.0"
+#    package.json → "version": "0.5.0"
 
 # 2. prove it still works
 npm run backend:verify:all          # 999 checks, seven suites
@@ -82,7 +82,51 @@ upgrading and uninstalling never touch it.
 
 ---
 
-## 2a. What's in 0.4.0
+## 2a. What's in 0.5.0
+
+> **Upgrade in place — no reinstall.** No schema change again, so
+> `%APPDATA%\pos\pos.db` is untouched.
+
+**Every date box has a calendar and a clock button now.** You can still type the
+date by hand — nothing was taken away — but there is a visible calendar button
+beside each one, and a clock button that jumps it to right now.
+
+The calendar was actually always there, hidden: the app never told Chromium
+whether it was running light or dark, so in dark mode the built-in calendar icon
+was drawn dark-on-dark and looked like it did not exist. That is now declared
+properly, which also fixes the native dropdown lists and scrollbars.
+
+**A real bug came out of that: every date box was six hours behind.** They were
+filled from UTC, so at 10:02 in the morning the box read **04:02**. Leaving it
+alone was harmless, but correcting it to 10:02 — the obvious thing to do — wrote a
+time six hours in the future, which could push a sale into tomorrow's takings and
+the wrong cash shift. New sales, purchases, expenses, payments, stock transfers and
+adjustments now all show and save your real local time.
+
+**Two payment dialogs were broken on the second visit.** Taking a part payment,
+closing, then reopening still offered the ORIGINAL amount instead of the
+remainder — so settling a due in instalments quietly recorded the wrong figure
+unless you retyped it. Both now reset each time they open, show **Already paid /
+This payment / Still owing after this** before you commit, and warn if you type
+more than is owed. A "Paid on" date is on both.
+
+**Buying prices are visible while you sell and while you buy.** The item search on
+both the New Sale and New Purchase screens now shows **Buy · Avg · Sell** for each
+product, and the line tables carry a read-only buy price and average buy column. So
+you can see what an item cost you while you are agreeing a price, not afterwards.
+
+**"Add new product" removed from the New Sale screen.** You cannot sell what you
+have not bought — a product created on a sale would have zero stock. It stays on the
+New Purchase screen, which is where stock actually comes in.
+
+Also removed a fake "Advance Balance ৳ 0.00" tile from the supplier payment dialog
+(there is no such figure in the system, so it could have been believed), and
+"joined" / "target delivery" dates no longer name the wrong day late in the evening.
++11 Bangla phrases (2,364 total).
+
+---
+
+## 2b. What's in 0.4.0
 
 > **Upgrading is enough — do NOT reinstall.** There is **no schema change** in
 > this release, so `%APPDATA%\pos\pos.db` is untouched: every product, customer,
@@ -156,7 +200,7 @@ honest option), and +47 Bangla phrases (2,353 total).
 
 ---
 
-## 2b. What's in 0.3.0
+## 2c. What's in 0.3.0
 
 **Product photos and the shop logo no longer disappear.** They were being saved
 as `URL.createObjectURL(file)` — a `blob:` handle into the *current window's*
@@ -240,7 +284,7 @@ the internet.
 | `backup.ts` | 120 |
 | `costing.ts` | 61 |
 
-Plus `npm run i18n:check` — 32 checks, 2,353 Bangla phrases.
+Plus `npm run i18n:check` — 32 checks, 2,364 Bangla phrases.
 `npm run lint` does **not** work (eslint is not installed); `tsc` is the gate.
 
 ---

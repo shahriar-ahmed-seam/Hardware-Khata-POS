@@ -3,6 +3,7 @@ import { Calendar, ChevronDown } from 'lucide-react';
 import { Popover } from '@/components/ui/Popover';
 import { Button } from '@/components/ui/Button';
 import { useDashboard, type TimeRange as TR } from '@/stores/dashboard';
+import { todayLocalDateInput } from '@/lib/datetime';
 
 const LABELS: Record<TR, string> = {
   today: 'Today',
@@ -14,12 +15,6 @@ const LABELS: Record<TR, string> = {
 };
 
 const OPTIONS: TR[] = ['today', 'yesterday', 'week', 'month', 'lastMonth', 'custom'];
-
-/** Local YYYY-MM-DD, which is what <input type="date"> uses. */
-function isoDay(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
 
 export function TimeRange() {
   const { range, setRange, customRange, setCustomRange } = useDashboard();
@@ -38,7 +33,9 @@ export function TimeRange() {
    * Now: edit freely, and NOTHING is applied until both ends are filled and Apply
    * is pressed. One refetch, over a range the user actually chose.
    */
-  const today = isoDay(new Date());
+  // Today on the SHOP's clock. `toISOString().slice(0, 10)` would name the UTC
+  // day, which in UTC+6 is yesterday for the last six hours of every evening.
+  const today = todayLocalDateInput();
   const [from, setFrom] = useState(customRange?.from ?? today);
   const [to, setTo] = useState(customRange?.to ?? today);
 

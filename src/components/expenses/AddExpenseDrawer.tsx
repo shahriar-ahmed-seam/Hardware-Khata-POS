@@ -12,6 +12,8 @@ import {
 } from '@/stores/expenses';
 import { confirm } from '@/stores/confirm';
 import { useBranches } from '@/stores/branches';
+import { DateTimeField, DateField } from '@/components/ui/DateTimeField';
+import { toLocalInput, nowLocalInput, fromLocalInput } from '@/lib/datetime';
 import { cn } from '@/lib/utils';
 import { NewExpenseCategoryModal } from './NewExpenseCategoryModal';
 
@@ -61,7 +63,9 @@ export function AddExpenseDrawer({ open, onClose, initial }: Props) {
   const defaultBranchName =
     branches.find((b) => b.isDefault)?.name ?? branches[0]?.name ?? '';
 
-  const [date, setDate] = useState((initial?.date ?? new Date().toISOString()).slice(0, 16));
+  // Local wall-clock, defaulting to now. See lib/datetime.ts for why this is not
+  // `toISOString().slice(0, 16)` (that showed UTC, six hours behind in Dhaka).
+  const [date, setDate] = useState(toLocalInput(initial?.date));
   const [categoryId, setCategoryId] = useState(initial?.categoryId ?? '');
   const [amount, setAmount] = useState(initial?.amount ?? 0);
   const [paymentMethod, setPaymentMethod] = useState<ExpensePaymentMethod>(initial?.paymentMethod ?? 'Cash');
@@ -86,7 +90,7 @@ export function AddExpenseDrawer({ open, onClose, initial }: Props) {
   // Reset on open
   useEffect(() => {
     if (open && !initial) {
-      setDate(new Date().toISOString().slice(0, 16));
+      setDate(nowLocalInput());
       setCategoryId('');
       setAmount(0);
       setPaymentMethod('Cash');
@@ -106,7 +110,8 @@ export function AddExpenseDrawer({ open, onClose, initial }: Props) {
   const submit = () => {
     if (!isValid) return;
     const data: Omit<ExpenseRecord, 'id'> = {
-      date,
+      // The box holds local wall-clock time; the database stores a UTC instant.
+      date: fromLocalInput(date),
       categoryId,
       amount,
       paymentMethod,
@@ -146,7 +151,7 @@ export function AddExpenseDrawer({ open, onClose, initial }: Props) {
               <NumberField value={amount} onChangeNumber={setAmount} className="text-right text-lg" />
             </Field>
             <Field label="Date" required>
-              <Input type="datetime-local" value={date} onChange={(e) => setDate(e.target.value)} />
+              <DateTimeField value={date} onChange={setDate} />
             </Field>
           </div>
 
@@ -314,10 +319,9 @@ export function AddExpenseDrawer({ open, onClose, initial }: Props) {
                   <label className="text-[10px] uppercase font-semibold text-muted-foreground">
                     End date (optional)
                   </label>
-                  <Input
-                    type="date"
+                  <DateField
                     value={recurringEnd}
-                    onChange={(e) => setRecurringEnd(e.target.value)}
+                    onChange={setRecurringEnd}
                   />
                 </div>
               </div>

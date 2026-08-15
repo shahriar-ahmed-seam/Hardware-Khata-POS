@@ -3113,3 +3113,30 @@ Object.assign(BN, {
   'Custom range': 'নিজের সময়সীমা',
   'The end date is before the start date.': 'শেষ তারিখ শুরুর তারিখের আগে পড়েছে।',
 });
+
+// ---------------------------------------------------------------------------
+// APPEND-ONLY BLOCK — calendar/clock pickers on every date box, the buy/avg/sell
+// reference prices on the sale and purchase forms, and the payment dialogs that
+// now show what will still be owing after the payment.
+// ---------------------------------------------------------------------------
+Object.assign(BN, {
+  // --- date & time pickers
+  'Pick from a calendar': 'ক্যালেন্ডার থেকে বাছুন',
+  'Set to right now': 'এখনকার সময় বসান',
+  'Set to today': 'আজকের তারিখ বসান',
+
+  // --- buy / average buy / sell reference prices
+  Buy: 'ক্রয়',
+  Avg: 'গড়',
+  Sell: 'বিক্রয়',
+  'Buy price': 'ক্রয় মূল্য',
+  'Avg buy': 'গড় ক্রয়',
+
+  // --- taking a payment against a due or partial document
+  'Paid on': 'পরিশোধের তারিখ',
+  'Already paid': 'ইতিমধ্যে পরিশোধিত',
+  'This payment': 'এই পরিশোধ',
+  'Still owing after this': 'এরপরও বাকি থাকবে',
+  // ('Full due' is already translated in an earlier block.)
+  Half: 'অর্ধেক',
+});

@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { NumberField } from '@/components/ui/NumberField';
+import { DateTimeField } from '@/components/ui/DateTimeField';
+import { nowLocalInput, fromLocalInput } from '@/lib/datetime';
 import { Banknote, Smartphone, CreditCard, Building2, FileText, Save } from 'lucide-react';
 import { usePurchases, type PurchaseRecord, type PaymentMethod } from '@/stores/purchases';
 import { cn, formatBDT } from '@/lib/utils';
@@ -27,7 +29,23 @@ export function AddPurchasePaymentModal({ open, onClose, purchase }: Props) {
   const [method, setMethod] = useState<PaymentMethod>('Cash');
   const [amount, setAmount] = useState(purchase.due);
   const [reference, setReference] = useState('');
-  const [paidAt, setPaidAt] = useState(new Date().toISOString().slice(0, 16));
+  const [paidAt, setPaidAt] = useState(nowLocalInput());
+
+  /**
+   * RE-SEED EVERY TIME IT OPENS. The purchase drawer mounts this permanently, so
+   * `useState(purchase.due)` ran once: after a part payment, reopening still
+   * offered the ORIGINAL amount instead of the remainder. Same bug as the sale
+   * payment modal, and it broke the same flow — settling a bill in instalments.
+   */
+  useEffect(() => {
+    if (!open) return;
+    setMethod('Cash');
+    setAmount(purchase.due);
+    setReference('');
+    setPaidAt(nowLocalInput());
+  }, [open, purchase.id, purchase.due]);
+
+  const overpaying = amount > purchase.due + 0.005;
 
   const submit = () => {
     if (amount <= 0) return;
@@ -35,7 +53,9 @@ export function AddPurchasePaymentModal({ open, onClose, purchase }: Props) {
       method,
       amount,
       reference: reference || undefined,
-      paidAt,
+      // Local wall-clock box → UTC instant. A cash payment posts out of the open
+      // cash shift, so the timestamp decides which shift it comes from.
+      paidAt: fromLocalInput(paidAt),
     });
     onClose();
   };
@@ -61,24 +81,16 @@ export function AddPurchasePaymentModal({ open, onClose, purchase }: Props) {
       }
     >
       <div className="p-4 space-y-3">
-        {/* Top row: balance & paid on date */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div className="rounded-lg border border-border p-3 bg-secondary/40">
-            <div className="text-[10px] uppercase font-semibold text-muted-foreground">
-              Advance Balance
-            </div>
-            <div className="font-mono tabular text-lg font-bold mt-0.5">৳ 0.00</div>
-          </div>
-          <div>
-            <label className="text-[10px] uppercase font-semibold text-muted-foreground">
-              Paid on *
-            </label>
-            <Input
-              type="datetime-local"
-              value={paidAt}
-              onChange={(e) => setPaidAt(e.target.value)}
-            />
-          </div>
+        {/*
+          An "Advance Balance ৳ 0.00" tile used to sit here. It was a hard-coded
+          zero — there is no advance-balance concept in the backend at all, so it
+          was a number the shop could have believed. Removed rather than faked.
+        */}
+        <div>
+          <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+            Paid on *
+          </label>
+          <DateTimeField value={paidAt} onChange={setPaidAt} />
         </div>
 
         {/* Outstanding indicator */}
@@ -147,6 +159,37 @@ export function AddPurchasePaymentModal({ open, onClose, purchase }: Props) {
             <Input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="TX1234567" />
           </div>
         )}
+
+        {overpaying && (
+          <div className="rounded-md bg-warning/10 text-warning px-3 py-2 text-xs">
+            That is more than the {formatBDT(purchase.due)} still owed on this bill. The extra
+            will reduce your overall balance with this supplier.
+          </div>
+        )}
+
+        {/* What the bill looks like once this is saved — visible before
+            committing, not after. */}
+        <div className="rounded-lg border border-border p-3 space-y-1 text-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">Already paid</span>
+            <span className="font-mono tabular">{formatBDT(purchase.paid)}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">This payment</span>
+            <span className="font-mono tabular">{formatBDT(amount)}</span>
+          </div>
+          <div className="flex items-center justify-between border-t border-border pt-1">
+            <span className="font-semibold">Still owing after this</span>
+            <span
+              className={cn(
+                'font-mono tabular font-bold',
+                Math.max(0, purchase.due - amount) <= 0.005 ? 'text-success' : 'text-destructive',
+              )}
+            >
+              {formatBDT(Math.max(0, purchase.due - amount))}
+            </span>
+          </div>
+        </div>
       </div>
     </Modal>
   );

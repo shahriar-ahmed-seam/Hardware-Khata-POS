@@ -5,6 +5,8 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { DateTimeField } from '@/components/ui/DateTimeField';
+import { nowLocalInput, fromLocalInput } from '@/lib/datetime';
 import { NumberField } from '@/components/ui/NumberField';
 import { ProductImage } from '@/components/products/ProductImage';
 import { useProducts } from '@/hooks/useProducts';
@@ -32,7 +34,8 @@ export default function AddStockTransfer() {
 
   const [fromBranch, setFromBranch] = useState(branchNames[0] ?? 'Mirpur Branch');
   const [toBranch, setToBranch] = useState(branchNames[1] ?? 'Uttara Branch');
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 16));
+  // Local wall-clock, defaulting to now (was UTC — six hours out in Dhaka).
+  const [date, setDate] = useState(nowLocalInput());
   const [status, setStatus] = useState<TransferStatus>('in-transit');
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<TransferLine[]>([]);
@@ -79,7 +82,9 @@ export default function AddStockTransfer() {
     const t: StockTransfer = {
       id: 't_' + Date.now(),
       refNo: nextTransferRef(),
-      date,
+      // Local wall-clock box → UTC instant for storage. This dates the stock
+      // movements, so it has to be a real instant.
+      date: fromLocalInput(date),
       fromBranch,
       toBranch,
       status,
@@ -142,7 +147,7 @@ export default function AddStockTransfer() {
                 </select>
               </Field>
               <Field label="Date" required className="md:col-span-6">
-                <Input type="datetime-local" value={date} onChange={(e) => setDate(e.target.value)} />
+                <DateTimeField value={date} onChange={setDate} />
               </Field>
               <Field label="Status" className="md:col-span-6">
                 <select

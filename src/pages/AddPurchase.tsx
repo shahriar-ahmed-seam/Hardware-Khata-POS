@@ -39,6 +39,8 @@ import { consumePurchasePrefill } from '@/lib/purchasePrefill';
 import { AddPurchasePaymentModal } from '@/components/purchases/AddPurchasePaymentModal';
 import { NewSupplierModal } from '@/components/purchases/NewSupplierModal';
 import { NewProductDrawer } from '@/components/products/NewProductDrawer';
+import { DateTimeField } from '@/components/ui/DateTimeField';
+import { toLocalInput, fromLocalInput } from '@/lib/datetime';
 
 export default function AddPurchase() {
   const nav = useNavigate();
@@ -79,7 +81,12 @@ export default function AddPurchase() {
   // Header
   const [supplierId, setSupplierId] = useState(editing?.supplierId ?? '');
   const [refNo, setRefNo] = useState(editing?.refNo ?? '');
-  const [date, setDate] = useState((editing?.date ?? new Date().toISOString()).slice(0, 16));
+  /**
+   * Defaults to RIGHT NOW on the shop's clock, and stays editable.
+   * Was `new Date().toISOString().slice(0, 16)` — UTC, so it read six hours behind
+   * in Dhaka, and "fixing" it wrote an instant in the future. See lib/datetime.ts.
+   */
+  const [date, setDate] = useState(toLocalInput(editing?.date));
   const [branch, setBranch] = useState(defaultBranchName);
   const [status, setStatus] = useState<PurchaseStatus>(editing?.status ?? 'received');
   const [payTerms, setPayTerms] = useState<string>(editing?.payTerms ?? '');
@@ -250,7 +257,10 @@ export default function AddPurchase() {
     id: editing?.id ?? 'pu_' + Date.now(),
     refNo: refNo || nextPurchaseRef(),
     status,
-    date,
+    // Local wall-clock box → UTC instant for storage. This is the date the stock
+    // movement and the cost-history entry are dated with, so it has to be a real
+    // instant, not a naive string six hours out.
+    date: fromLocalInput(date),
     supplierId,
     supplierName,
     supplierAddress,
@@ -451,7 +461,7 @@ export default function AddPurchase() {
 
             <div className="md:col-span-1 space-y-3">
               <Field label="Purchase Date" required>
-                <Input type="datetime-local" value={date} onChange={(e) => setDate(e.target.value)} />
+                <DateTimeField value={date} onChange={setDate} />
               </Field>
               <Field label="Pay Term" hint={supplierPayTerms ? `Supplier default: ${supplierPayTerms}` : undefined}>
                 <Input
@@ -523,10 +533,16 @@ export default function AddPurchase() {
                           {p.sku} · stock {p.stock} {p.unit}
                         </div>
                       </div>
-                      <div className="text-xs text-muted-foreground font-mono tabular">
-                        ৳{p.cost}
-                      </div>
-                      <Plus className="size-3.5 text-primary" />
+                      {/* Last paid, average paid, current sell price — the three
+                          numbers a buyer needs to judge the price being quoted,
+                          before the line is even added. Colour is the label:
+                          amber = paid out, blue = average paid, green = coming in. */}
+                      <PriceTriplet
+                        cost={p.cost}
+                        avgCost={p.avgCost ?? p.cost}
+                        price={p.price}
+                      />
+                      <Plus className="size-3.5 text-primary shrink-0" />
                     </button>
                   ))}
                 </div>
@@ -538,13 +554,17 @@ export default function AddPurchase() {
                 is visible at once. overflow-x-auto stays as the safety valve for a
                 window narrowed to the 900px minimum. */}
             <div className="mt-3 -mx-4 overflow-x-auto">
-              <table className="w-full text-sm min-w-[860px]">
+              <table className="w-full text-sm min-w-[940px]">
                 <thead className="text-[10px] uppercase text-muted-foreground bg-secondary/40">
                   <tr>
                     <th className="text-left px-2 py-2 font-medium w-8">#</th>
                     <th className="text-left px-2 py-2 font-medium">Product Name</th>
                     <th className="text-right px-1 py-2 font-medium w-[74px]">Qty</th>
                     <th className="text-left px-1 py-2 font-medium w-[96px]">Serial</th>
+                    {/* Read-only: the average we have paid for this item before,
+                        sitting right next to the price being entered so a bad
+                        quote is obvious while it is still being typed. */}
+                    <th className="text-right px-1 py-2 font-medium w-[84px]">Avg buy</th>
                     <th className="text-right px-1 py-2 font-medium w-[92px]">Unit Cost</th>
                     <th className="text-right px-1 py-2 font-medium w-[62px]">Disc %</th>
                     <th className="text-right px-1 py-2 font-medium w-[86px]">Net Cost</th>
@@ -555,7 +575,12 @@ export default function AddPurchase() {
                   </tr>
                 </thead>
                 <tbody>
-                  {lines.map((l, i) => (
+                  {lines.map((l, i) => {
+                    // Read live from the catalogue, not copied onto the line: a
+                    // stored average would be stale the moment another purchase is
+                    // recorded. Unknown product renders '—', never 0.
+                    const cat = products.find((p) => p.id === l.productId);
+                    return (
                     <tr key={i} className="border-t border-border">
                       <td className="px-2 py-2 text-xs text-muted-foreground">{i + 1}</td>
                       <td className="px-2 py-2">
@@ -576,6 +601,9 @@ export default function AddPurchase() {
                           placeholder="—"
                           className="h-7 px-1.5 text-xs"
                         />
+                      </td>
+                      <td className="px-1 py-2 text-right font-mono tabular text-xs text-primary">
+                        {cat ? formatBDT(cat.avgCost ?? cat.cost, { withSymbol: false }) : '—'}
                       </td>
                       <td className="px-1 py-2 text-right">
                         <NumberField
@@ -631,10 +659,11 @@ export default function AddPurchase() {
                         </button>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                   {lines.length === 0 && (
                     <tr>
-                      <td colSpan={11} className="px-4 py-8 text-center text-muted-foreground text-sm">
+                      <td colSpan={12} className="px-4 py-8 text-center text-muted-foreground text-sm">
                         Search above to add items.
                       </td>
                     </tr>
@@ -812,6 +841,43 @@ function Row({
     <div className="flex items-center justify-between text-sm">
       <span className="text-muted-foreground">{label}</span>
       <span className={cn('font-mono tabular', tone === 'success' && 'text-success')}>{value}</span>
+    </div>
+  );
+}
+
+/**
+ * Buy / average buy / sell for a product in the search results.
+ *
+ * Colour is the label for someone who will not read three words every time:
+ * amber = money that went out, blue = the average we have paid, green = money
+ * coming in. `avgCost` is the simple mean of recorded buying prices, NOT the
+ * quantity-weighted cost that drives COGS (see backend/services/costing.ts).
+ */
+function PriceTriplet({
+  cost,
+  avgCost,
+  price,
+}: {
+  cost: number;
+  avgCost: number;
+  price: number;
+}) {
+  return (
+    <div className="shrink-0 flex items-center gap-3 text-right">
+      <TripletCell label="Buy" value={cost} tone="text-warning" />
+      <TripletCell label="Avg" value={avgCost} tone="text-primary" />
+      <TripletCell label="Sell" value={price} tone="text-success" />
+    </div>
+  );
+}
+
+function TripletCell({ label, value, tone }: { label: string; value: number; tone: string }) {
+  return (
+    <div>
+      <div className="text-[9px] uppercase text-muted-foreground leading-none">{label}</div>
+      <div className={cn('mt-0.5 text-xs font-mono tabular font-semibold', tone)}>
+        {formatBDT(value, { withSymbol: false })}
+      </div>
     </div>
   );
 }

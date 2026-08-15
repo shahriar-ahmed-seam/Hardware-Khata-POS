@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { useBranches } from '@/stores/branches';
+import { toLocalDateInput, todayLocalDateInput } from '@/lib/datetime';
 import { cn } from '@/lib/utils';
 
 /**
@@ -196,7 +197,8 @@ export function ReportToolbar({
             ))}
             <button
               onClick={() => {
-                const today = new Date().toISOString().slice(0, 10);
+                // The shop's day, not the UTC day.
+                const today = todayLocalDateInput();
                 onRangeChange({ preset: 'custom', from: today, to: today });
               }}
               className={cn(
@@ -211,19 +213,25 @@ export function ReportToolbar({
           </div>
 
           {range.preset === 'custom' && (
+            /* `toLocalDateInput` rather than `slice(0, 10)`: the stored bound is a
+               UTC instant, and slicing it names the UTC calendar day — which late
+               in the evening in UTC+6 is YESTERDAY. The boxes have to show the day
+               the user actually picked. */
             <div className="flex items-center gap-1 ml-1 print:hidden">
               <input
                 type="date"
-                value={range.from?.slice(0, 10) ?? ''}
+                value={range.from ? toLocalDateInput(range.from) : ''}
+                max={range.to ? toLocalDateInput(range.to) : undefined}
                 onChange={(e) => onRangeChange({ ...range, from: e.target.value })}
-                className="h-7 rounded-md border border-input bg-background px-2 text-xs"
+                className="h-7 rounded-md border border-input bg-background px-2 text-xs tabular"
               />
               <span className="text-muted-foreground text-xs">→</span>
               <input
                 type="date"
-                value={range.to?.slice(0, 10) ?? ''}
+                value={range.to ? toLocalDateInput(range.to) : ''}
+                min={range.from ? toLocalDateInput(range.from) : undefined}
                 onChange={(e) => onRangeChange({ ...range, to: e.target.value })}
-                className="h-7 rounded-md border border-input bg-background px-2 text-xs"
+                className="h-7 rounded-md border border-input bg-background px-2 text-xs tabular"
               />
             </div>
           )}

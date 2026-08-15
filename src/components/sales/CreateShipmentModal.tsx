@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { DateField } from '@/components/ui/DateTimeField';
+import { localDateInputPlusDays } from '@/lib/datetime';
 import { Truck } from 'lucide-react';
 import {
   useSales,
@@ -98,7 +100,8 @@ export function CreateShipmentModal({ open, onClose, saleId }: Props) {
       setTracking('');
       setStatus('pending');
       setAddress(customer?.address ?? '');
-      setTarget(new Date(Date.now() + 86_400_000).toISOString().slice(0, 10));
+      // Tomorrow on the shop's clock (a UTC slice names the wrong day in UTC+6).
+      setTarget(localDateInputPlusDays(1));
       setNotes('');
     }
     // Only on open/close: the customer may resolve later (see the address
@@ -186,7 +189,7 @@ export function CreateShipmentModal({ open, onClose, saleId }: Props) {
           />
         </Field>
         <Field label="Target delivery date">
-          <Input type="date" value={target} onChange={(e) => setTarget(e.target.value)} />
+          <DateField value={target} onChange={setTarget} />
         </Field>
         <Field label="Notes" className="md:col-span-2">
           <textarea

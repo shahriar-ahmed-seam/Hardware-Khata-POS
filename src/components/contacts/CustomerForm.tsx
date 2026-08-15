@@ -3,6 +3,8 @@ import { Save, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { NumberField } from '@/components/ui/NumberField';
+import { DateField } from '@/components/ui/DateTimeField';
+import { todayLocalDateInput } from '@/lib/datetime';
 import { Avatar } from './Avatar';
 import type { Customer } from '@/types/domain';
 import { cn } from '@/lib/utils';
@@ -25,7 +27,8 @@ const EMPTY: Customer = {
   due: 0,
   totalPurchase: 0,
   totalPaid: 0,
-  joined: new Date().toISOString().slice(0, 10),
+  // The shop's calendar day, not the UTC one.
+  joined: todayLocalDateInput(),
   tags: [],
 };
 
@@ -43,7 +46,7 @@ export function CustomerForm({ initial, asDrawer, onSave, onDelete, onCancel }: 
       ...c,
       id: c.id || 'cu_' + Date.now(),
       due: c.due || c.openingBalance || 0,
-      joined: c.joined || new Date().toISOString().slice(0, 10),
+      joined: c.joined || todayLocalDateInput(),
     };
     onSave(final);
   };
@@ -139,10 +142,9 @@ export function CustomerForm({ initial, asDrawer, onSave, onDelete, onCancel }: 
                 />
               </Field>
               <Field label="Date of birth">
-                <Input
-                  type="date"
+                <DateField
                   value={c.dob ?? ''}
-                  onChange={(e) => set('dob', e.target.value || undefined)}
+                  onChange={(v) => set('dob', v || undefined)}
                 />
               </Field>
             </div>

@@ -8,6 +8,7 @@ import {
   type BackendSupplier,
 } from '@/hooks/contactAdapter';
 import { usePurchases } from './purchases';
+import { todayLocalDateInput } from '@/lib/datetime';
 import type { Customer, Supplier } from '@/types/domain';
 
 /**
@@ -155,7 +156,8 @@ export const useCustomers = create<CustomersState>((set, get) => ({
       due: data.due ?? data.openingBalance ?? 0,
       totalPurchase: data.totalPurchase ?? 0,
       totalPaid: data.totalPaid ?? 0,
-      joined: data.joined ?? new Date().toISOString().slice(0, 10),
+      // The shop's calendar day, not the UTC one.
+      joined: data.joined ?? todayLocalDateInput(),
     };
     // NOTE: the real backend id only arrives after rehydrate, so we cannot
     // return it synchronously. Consumers needing the real id should re-select
