@@ -32,6 +32,9 @@ import { toast } from '@/stores/toast';
 import { promptText } from '@/stores/prompt';
 import { useCan } from '@/hooks/useCan';
 import { ProductImage } from '@/components/products/ProductImage';
+import { NewProductDrawer } from '@/components/products/NewProductDrawer';
+import { CustomerPicker } from '@/components/pos/CustomerPicker';
+import type { Product } from '@/types/domain';
 
 export default function AddSale() {
   const nav = useNavigate();
@@ -97,6 +100,8 @@ export default function AddSale() {
   const [other, setOther] = useState(editing?.other ?? 0);
   const [lines, setLines] = useState<SaleLine[]>(editing?.lines ?? []);
   const [searchQ, setSearchQ] = useState('');
+  const [newCustomerOpen, setNewCustomerOpen] = useState(false);
+  const [newProductOpen, setNewProductOpen] = useState(false);
   // Guarded: the list can be empty (backend still loading) — never crash.
   const customer = customers.find((c) => c.id === customerId);
 
@@ -128,17 +133,20 @@ export default function AddSale() {
     ).slice(0, 6);
   }, [searchQ, products]);
 
-  const addLine = (id: string) => {
-    const p = products.find((x) => x.id === id);
-    if (!p) return;
-    const exists = lines.findIndex((l) => l.productId === id);
+  /**
+   * Put a product on the sale.
+   *
+   * Takes the PRODUCT rather than an id so a product created seconds ago in the
+   * "Add new product" drawer can be added right away — the catalogue query has
+   * not refetched at that point, so an id lookup would come back empty.
+   */
+  const addLineFromProduct = (p: Product) => {
+    const exists = lines.findIndex((l) => l.productId === p.id);
     if (exists >= 0) {
-      const next = [...lines];
-      next[exists] = { ...next[exists], qty: next[exists].qty + 1 };
-      setLines(next);
+      setLines((ls) => ls.map((l, i) => (i === exists ? { ...l, qty: l.qty + 1 } : l)));
     } else {
-      setLines([
-        ...lines,
+      setLines((ls) => [
+        ...ls,
         {
           productId: p.id,
           name: p.name,
@@ -153,6 +161,11 @@ export default function AddSale() {
       ]);
     }
     setSearchQ('');
+  };
+
+  const addLine = (id: string) => {
+    const p = products.find((x) => x.id === id);
+    if (p) addLineFromProduct(p);
   };
 
   const updateLine = (idx: number, patch: Partial<SaleLine>) =>
@@ -305,22 +318,44 @@ export default function AddSale() {
         </div>
       )}
 
-      <div className="p-6 grid grid-cols-1 xl:grid-cols-3 gap-6">
-        {/* LEFT — meta + items */}
-        <div className="xl:col-span-2 space-y-4">
+      {/*
+        LAYOUT — ONE COLUMN, ITEMS FULL WIDTH.
+        This was a 2/3 + 1/3 split with a sticky "Order charges" card on the right,
+        so the item table only ever had about 60% of the window and the cashier had
+        to scroll it sideways to reach price and subtotal. The table is the working
+        area; the charges and totals are read at the end, so they moved to the
+        bottom.
+      */}
+      <div className="p-6 space-y-4">
+        {/* Meta + items */}
+        <div className="space-y-4">
           <Card className="p-4 grid grid-cols-1 md:grid-cols-3 gap-3">
             <Field label="Customer" required>
-              <select
-                value={customerId}
-                onChange={(e) => setCustomerId(e.target.value)}
-                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
-              >
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
+              <div className="flex items-center gap-1.5">
+                <select
+                  value={customerId}
+                  onChange={(e) => setCustomerId(e.target.value)}
+                  className="h-9 flex-1 min-w-0 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                >
+                  {customers.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+                {/* Add a walk-in who is not on file yet, without losing the sale
+                    that is half typed. Saves through customers.create and selects
+                    the new record. */}
+                <button
+                  type="button"
+                  onClick={() => setNewCustomerOpen(true)}
+                  title="Add new customer"
+                  aria-label="Add new customer"
+                  className="size-9 shrink-0 grid place-items-center rounded-md border border-border text-muted-foreground hover:border-primary hover:bg-primary/10 hover:text-primary transition"
+                >
+                  <Plus className="size-4" />
+                </button>
+              </div>
             </Field>
             <Field label="Date" required>
               <Input
@@ -361,7 +396,12 @@ export default function AddSale() {
           </Card>
 
           <Card className="p-4">
-            <div className="text-sm font-semibold mb-2">Add items</div>
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-sm font-semibold">Add items</div>
+              <Button variant="outline" size="sm" onClick={() => setNewProductOpen(true)}>
+                <Plus className="size-3.5" /> Add new product
+              </Button>
+            </div>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
               <Input
@@ -474,11 +514,11 @@ export default function AddSale() {
           </Card>
         </div>
 
-        {/* RIGHT — totals & charges */}
-        <div className="space-y-4">
-          <Card className="p-4 space-y-3 sticky top-4">
+        {/* BOTTOM — order charges & totals (moved out of the right rail) */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Card className="p-4 space-y-3">
             <div className="text-sm font-semibold">Order charges</div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
               <Field label="Disc %">
                 <NumberField value={orderDiscPct} onChangeNumber={setOrderDiscPct} />
               </Field>
@@ -495,8 +535,11 @@ export default function AddSale() {
                 <NumberField value={other} onChangeNumber={setOther} />
               </Field>
             </div>
+          </Card>
 
-            <div className="border-t border-border pt-3 space-y-1.5 text-sm">
+          <Card className="p-4 space-y-3">
+            <div className="text-sm font-semibold">Totals</div>
+            <div className="space-y-1.5 text-sm">
               <Row label="Subtotal" value={formatBDT(subtotal)} />
               {totalLineDiscount > 0 && (
                 <Row label="Line discounts" value={`− ${formatBDT(totalLineDiscount)}`} tone="success" />
@@ -521,6 +564,25 @@ export default function AddSale() {
           </Card>
         </div>
       </div>
+
+      {/* Add a customer / a product without abandoning this sale. Both save to
+          the real backend and are selected or added here immediately. */}
+      <CustomerPicker
+        open={newCustomerOpen}
+        onClose={() => setNewCustomerOpen(false)}
+        selectedId={customerId}
+        onSelect={setCustomerId}
+        startInAdd
+      />
+      <NewProductDrawer
+        open={newProductOpen}
+        onClose={() => setNewProductOpen(false)}
+        onCreated={(p) => {
+          addLineFromProduct(p);
+          void productsQuery.refetch();
+        }}
+        subtitle="Saved to your catalogue and added to this sale."
+      />
     </div>
   );
 }

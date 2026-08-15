@@ -7,6 +7,7 @@ import {
   Upload,
   Download,
   Eye,
+  EyeOff,
   Printer,
   Banknote,
   Undo2,
@@ -20,6 +21,7 @@ import { ColumnsPanel } from '@/components/ui/ColumnsPanel';
 import { Pagination } from '@/components/ui/Pagination';
 import { usePurchases, type PurchaseRecord, type PurchaseStatus } from '@/stores/purchases';
 import { useSuppliers } from '@/stores/contacts';
+import { useBackup } from '@/stores/backup';
 import {
   ALL_PURCHASE_COLUMNS,
   PURCHASE_COLUMN_META,
@@ -31,8 +33,12 @@ import { hasBackend } from '@/lib/api';
 import { SkeletonTable } from '@/components/ui/Skeleton';
 import { PurchaseDetail } from '@/components/purchases/PurchaseDetail';
 import { PayBillModal } from '@/components/purchases/PayBillModal';
+import { PurchasePrintModal } from '@/components/purchases/PurchasePrintModal';
 
 type DateFilter = 'all' | 'today' | 'week' | 'month';
+
+/** Everything except cancelled — see `showCancelled` below. */
+const LIVE_STATUSES: PurchaseStatus[] = ['received', 'ordered', 'in-transit'];
 
 /**
  * Turn a date preset into inclusive ISO bounds for the server query. Day
@@ -68,6 +74,8 @@ export default function Purchases() {
   const loadSupplierOptions = useSuppliers((s) => s.loadOptions);
   const { columns, toggle, move, reset } = usePurchasesUI();
   const backend = hasBackend();
+  const exportCsv = useBackup((s) => s.exportCsv);
+  const exportBusy = useBackup((s) => s.busy);
 
   // Load ONE page on mount; every filter below is pushed into the SQL query.
   // Filters are stated explicitly so a query left over from a previous visit
@@ -75,8 +83,11 @@ export default function Purchases() {
   useEffect(() => {
     void loadPage({
       page: 1,
-      statuses: undefined,
+      // Cancelled purchases are excluded up front, in SQL, so they do not eat
+      // rows out of the page the employee is looking at.
+      statuses: LIVE_STATUSES,
       supplierId: undefined,
+      payment: undefined,
       from: undefined,
       to: undefined,
       q: undefined,
@@ -92,6 +103,16 @@ export default function Purchases() {
   const [colsOpen, setColsOpen] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [payBillOpen, setPayBillOpen] = useState(false);
+  const [printFor, setPrintFor] = useState<PurchaseRecord | null>(null);
+  /**
+   * CANCELLED PURCHASES ARE HIDDEN BY DEFAULT.
+   *
+   * A cancelled purchase has had its stock-in and its cash-out reversed, so it
+   * buys nothing but confusion in a list an employee reads all day. Nothing is
+   * deleted (the reversal history is exactly what makes a cancel auditable) and
+   * one small button brings them back. Same rule as voided sales.
+   */
+  const [showCancelled, setShowCancelled] = useState(false);
 
   // Search hits the database (reference + supplier name) — debounced ~300ms so
   // typing doesn't fire a query per keystroke. First run skipped: the mount
@@ -109,20 +130,50 @@ export default function Purchases() {
   }, [q, loadPage]);
 
   /**
-   * Paid / Partial / Due are DERIVED from `paid` / `due`, not a DB column, so
-   * they cannot be pushed into SQL — they stay CLIENT-side over the rows of the
-   * current page (the UI says so next to the chips). The lifecycle status chips
-   * (received / ordered / in-transit / cancelled) DO map to a column and go
-   * into the query.
+   * Paid / Partial / Due are pushed into SQL now.
+   *
+   * They used to be filtered here in JavaScript over the rows of the loaded page,
+   * which meant clicking "Due" filtered the newest 50 bills and reported "No
+   * purchases match" while unpaid ones sat further back — and the pager and page
+   * totals then disagreed with the rows on screen. `paid` and `due` ARE columns on
+   * `purchases`; see `PageQuery.payment` in backend/services/paged.ts.
    */
-  const list = useMemo(() => {
-    if (payment === 'all') return purchases;
-    return purchases.filter((p) => {
-      if (payment === 'paid') return p.due === 0;
-      if (payment === 'partial') return p.paid > 0 && p.due > 0;
-      return p.paid === 0; // 'due'
-    });
-  }, [purchases, payment]);
+  /**
+   * The lifecycle statuses to ask SQL for, given the chip AND the cancelled
+   * toggle. Kept in one place so the two controls can never disagree (a chip
+   * saying "cancelled" while the toggle claims they are hidden).
+   */
+  const statusesFor = (chip: 'all' | PurchaseStatus, withCancelled: boolean) => {
+    if (chip !== 'all') return [chip];
+    return withCancelled ? undefined : LIVE_STATUSES;
+  };
+
+  const onStatusChip = (next: 'all' | PurchaseStatus) => {
+    setStatus(next);
+    // Picking "cancelled" obviously means showing them.
+    if (next === 'cancelled') setShowCancelled(true);
+    void loadPage({ statuses: statusesFor(next, next === 'cancelled' || showCancelled), page: 1 });
+  };
+
+  const toggleCancelled = () => {
+    const next = !showCancelled;
+    setShowCancelled(next);
+    // Hiding them while the "cancelled" chip is active would be contradictory,
+    // so the chip falls back to "all".
+    const chip = !next && status === 'cancelled' ? 'all' : status;
+    if (chip !== status) setStatus(chip);
+    void loadPage({ statuses: statusesFor(chip, next), page: 1 });
+  };
+
+  const onPaymentChip = (next: 'all' | 'paid' | 'partial' | 'due') => {
+    setPayment(next);
+    void loadPage({ payment: next === 'all' ? undefined : next, page: 1 });
+  };
+
+  // EVERY filter is applied in SQL now — lifecycle status, payment state,
+  // supplier, date and free text — so the rows, the pager and the totals below
+  // all describe the same result set.
+  const list = purchases;
 
   // These sums cover the LOADED PAGE only — the rest of the range was never
   // fetched. Labelled "this page" in the UI so they can't read as range totals.
@@ -151,8 +202,17 @@ export default function Purchases() {
             <Button variant="outline" size="sm" onClick={() => nav('/purchases/import')}>
               <Upload className="size-4" /> Import
             </Button>
-            <Button variant="outline" size="sm">
-              <Download className="size-4" /> Export
+            {/* Was a button with no handler. Same `backup.export` channel as
+                Settings, so there is one exporter in the app. "All" is literal:
+                the whole purchases table, not the filtered page. */}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={exportBusy}
+              onClick={() => void exportCsv('purchases')}
+              title="Write every purchase to a CSV file in your backup folder"
+            >
+              <Download className="size-4" /> Export all
             </Button>
             <Button variant="outline" size="sm" onClick={() => nav('/purchases/returns')}>
               <Undo2 className="size-4" /> Returns
@@ -228,7 +288,7 @@ export default function Purchases() {
               {(['all', 'paid', 'partial', 'due'] as const).map((p) => (
                 <button
                   key={p}
-                  onClick={() => setPayment(p)}
+                  onClick={() => onPaymentChip(p)}
                   className={cn(
                     'px-3 py-1 rounded font-medium capitalize transition',
                     payment === p
@@ -240,18 +300,20 @@ export default function Purchases() {
                 </button>
               ))}
             </div>
-            <span className="text-[11px] text-muted-foreground">
-              Paid / Partial / Due filter this page
-            </span>
           </div>
           <div className="flex items-center gap-0.5 p-0.5 bg-secondary rounded-md text-xs">
-            {(['all', 'received', 'ordered', 'in-transit', 'cancelled'] as const).map((s) => (
+            {(
+              [
+                'all',
+                'received',
+                'ordered',
+                'in-transit',
+                ...(showCancelled ? (['cancelled'] as const) : []),
+              ] as const
+            ).map((s) => (
               <button
                 key={s}
-                onClick={() => {
-                  setStatus(s);
-                  void loadPage({ statuses: s === 'all' ? undefined : [s] });
-                }}
+                onClick={() => onStatusChip(s)}
                 className={cn(
                   'px-3 py-1 rounded font-medium capitalize transition',
                   status === s
@@ -263,6 +325,25 @@ export default function Purchases() {
               </button>
             ))}
           </div>
+
+          {/* Cancelled purchases: out of the way, one click back. */}
+          <button
+            onClick={toggleCancelled}
+            title={
+              showCancelled
+                ? 'Hide cancelled purchases'
+                : 'Show cancelled purchases as well'
+            }
+            className={cn(
+              'h-9 px-3 inline-flex items-center gap-1.5 rounded-md border text-xs font-medium transition',
+              showCancelled
+                ? 'border-destructive/50 bg-destructive/10 text-destructive'
+                : 'border-border text-muted-foreground hover:bg-secondary hover:text-foreground',
+            )}
+          >
+            {showCancelled ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+            {showCancelled ? 'Cancelled shown' : 'Show cancelled'}
+          </button>
         </Card>
 
         <Card className="overflow-hidden">
@@ -311,9 +392,12 @@ export default function Purchases() {
                         >
                           <Eye className="size-3.5" />
                         </button>
+                        {/* Was a button with no handler. Prints the goods
+                            received note for this purchase. */}
                         <button
+                          onClick={() => setPrintFor(p)}
                           className="size-7 grid place-items-center rounded hover:bg-secondary"
-                          title="Print"
+                          title="Print goods received note"
                         >
                           <Printer className="size-3.5" />
                         </button>
@@ -349,6 +433,11 @@ export default function Purchases() {
 
       <PurchaseDetail open={!!openId} onClose={() => setOpenId(null)} purchaseId={openId} />
       <PayBillModal open={payBillOpen} onClose={() => setPayBillOpen(false)} />
+      <PurchasePrintModal
+        open={!!printFor}
+        onClose={() => setPrintFor(null)}
+        purchase={printFor}
+      />
 
       {colsOpen && (
         <ColumnsPanel

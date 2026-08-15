@@ -233,8 +233,12 @@ export const usePOSCart = create<State>()(
               priceGroup: group,
               // Re-price every line to the NEW group. Per-line markup and
               // discounts are intentionally preserved — they are the cashier's
-              // own adjustments, not a property of the price group.
+              // own adjustments, not a property of the price group. A line whose
+              // price was TYPED BY HAND is left alone for the same reason: it is
+              // a price agreed with this customer, and overwriting it would
+              // silently charge them something else.
               lines: c.lines.map((l) => {
+                if (l.priceOverride) return l;
                 const hit = resolve(l.productId, group);
                 return hit ? { ...l, basePrice: hit.price } : l;
               }),
@@ -259,7 +263,13 @@ export const usePOSCart = create<State>()(
               result.removed.push(l.name);
               continue;
             }
-            if (Math.abs(hit.price - l.basePrice) > 0.001) {
+            // A hand-typed price is refreshed for NAME/SKU but never for price:
+            // it was agreed with a customer, so "the catalogue moved" is not a
+            // reason to change it behind the cashier's back. The product still
+            // has to exist, which is checked above.
+            if (l.priceOverride) {
+              lines.push({ ...l, name: hit.name, sku: hit.sku });
+            } else if (Math.abs(hit.price - l.basePrice) > 0.001) {
               result.repriced.push({ name: hit.name, from: l.basePrice, to: hit.price });
               lines.push({ ...l, basePrice: hit.price, name: hit.name, sku: hit.sku });
             } else {

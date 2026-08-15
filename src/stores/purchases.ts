@@ -208,6 +208,12 @@ export interface PurchasesQuery {
   pageSize: number;
   statuses?: PurchaseStatus[];
   supplierId?: string;
+  /**
+   * Settlement state, filtered IN SQL — see `PageQuery.payment` in
+   * backend/services/paged.ts. It was a client-side filter over the loaded page,
+   * so "Due" only ever found the unpaid bills among the newest 50.
+   */
+  payment?: 'paid' | 'partial' | 'due';
   from?: string;
   to?: string;
   q?: string;
@@ -271,6 +277,7 @@ export const usePurchases = create<State>((set, get) => ({
         pageSize: query.pageSize,
         statuses: query.statuses,
         supplierId: query.supplierId === 'all' ? undefined : query.supplierId,
+        payment: query.payment,
         from: query.from,
         to: query.to,
         q: query.q?.trim() || undefined,

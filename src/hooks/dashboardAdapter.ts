@@ -424,7 +424,16 @@ export function mapCustomerDues(rows: BackendContactRow[]): DueRow[] {
   return rows
     .filter((r) => (r.due ?? 0) > 0)
     .sort((a, b) => (b.due ?? 0) - (a.due ?? 0))
-    .map((r) => ({ id: r.id, name: r.name, group: r.price_group ?? '', due: r.due ?? 0 }));
+    // Phone carried through as well: the dashboard's dues list is a call list,
+    // and looking each customer up separately to find their number defeats the
+    // point of putting it on the dashboard.
+    .map((r) => ({
+      id: r.id,
+      name: r.name,
+      group: r.price_group ?? '',
+      phone: r.phone ?? '',
+      due: r.due ?? 0,
+    }));
 }
 
 export function mapSupplierDues(rows: BackendContactRow[]): DueRow[] {

@@ -14,11 +14,11 @@
 
 ```bash
 npm install                        # if node_modules is missing
-npm run backend:verify:all         # must print 962 checks across SEVEN suites
+npm run backend:verify:all         # must print 999 checks across SEVEN suites
 npx tsc --noEmit -p tsconfig.json  # frontend typecheck — clean
 npx tsc --noEmit -p tsconfig.backend.json
 npm run build                      # renderer + main + preload
-npm run i18n:check                 # 32 checks, 2,290 Bangla phrases
+npm run i18n:check                 # 32 checks, 2,351 Bangla phrases
 npm run rebuild:electron           # LEAVE IT ON THE ELECTRON ABI (see §6)
 ```
 
@@ -30,14 +30,14 @@ Expected per-suite counts:
 
 | Suite | Checks | Covers |
 |-------|-------:|--------|
-| `all.ts` | 378 | scenarios + determinism + file-DB smoke + identities |
+| `all.ts` | 385 | scenarios + determinism + file-DB smoke + identities |
 | `api.ts` | 209 | the `buildApi()` facade — **150 channels** |
-| `run.ts` | 56 | identities on a 365-day dataset |
+| `run.ts` | 65 | identities on a 365-day dataset + **custom date ranges** |
 | `e2e.ts` | 68 | one full shop day |
-| `paging.ts` | 80 | paginated list reads |
+| `paging.ts` | 91 | paginated list reads + **Paid/Partial/Due filtering** |
 | `backup.ts` | 120 | backup, cloud, CSV export, invoice PDFs, **pendrive copies** |
-| `costing.ts` | 51 | **purchase-price history** + schema-migration head |
-| **total** | **962** | |
+| `costing.ts` | 61 | purchase-price history, **purchases feeding it**, migration head |
+| **total** | **999** | |
 
 Single suites: `backend:verify`, `backend:scenarios`, `backend:e2e`,
 `backend:paging`, `backend:backup`, `backend:costing`.
@@ -215,9 +215,131 @@ longer makes the two numbers the cashier needs disappear first.
 
 ---
 
+---
+
+## 3c. What landed in THIS session (dead buttons, real averages, inline create)
+
+**A purchase now moves the average buying price — the reported bug.**
+`createPurchase` wrote `products.cost` with a raw `UPDATE`, and only when the line
+carried a NEW SELL PRICE. So buying the same item at a higher price without
+retyping its sell price changed nothing at all, and when it did fire it bypassed
+`product_cost_history` — which `avg_cost` is recomputed *from*, so the average
+never moved and the cache silently stopped agreeing with its own source of truth.
+Each received line now goes through `setProductCost(…, source: 'purchase')`
+(nested `tx()` = SAVEPOINT, so it joins the same transaction). `CostSource` gained
+`'purchase'`; the column has no CHECK constraint, so **no migration**. The sell
+price stays opt-in. Activity logging is skipped for purchase-sourced entries —
+otherwise every GRN buries the feed under one line per item. +10 checks.
+
+**Paid / Partial / Due were a trap, not a filter.** Both list screens filtered
+them in JavaScript over the rows of the loaded page. On a shop with history,
+clicking "Due" filtered the newest 50 and rendered "No sales match these filters"
+while thirty unpaid invoices sat on page four — and the pager and page totals
+disagreed with the rows on screen. `PageQuery.payment` is SQL now, shared by sales
+and purchases through one `paymentStateSql()` helper (compared on a 1-paisa
+epsilon; `due` is REAL). +11 checks asserting the three states **partition** the
+document set. **The stores are shared**, so Drafts/Quotations must keep clearing
+`payment` or a draft list silently inherits "unpaid only".
+
+**Custom date ranges dropped their last day.** `resolveRange`'s custom branch used
+`new Date('2026-01-10')`, which JS parses as **UTC** midnight: 1st–10th returned
+nine days, and the bounds sat on a different clock from every preset (six hours out
+in UTC+6). A bare `YYYY-MM-DD` is anchored to the local day now and the `to` end
+stretched to 23:59:59.999, so it is inclusive as this module documents. Reversed
+dates are swapped rather than returning an empty range that reads as "the shop
+sold nothing". +9 checks.
+
+**Dead buttons, removed or wired.** Print / Re-print on the sale drawer, the sale
+list, the purchase drawer and the purchase list had **no onClick at all**. They
+were never wired because `Receipt` draws a `ParkedCart` and a stored sale is a
+`SaleRecord`; `InvoicePrintModal` (`saleToCart` / `saleToPayment`) is that adapter
+and is deliberately the ONLY one, so an old invoice cannot drift from the copy the
+customer holds. `Receipt` gained `dateISO` — it stamped `new Date()`, so a reprint
+put today's date on last week's invoice. Purchases get their own
+`PurchasePrintModal` (a GRN, not the receipt with different words). "Export" now
+calls the same `backup.export` channel Settings uses, labelled **Export all**
+because it is the whole table, not the page. Both drawers' "Open full page" links
+pointed at `/sales/:id` and `/purchases/:id`, **neither of which is routed** — gone.
+`birthdayList` pointed at `/sms`, which was removed with the SMS feature. Three
+Shortcuts entries opened list pages while claiming to create something.
+
+**Inline create, so a half-filled form is never abandoned.** `+` beside
+Category/Brand in the product form (`QuickCatalogModal`, de-dupes case-insensitively
+and selects the existing record instead of making a twin), `+` beside Customer on
+the sale form (reuses `CustomerPicker` with a new `startInAdd`), and **Add new
+product** on both documents via `NewProductDrawer` — the real `ProductForm` in a
+drawer, so there is one product editor, not two that drift. It passes
+`lockStock`: opening stock is forced to 0 and shown read-only, because the quantity
+arrives on the purchase line and typing it here too would put the same delivery
+into stock **twice**. `onCreated` hands back the saved product **with its id**, so
+the line is added immediately instead of waiting for the catalogue to refetch.
+
+**POS: the selling price is editable, for one sale only.** The counter bargains.
+`CartLine.priceOverride` is what makes it stick: both places that re-price a cart
+(switching price group, and revalidating a cart restored from disk) skip an
+overridden line, or an agreed price would snap back to the list price and charge
+the customer the wrong amount. Nothing is written to `products.price` — POS already
+sends `spr` per line.
+
+**The idle lock that locked but never appeared.** Two bugs. It called `touch()` on
+every `mousemove` — a Zustand `set()` per mouse event for a timestamp nothing
+rendered. And it armed ONE `setTimeout` for the whole timeout, which Windows
+throttles and which does not track wall-clock across sleep, so the shop could sit
+unlocked for far longer than the setting said. Now a 15s poll against a real
+timestamp. The visible symptom (dead clicks, no lock screen, fixed by
+minimise/restore) was **compositing**: the lock screen had mounted, the window just
+never painted the frame. `window:repaint` → `webContents.invalidate()`, plus a
+renderer rAF nudge for the browser case. A minimised window is left alone
+deliberately.
+
+**Layout: the item table gets the width.** Both document forms were 2/3 + 1/3 with
+a sticky summary rail, leaving eleven columns of prices in ~60% of the window, so
+entering a purchase meant scrolling sideways with the product name off screen. One
+column now, table full width (`min-w` 1100px → 860px), summary and charges at the
+bottom. The dashboard's shortcuts moved out of the header's `flex-wrap` action row
+— which is what let them slide under the sidebar — into a fixed 4×2 grid
+(`QuickActions`). Voided sales and cancelled purchases are hidden by default
+behind a small toggle; nothing is deleted, since the reversal history is what makes
+a void auditable.
+
+**Invented data on screen, removed.** The dashboard subtitle was the literal
+`"Tuesday, May 26, 2026 · Mirpur Branch"` — a date wrong every day after it was
+typed and a branch no clean install has ("Main Branch"). `AddExpenseDrawer` offered
+a hard-coded `['Mirpur Branch','Uttara Branch','Dhanmondi Branch']`, so a real shop
+filed expenses against branches it does not have. `CashRegister` printed
+`'Mirpur Branch'` / `'Seam'` on the screen and the Z-report. All read from the real
+branch/user lists now. **`DuesPanel`** puts who-owes-us and who-we-owe on the
+dashboard with phone numbers, from the derived balances (never stored totals), and
+sale/purchase drawers show a callable number — on a due invoice that is the reason
+the screen was opened.
+
+**Bangla:** +45 phrases (2,351 total), one append-only block. `i18n:check` caught
+five duplicate keys with conflicting translations, which is exactly what it is for.
+
+**Build history:** `release/` was 4 installers + `win-unpacked` (~250 MB of stale
+artefacts). Only `HardwareKhataPOS-Setup-0.3.0.exe` and `latest.yml` remain —
+`latest.yml` is what the in-app updater reads, so it must not be deleted.
+
+---
+
 ## 4. Known gaps — pick up here
 
+**Closed this session:** gap 1 (re-print an old invoice — `InvoicePrintModal`),
+gap 3 (purchases feed the cost history), and gap 4 in part (the Paid/Partial/Due
+chips were exactly that class of bug: a derived figure read off a paginated store;
+they aggregate in SQL now). Gap 4 still stands for the **reports**.
+
 **Real, worth doing:**
+
+-1. **`'Mirpur Branch'` is still hard-coded in the branch ADAPTERS.**
+   `hooks/cashAdapter.ts` and `hooks/expenseAdapter.ts` both export
+   `BRANCH_NAME = { br_mp: 'Mirpur Branch' }`, used to turn a row's `branch_id`
+   into a display name. The screens that render it were fixed, but a row read back
+   through those adapters still shows the demo name. `resolveBranchId` depends on
+   the same map, so making it dynamic touches the expense/cash write paths —
+   worth doing **deliberately, with checks**, not as a drive-by.
+   Related: `pages/StockTransfers.tsx` has `const currentBranch = 'Mirpur Branch'`,
+   and `AppearancePage`'s preview card shows it as sample text.
 
 0. **No screen lists ARCHIVED products.** The backend is complete —
    `products.archive` / `products.unarchive` / `products.usage`, and
@@ -226,10 +348,6 @@ longer makes the two numbers the cashier needs disappear first.
    archived product is currently only recoverable by someone who knows the
    channel exists. **This is the first thing to finish**; archiving is offered to
    the owner today.
-1. **Re-save/print an OLD invoice.** Print and Save as PDF only exist on the
-   receipt popup right after a sale. `SaleDetail` (Sales → row) holds a backend
-   sale shape, not a `ParkedCart`, so `Receipt` needs a small adapter. The owner
-   has been told this is missing. (Its Print / Re-print buttons are still inert.)
 1b. **Editing a sale cannot change its PAYMENTS.** `AddSale` has no payment
    editor, so `updateSale` re-applies the payments already on the invoice
    verbatim. Correcting a wrongly-keyed *amount tendered* still needs Void +
@@ -238,13 +356,20 @@ longer makes the two numbers the cashier needs disappear first.
    settings and in `ReceiptTemplatePage` but **nothing in `Receipt.tsx` reads
    them** — same class as the QR toggle already removed. Either implement or
    remove; a switch that does nothing is a defect.
-3. **Purchases don't feed the cost history.** Only the manual entry does. Wiring
-   `createPurchase` in would be valuable and correct, but it touches verified
-   money paths — do it deliberately, with checks.
+3. **Cancelling a purchase leaves its buying price on record.**
+   `product_cost_history` is append-only by design, so `cancelPurchase` reverses
+   the stock and the cash but does NOT retract the price the purchase recorded —
+   it stays in the average. Arguably right (the shop really was quoted that price)
+   and arguably not. Decide deliberately; do not "fix" it by deleting history rows.
 4. **Reports reading paginated stores.** `CustomerGroupPage` was silently capped
    at 50 customers because it merged figures from a store that became paginated.
    That is a *class* of bug: audit any report/derived figure that reads a
-   paginated store's `items`. Aggregate in SQL instead.
+   paginated store's `items`. Aggregate in SQL instead. (The sales/purchases
+   payment chips were the same bug and are now SQL — the reports are not audited.)
+4b. **`resolveRange`'s week starts SATURDAY** (`core/dates.ts`, correct for
+   Bangladesh) but the Sales and Purchases list presets compute a **Monday** start
+   client-side. So "This week" means two different things depending on the screen.
+   Pick one — the backend's — and delete the client-side arithmetic.
 5. **Manual GUI smoke test** — `docs/06-E2E-AND-SMOKE-TEST.md`, human-only.
 
 6. **Pendrive detection is Windows-only and shells out to PowerShell.** Node
@@ -297,6 +422,20 @@ longer makes the two numbers the cashier needs disappear first.
    reverses and re-applies inside one transaction; it must always go through the
    shared `computeSaleBody`/`writeSaleBody` that `createSale` uses, and it must
    always record a reason in `sale_audit`.
+12. **Buying prices are only ever written through `setProductCost`.** Never
+   `UPDATE products SET cost = …`. The history table is the source of truth and
+   `cost` / `avg_cost` / `cost_updated_at` are recomputed from it; a raw write
+   leaves the cache disagreeing with its own source, which is precisely the bug
+   that made the average purchase price look frozen.
+13. **A derived figure must never be filtered or summed over one PAGE of a
+   paginated store.** It reads as a confident answer and is wrong past page one.
+   Push it into SQL (`PageQuery.payment` is the worked example) and assert that the
+   filtered `total` is the TRUE count.
+14. **A price the cashier typed by hand outranks the catalogue.** Anything that
+   re-prices a cart must skip `priceOverride` lines. It is a price agreed with a
+   customer, and the catalogue moving is not a reason to charge them differently.
+15. **A control with no handler is a defect, not a placeholder.** Wire it or delete
+   it — including `Link`s to routes that do not exist in `App.tsx`.
 
 **Bangla:** append-only `Object.assign(BN, {…})` blocks in `src/lib/bn/dict.ts`.
 Never reorder or delete. Duplicate keys across blocks **must agree** —

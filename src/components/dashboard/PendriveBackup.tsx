@@ -26,7 +26,12 @@ import { cn } from '@/lib/utils';
  * Gated on `settings.backup` (Admin): a snapshot is the entire shop — every
  * price, customer, phone number and balance — walking out of the building.
  */
-export function PendriveBackup() {
+/**
+ * `tile` renders it to match the dashboard's fixed quick-action grid (two rows of
+ * four, see QuickActions.tsx) instead of the old inline header button, which was
+ * one of the buttons that slid under the sidebar on a narrow window.
+ */
+export function PendriveBackup({ variant = 'inline' }: { variant?: 'inline' | 'tile' }) {
   const backupToUsb = useBackup((s) => s.backupToUsb);
   const hydrate = useBackup((s) => s.hydrate);
   const lastUsbAt = useBackup((s) => s.config.lastUsbBackupAt);
@@ -77,23 +82,53 @@ export function PendriveBackup() {
 
   return (
     <>
-      <button onClick={() => void run()} disabled={running} className="flex" title={title}>
-        <div
-          className={cn(
-            'h-9 px-3 rounded-md border border-border flex items-center gap-2 transition hover:shadow-sm bg-blue-600',
-            running && 'opacity-70',
-          )}
+      {variant === 'tile' ? (
+        <button
+          onClick={() => void run()}
+          disabled={running}
+          className="block w-full text-left"
+          title={title}
         >
-          {running ? (
-            <Loader2 className="size-4 text-white animate-spin" />
-          ) : (
-            <Usb className="size-4 text-white" />
-          )}
-          <span className="text-sm font-medium text-white whitespace-nowrap">
-            {running ? 'Saving to Pendrive…' : 'Backup to Pendrive'}
-          </span>
-        </div>
-      </button>
+          <div
+            className={cn(
+              'h-full min-h-[3.25rem] w-full rounded-lg px-3 py-2 flex items-center gap-2.5 text-white transition shadow-sm bg-blue-600 hover:bg-blue-700',
+              running && 'opacity-70',
+            )}
+          >
+            {running ? (
+              <Loader2 className="size-5 shrink-0 animate-spin" />
+            ) : (
+              <Usb className="size-5 shrink-0" />
+            )}
+            <div className="min-w-0">
+              <div className="text-sm font-semibold leading-tight truncate">
+                {running ? 'Saving to Pendrive…' : 'Backup to Pendrive'}
+              </div>
+              <div className="text-[10px] opacity-80 leading-tight truncate">
+                A copy you can take home
+              </div>
+            </div>
+          </div>
+        </button>
+      ) : (
+        <button onClick={() => void run()} disabled={running} className="flex" title={title}>
+          <div
+            className={cn(
+              'h-9 px-3 rounded-md border border-border flex items-center gap-2 transition hover:shadow-sm bg-blue-600',
+              running && 'opacity-70',
+            )}
+          >
+            {running ? (
+              <Loader2 className="size-4 text-white animate-spin" />
+            ) : (
+              <Usb className="size-4 text-white" />
+            )}
+            <span className="text-sm font-medium text-white whitespace-nowrap">
+              {running ? 'Saving to Pendrive…' : 'Backup to Pendrive'}
+            </span>
+          </div>
+        </button>
+      )}
 
       <Modal
         open={!!choices}

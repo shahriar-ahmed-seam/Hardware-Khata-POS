@@ -16,11 +16,19 @@ interface Props {
   onClose: () => void;
   selectedId: string;
   onSelect: (id: string) => void;
+  /**
+   * Open straight on the "add customer" form instead of the search list.
+   *
+   * Used by the "+" next to the Customer dropdown on the sale forms: the user has
+   * already decided the customer is not in the list, so showing them the list
+   * first is one click of friction for nothing.
+   */
+  startInAdd?: boolean;
 }
 
-export function CustomerPicker({ open, onClose, selectedId, onSelect }: Props) {
+export function CustomerPicker({ open, onClose, selectedId, onSelect, startInAdd }: Props) {
   const [q, setQ] = useState('');
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState(!!startInAdd);
   const qc = useQueryClient();
   const customersQuery = useCustomersQuery();
 
@@ -29,11 +37,11 @@ export function CustomerPicker({ open, onClose, selectedId, onSelect }: Props) {
   const loading = customersQuery.isLoading;
 
   useEffect(() => {
-    if (!open) {
-      setQ('');
-      setAdding(false);
-    }
-  }, [open]);
+    // Reset on every open/close so a previous visit's search text or half-typed
+    // new customer never carries over.
+    setQ('');
+    setAdding(open ? !!startInAdd : false);
+  }, [open, startInAdd]);
 
   const filtered = useMemo(() => {
     const t = q.trim().toLowerCase();

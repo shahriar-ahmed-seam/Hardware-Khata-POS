@@ -1,18 +1,19 @@
 import { useEffect, useState } from 'react';
-import { Settings2, Pencil, RefreshCw, AlertTriangle, ScanBarcode, Receipt, TrendingUp } from 'lucide-react';
+import { Settings2, Pencil, RefreshCw, AlertTriangle } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { useDashboard } from '@/stores/dashboard';
+import { useBranches } from '@/stores/branches';
 import { renderKpi } from '@/components/dashboard/kpiRegistry';
 import { renderWidget, WIDGET_META } from '@/components/dashboard/widgetRegistry';
 import { CustomizePanel } from '@/components/dashboard/CustomizePanel';
 import { Shortcuts } from '@/components/dashboard/Shortcuts';
 import { TimeRange } from '@/components/dashboard/TimeRange';
 import { ProfitDetail } from '@/components/dashboard/ProfitDetail';
-import { PendriveBackup } from '@/components/dashboard/PendriveBackup';
+import { QuickActions } from '@/components/dashboard/QuickActions';
+import { DuesPanel } from '@/components/dashboard/DuesPanel';
 import { DashboardDataProvider, useDashboardData } from '@/hooks/useDashboardData';
 import { cn } from '@/lib/utils';
-import { Link } from 'react-router-dom';
 
 export default function Dashboard() {
   return (
@@ -29,6 +30,30 @@ function DashboardContent() {
   const [customizeOpen, setCustomizeOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [profitOpen, setProfitOpen] = useState(false);
+
+  /**
+   * Today's date and the shop's actual default branch.
+   *
+   * This line used to be the literal string "Tuesday, May 26, 2026 · Mirpur
+   * Branch": a date frozen at whatever day it was written, and a branch that only
+   * exists in the demo fixture. Both are read from reality now, and the branch is
+   * simply omitted until the branch list has loaded rather than guessed at.
+   */
+  const branches = useBranches((s) => s.items);
+  const hydrateBranches = useBranches((s) => s.hydrate);
+  useEffect(() => {
+    void hydrateBranches();
+  }, [hydrateBranches]);
+
+  const branchName =
+    branches.find((b) => b.isDefault)?.name ?? branches.find((b) => b.active)?.name ?? branches[0]?.name;
+  const today = new Date().toLocaleDateString('en-GB', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+  const subtitle = branchName ? `${today} · ${branchName}` : today;
 
   /**
    * 30s auto-refresh: a full refetch of the dashboard bundle.
@@ -59,20 +84,15 @@ function DashboardContent() {
     <div>
       <PageHeader
         title="Dashboard"
-        subtitle="Tuesday, May 26, 2026 · Mirpur Branch"
+        /* Was the hard-coded string "Tuesday, May 26, 2026 · Mirpur Branch" — a
+           date that was wrong every day after it was typed, and a branch name no
+           clean install has (the seeded branch is "Main Branch"). Both come from
+           the real system clock and the real branch list now. */
+        subtitle={subtitle}
         actions={
           <>
             <TimeRange />
-            <QuickAction to="/pos" icon={ScanBarcode} label="POS" color="bg-green-500" />
-            <QuickAction to="/sales" icon={Receipt} label="New Sale" color="bg-yellow-500" />
-            <QuickAction onClick={() => setProfitOpen(true)} icon={TrendingUp} label="Today's Profit" color="bg-orange-500" />
-            {/* An off-site copy the owner can carry home. Renders nothing for a
-                user without `settings.backup` — see PendriveBackup.tsx. */}
-            <PendriveBackup />
-            <IconAction
-              title="Refresh"
-              onClick={() => refresh()}
-            >
+            <IconAction title="Refresh" onClick={() => refresh()}>
               <RefreshCw className="size-4" />
             </IconAction>
             <IconAction
@@ -91,6 +111,11 @@ function DashboardContent() {
       />
 
       <div className="p-6 space-y-6">
+        {/* Fixed two-row shortcut grid. Deliberately OUTSIDE the header's
+            flex-wrap action row, which is what let these slide under the sidebar
+            when the window narrowed. See QuickActions.tsx. */}
+        <QuickActions onOpenProfit={() => setProfitOpen(true)} />
+
         {backend && error ? (
           <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-8 text-center">
             <AlertTriangle className="size-8 mx-auto mb-3 text-destructive" />
@@ -178,6 +203,11 @@ function DashboardContent() {
         ) : (
           <EmptyHint kind="widgets" onClick={() => setCustomizeOpen(true)} />
         )}
+
+        {/* WHO OWES US / WHO WE OWE. Always on, not a widget the owner has to
+            discover in Customize — it is the thing they asked to see, and it is
+            what an employee needs before chasing a payment. */}
+        <DuesPanel />
           </>
         )}
       </div>
@@ -268,41 +298,7 @@ function EmptyHint({ kind, onClick }: { kind: string; onClick: () => void }) {
   );
 }
 
-function QuickAction({
-  to,
-  onClick,
-  icon: Icon,
-  label,
-  color,
-}: {
-  to?: string;
-  onClick?: () => void;
-  icon: any;
-  label: string;
-  color: string;
-}) {
-  const content = (
-    <div className={cn("h-9 px-3 rounded-md border border-border flex items-center gap-2 transition hover:shadow-sm", color)}>
-      <Icon className="size-4 text-white" />
-      <span className="text-sm font-medium text-white">{label}</span>
-    </div>
-  );
-
-  if (onClick) {
-    return (
-      <button onClick={onClick} className="flex">
-        {content}
-      </button>
-    );
-  }
-
-  if (to) {
-    return (
-      <Link to={to} className="flex">
-        {content}
-      </Link>
-    );
-  }
-
-  return content;
-}
+// The old inline `QuickAction` tile lived here. It has been replaced by
+// components/dashboard/QuickActions.tsx, which lays the shortcuts out as a fixed
+// two-row grid instead of letting them re-flow through the header's action row
+// (where they ended up underneath the sidebar on a narrow window).

@@ -31,6 +31,36 @@ function endOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
 }
 
+/** A bare calendar day, as produced by an `<input type="date">`. */
+const BARE_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Parse one end of a CUSTOM range.
+ *
+ * `new Date('2026-01-10')` is parsed by JavaScript as UTC midnight, not local
+ * midnight. That made a custom range silently wrong in two ways:
+ *
+ *   - the whole of the LAST day was excluded, because every event on 10 January
+ *     is after 2026-01-10T00:00:00Z. The owner picking 1st to 10th got nine days.
+ *   - the bounds were on a different clock from every preset above, which use
+ *     LOCAL midnight. So "custom, today to today" and the "today" preset did not
+ *     cover the same window, and in UTC+6 (Bangladesh) they were six hours apart.
+ *
+ * A bare `YYYY-MM-DD` is therefore anchored to the local day the user picked, and
+ * the `to` end is stretched to 23:59:59.999 so it is INCLUSIVE, matching the
+ * documented contract of this module and `inRange` below. A full datetime string
+ * is passed through untouched — a caller that specified a time meant it.
+ */
+function parseBound(value: string, which: 'from' | 'to'): Date {
+  if (BARE_DAY.test(value)) {
+    const [y, m, d] = value.split('-').map(Number);
+    return which === 'from'
+      ? new Date(y, m - 1, d, 0, 0, 0, 0)
+      : new Date(y, m - 1, d, 23, 59, 59, 999);
+  }
+  return new Date(value);
+}
+
 export function resolveRange(r: RangeInput, now = new Date()): ResolvedRange {
   let from: Date;
   let to: Date;
@@ -70,10 +100,14 @@ export function resolveRange(r: RangeInput, now = new Date()): ResolvedRange {
       break;
     case 'custom':
     default:
-      from = r.from ? new Date(r.from) : startOfDay(now);
-      to = r.to ? new Date(r.to) : endOfDay(now);
+      from = r.from ? parseBound(r.from, 'from') : startOfDay(now);
+      to = r.to ? parseBound(r.to, 'to') : endOfDay(now);
       break;
   }
+  // A caller that hands over the dates the wrong way round gets an empty range
+  // otherwise, which reads on screen as "the shop sold nothing" rather than as a
+  // mistake. Swapping is the only interpretation that is not a lie.
+  if (from > to) [from, to] = [to, from];
   return { from: from.toISOString(), to: to.toISOString() };
 }
 

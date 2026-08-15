@@ -21,7 +21,7 @@ import { useBranches } from '@/stores/branches';
 import { useSuppliers } from '@/stores/contacts';
 import { api } from '@/lib/api';
 import { toSupplier, type BackendSupplier } from '@/hooks/contactAdapter';
-import type { Supplier } from '@/types/domain';
+import type { Product, Supplier } from '@/types/domain';
 import { confirm } from '@/stores/confirm';
 import { toast } from '@/stores/toast';
 import {
@@ -38,6 +38,7 @@ import { formatBDT, cn } from '@/lib/utils';
 import { consumePurchasePrefill } from '@/lib/purchasePrefill';
 import { AddPurchasePaymentModal } from '@/components/purchases/AddPurchasePaymentModal';
 import { NewSupplierModal } from '@/components/purchases/NewSupplierModal';
+import { NewProductDrawer } from '@/components/products/NewProductDrawer';
 
 export default function AddPurchase() {
   const nav = useNavigate();
@@ -150,14 +151,20 @@ export default function AddPurchase() {
       .slice(0, 8);
   }, [searchQ, products]);
 
-  const addLine = (productId: string) => {
-    const p = products.find((x) => x.id === productId);
-    if (!p) return;
-    const idx = lines.findIndex((l) => l.productId === productId);
+  /**
+   * Put a product on the purchase.
+   *
+   * Takes the PRODUCT, not just its id, so a product created a moment ago in the
+   * "Add new product" drawer can be added straight away — the catalogue query
+   * has not refetched yet at that point, so an id-only lookup would find
+   * nothing and the new product would silently fail to appear.
+   */
+  const addLineFromProduct = (p: Product) => {
+    const idx = lines.findIndex((l) => l.productId === p.id);
     if (idx >= 0) {
-      const next = [...lines];
-      next[idx] = recomputeLine({ ...next[idx], qty: next[idx].qty + 1 });
-      setLines(next);
+      setLines((ls) =>
+        ls.map((l, j) => (j === idx ? recomputeLine({ ...l, qty: l.qty + 1 }) : l)),
+      );
     } else {
       const newLine: PurchaseLine = recomputeLine({
         productId: p.id,
@@ -173,9 +180,14 @@ export default function AddPurchase() {
         lineTotal: p.cost,
         newSellPrice: p.price,
       });
-      setLines([...lines, newLine]);
+      setLines((ls) => [...ls, newLine]);
     }
     setSearchQ('');
+  };
+
+  const addLine = (productId: string) => {
+    const p = products.find((x) => x.id === productId);
+    if (p) addLineFromProduct(p);
   };
 
   const updateLine = (i: number, patch: Partial<PurchaseLine>) =>
@@ -268,6 +280,7 @@ export default function AddPurchase() {
   // For Save & Pay flow we save first then open the payment modal on a transient record
   const [pendingPayment, setPendingPayment] = useState<PurchaseRecord | null>(null);
   const [newSupplierOpen, setNewSupplierOpen] = useState(false);
+  const [newProductOpen, setNewProductOpen] = useState(false);
 
   const saveUnpaid = async () => {
     if (!isValid) return;
@@ -364,9 +377,18 @@ export default function AddPurchase() {
         }
       />
 
-      <div className="p-6 grid grid-cols-1 xl:grid-cols-3 gap-6">
-        {/* LEFT */}
-        <div className="xl:col-span-2 space-y-4">
+      {/*
+        LAYOUT — ONE COLUMN, WIDEST THING FIRST.
+        This used to be a 2/3 + 1/3 split with a sticky Summary card on the right,
+        which left the item table about 60% of the window: eleven columns of
+        quantities and prices squeezed into it, so entering a purchase meant
+        scrolling the table sideways to reach the sell price and margin — with the
+        product name scrolled out of sight. The table is what the buyer actually
+        works in, so it now gets the FULL width and the Summary sits underneath,
+        where it is read once at the end.
+      */}
+      <div className="p-6 space-y-4">
+        <div className="space-y-4">
           {/* Header card matching the reference layout */}
           <Card className="p-4 grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="md:col-span-1 space-y-3">
@@ -470,7 +492,11 @@ export default function AddPurchase() {
           <Card className="p-4">
             <div className="flex items-center justify-between mb-2">
               <div className="text-sm font-semibold">Items</div>
-              <Button variant="ghost" size="sm">
+              {/* Was a dead button with no handler at all. Opens the real product
+                  form in a drawer; the saved product is added to this purchase
+                  immediately with its opening stock locked to 0, because the
+                  quantity arrives on the line below. */}
+              <Button variant="outline" size="sm" onClick={() => setNewProductOpen(true)}>
                 <Plus className="size-3.5" /> Add new product
               </Button>
             </div>
@@ -507,68 +533,72 @@ export default function AddPurchase() {
               )}
             </div>
 
+            {/* `min-w` dropped from 1100px to 860px and the widest columns tightened,
+                so on any normal window the whole line — name through sell price —
+                is visible at once. overflow-x-auto stays as the safety valve for a
+                window narrowed to the 900px minimum. */}
             <div className="mt-3 -mx-4 overflow-x-auto">
-              <table className="w-full text-sm min-w-[1100px]">
+              <table className="w-full text-sm min-w-[860px]">
                 <thead className="text-[10px] uppercase text-muted-foreground bg-secondary/40">
                   <tr>
-                    <th className="text-left px-3 py-2 font-medium w-8">#</th>
+                    <th className="text-left px-2 py-2 font-medium w-8">#</th>
                     <th className="text-left px-2 py-2 font-medium">Product Name</th>
-                    <th className="text-right px-2 py-2 font-medium">Purchase Qty</th>
-                    <th className="text-left px-2 py-2 font-medium">IMEI / Serial</th>
-                    <th className="text-right px-2 py-2 font-medium">Unit Cost (Before Disc)</th>
-                    <th className="text-right px-2 py-2 font-medium">Disc %</th>
-                    <th className="text-right px-2 py-2 font-medium">Unit Cost (Before Tax)</th>
-                    <th className="text-right px-2 py-2 font-medium">Line Total</th>
-                    <th className="text-right px-2 py-2 font-medium">Margin %</th>
-                    <th className="text-right px-2 py-2 font-medium">Sell Price (Inc.)</th>
-                    <th className="w-10"></th>
+                    <th className="text-right px-1 py-2 font-medium w-[74px]">Qty</th>
+                    <th className="text-left px-1 py-2 font-medium w-[96px]">Serial</th>
+                    <th className="text-right px-1 py-2 font-medium w-[92px]">Unit Cost</th>
+                    <th className="text-right px-1 py-2 font-medium w-[62px]">Disc %</th>
+                    <th className="text-right px-1 py-2 font-medium w-[86px]">Net Cost</th>
+                    <th className="text-right px-1 py-2 font-medium w-[92px]">Line Total</th>
+                    <th className="text-right px-1 py-2 font-medium w-[70px]">Margin</th>
+                    <th className="text-right px-1 py-2 font-medium w-[96px]">Sell Price</th>
+                    <th className="w-9"></th>
                   </tr>
                 </thead>
                 <tbody>
                   {lines.map((l, i) => (
                     <tr key={i} className="border-t border-border">
-                      <td className="px-3 py-2 text-xs text-muted-foreground">{i + 1}</td>
+                      <td className="px-2 py-2 text-xs text-muted-foreground">{i + 1}</td>
                       <td className="px-2 py-2">
-                        <div className="font-medium">{l.name}</div>
+                        <div className="font-medium leading-tight">{l.name}</div>
                         <div className="text-[11px] text-muted-foreground font-mono">{l.sku}</div>
                       </td>
-                      <td className="px-2 py-2 text-right">
+                      <td className="px-1 py-2 text-right">
                         <NumberField
                           value={l.qty}
                           onChangeNumber={(v) => updateLine(i, { qty: Math.max(0, v) })}
-                          className="h-7 w-20 px-2 text-right text-xs ml-auto"
+                          className="h-7 w-full px-1.5 text-right text-xs"
                         />
                       </td>
-                      <td className="px-2 py-2">
+                      <td className="px-1 py-2">
                         <Input
                           value={l.imei ?? ''}
                           onChange={(e) => updateLine(i, { imei: e.target.value })}
                           placeholder="—"
-                          className="h-7 text-xs"
+                          className="h-7 px-1.5 text-xs"
                         />
                       </td>
-                      <td className="px-2 py-2 text-right">
+                      <td className="px-1 py-2 text-right">
                         <NumberField
                           value={l.unitCostBeforeDisc}
                           onChangeNumber={(v) => updateLine(i, { unitCostBeforeDisc: v })}
-                          className="h-7 w-24 px-2 text-right text-xs ml-auto"
+                          className="h-7 w-full px-1.5 text-right text-xs"
                         />
                       </td>
-                      <td className="px-2 py-2 text-right">
+                      <td className="px-1 py-2 text-right">
                         <NumberField
                           value={l.discountPct}
                           onChangeNumber={(v) => updateLine(i, { discountPct: v })}
                           placeholder="0"
-                          className="h-7 w-16 px-2 text-right text-xs ml-auto"
+                          className="h-7 w-full px-1.5 text-right text-xs"
                         />
                       </td>
-                      <td className="px-2 py-2 text-right font-mono tabular text-muted-foreground">
+                      <td className="px-1 py-2 text-right font-mono tabular text-muted-foreground text-xs">
                         {formatBDT(l.unitCostBeforeTax, { withSymbol: false })}
                       </td>
-                      <td className="px-2 py-2 text-right font-mono tabular font-semibold">
+                      <td className="px-1 py-2 text-right font-mono tabular font-semibold text-xs">
                         {formatBDT(l.lineTotal, { withSymbol: false })}
                       </td>
-                      <td className="px-2 py-2 text-right">
+                      <td className="px-1 py-2 text-right">
                         <span
                           className={cn(
                             'font-mono tabular text-xs',
@@ -584,16 +614,17 @@ export default function AddPurchase() {
                           {l.marginPct !== undefined ? `${l.marginPct.toFixed(1)}%` : '—'}
                         </span>
                       </td>
-                      <td className="px-2 py-2 text-right">
+                      <td className="px-1 py-2 text-right">
                         <NumberField
                           value={l.newSellPrice ?? 0}
                           onChangeNumber={(v) => updateLine(i, { newSellPrice: v })}
-                          className="h-7 w-24 px-2 text-right text-xs ml-auto"
+                          className="h-7 w-full px-1.5 text-right text-xs"
                         />
                       </td>
-                      <td className="px-2 py-2 text-right">
+                      <td className="px-1 py-2 text-right">
                         <button
                           onClick={() => removeLine(i)}
+                          title="Remove line"
                           className="size-7 grid place-items-center rounded hover:bg-destructive/10 hover:text-destructive"
                         >
                           <Trash2 className="size-3.5" />
@@ -662,9 +693,11 @@ export default function AddPurchase() {
           </Card>
         </div>
 
-        {/* RIGHT — sticky summary */}
+        {/* SUMMARY — at the BOTTOM, and no longer sticky.
+            It was a third of the window's width for the whole time the buyer was
+            typing lines, purely so it could hover. It is read once, at the end. */}
         <div className="space-y-4">
-          <Card className="p-4 sticky top-4">
+          <Card className="p-4 md:max-w-md md:ml-auto">
             <div className="text-sm font-semibold">Summary</div>
             <div className="mt-3 space-y-1.5 text-sm">
               <Row label="Total items" value={String(lines.length)} />
@@ -726,6 +759,19 @@ export default function AddPurchase() {
           // Refresh the option list so the new supplier appears in the select.
           void loadSupplierOptions();
         }}
+      />
+
+      {/* "Add new product" — the created product lands on this purchase straight
+          away, so the buyer can carry on typing the quantity and cost. */}
+      <NewProductDrawer
+        open={newProductOpen}
+        onClose={() => setNewProductOpen(false)}
+        lockStock
+        onCreated={(p) => {
+          addLineFromProduct(p);
+          void productsQuery.refetch();
+        }}
+        subtitle="Saved to your catalogue and added to this purchase. Stock arrives on the purchase line."
       />
     </div>
   );

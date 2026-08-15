@@ -325,6 +325,39 @@ function main() {
   // ============================================================
   // 7. AGGREGATION CONSISTENCY (dashboard vs raw)
   // ============================================================
+  // ---- CUSTOM RANGES ARE INCLUSIVE AND ON THE LOCAL CLOCK ----
+  // `new Date('2026-01-10')` is UTC midnight, so the old custom branch dropped the
+  // whole of the last day (1st-10th returned nine days) and used a different clock
+  // from every preset, which in UTC+6 put them six hours apart. See core/dates.ts.
+  s.section('date-ranges');
+  {
+    const custom = resolveRange({ preset: 'custom', from: '2026-01-01', to: '2026-01-10' });
+    const fromLocal = new Date(custom.from);
+    const toLocal = new Date(custom.to);
+    s.eq('custom range starts on the chosen day', fromLocal.getDate(), 1);
+    s.eq('custom range starts at local midnight', fromLocal.getHours(), 0);
+    s.eq('custom range ENDS on the chosen day, not the day before', toLocal.getDate(), 10);
+    s.eq('custom range end is inclusive (23:59)', toLocal.getHours(), 23);
+    s.ok('custom range covers a full 10 days', toLocal.getTime() - fromLocal.getTime() > 9 * 86_400_000);
+
+    // A single-day custom range must agree exactly with the 'today' preset.
+    const now = new Date();
+    const p = (n: number) => String(n).padStart(2, '0');
+    const todayStr = `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
+    const asCustom = resolveRange({ preset: 'custom', from: todayStr, to: todayStr }, now);
+    const asPreset = resolveRange({ preset: 'today' }, now);
+    s.eq('custom "today to today" starts where the today preset does', asCustom.from, asPreset.from);
+    s.eq('custom "today to today" ends where the today preset does', asCustom.to, asPreset.to);
+
+    // Reversed dates must not silently report an empty shop.
+    const backwards = resolveRange({ preset: 'custom', from: '2026-03-31', to: '2026-03-01' });
+    s.ok('a reversed custom range is swapped, not emptied', backwards.from < backwards.to);
+
+    // An explicit datetime is respected as given.
+    const exact = resolveRange({ preset: 'custom', from: '2026-02-02T08:30:00.000Z', to: '2026-02-02T09:30:00.000Z' });
+    s.eq('an explicit datetime bound is passed through', exact.from, '2026-02-02T08:30:00.000Z');
+  }
+
   s.section('dashboard');
   {
     const yearRange = { preset: 'thisYear' as const };

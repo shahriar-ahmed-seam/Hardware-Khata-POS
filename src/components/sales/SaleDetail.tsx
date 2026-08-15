@@ -7,8 +7,6 @@ import {
   Ban,
   Undo2,
   Truck,
-  ExternalLink,
-  Receipt as ReceiptIcon,
   Trash2,
   CheckCircle2,
   AlertTriangle,
@@ -24,8 +22,12 @@ import { promptText } from '@/stores/prompt';
 import { useCan } from '@/hooks/useCan';
 import { api } from '@/lib/api';
 import { toSaleRecord, type BackendSale } from '@/hooks/saleAdapter';
+import { toCustomer, type BackendCustomer } from '@/hooks/contactAdapter';
+import type { Customer } from '@/types/domain';
 import { cn, formatBDT } from '@/lib/utils';
+import { PhoneAction, isCallable } from '@/components/ui/PhoneAction';
 import { AddPaymentModal } from './AddPaymentModal';
+import { InvoicePrintModal } from './InvoicePrintModal';
 
 interface Props {
   open: boolean;
@@ -41,6 +43,7 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
   const deleteSale = useSales((s) => s.deleteSale);
   const customers = useCustomers((s) => s.items);
   const [payOpen, setPayOpen] = useState(false);
+  const [printOpen, setPrintOpen] = useState(false);
   // UI-only gating; the IPC boundary is the real gate (see hooks/useCan.ts).
   const canEdit = useCan('sales.edit');
   const canVoid = useCan('sales.void');
@@ -86,6 +89,39 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
 
   const sale = storeSale ?? fetched;
 
+  /**
+   * THE CUSTOMER'S PHONE NUMBER, RELIABLY.
+   *
+   * The contacts store holds ONE PAGE of customers, so `customers.find(...)`
+   * missed anyone past the first page — and when it missed, the whole customer
+   * block (with the phone number) simply did not render. For a due or partial
+   * invoice that number is the point of opening this screen: the employee needs
+   * to ring them. So when the store does not have the row, it is read directly.
+   */
+  const storeCustomer = customers.find((c) => c.id === sale?.customerId);
+  const [fetchedCustomer, setFetchedCustomer] = useState<Customer | null>(null);
+  const customerId = sale?.customerId ?? '';
+  const hasStoreCustomer = !!storeCustomer;
+
+  useEffect(() => {
+    if (!open || !customerId || hasStoreCustomer) {
+      setFetchedCustomer(null);
+      return;
+    }
+    let alive = true;
+    void api<BackendCustomer | null>('customers.get', { id: customerId })
+      .then((row) => {
+        if (alive && row) setFetchedCustomer(toCustomer(row));
+      })
+      .catch(() => {
+        // No channel / outside Electron — the block below falls back to the name
+        // stored on the sale rather than showing an invented number.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open, customerId, hasStoreCustomer]);
+
   if (!sale) {
     return (
       <Drawer open={open} onClose={onClose} title="Sale" width="max-w-3xl">
@@ -96,10 +132,13 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
     );
   }
 
-  const customer = customers.find((c) => c.id === sale.customerId);
+  const customer = storeCustomer ?? (fetchedCustomer?.id === sale.customerId ? fetchedCustomer : undefined);
   // `sales.get` returns the header without the joined customer name, so prefer
   // the contacts store when this row came from the fallback fetch.
   const customerLabel = customer?.name ?? sale.customerName;
+  // A real number only — '-' is what the quick-add form stores when the walk-in
+  // gave none, and offering to dial it would be a lie. See ui/PhoneAction.tsx.
+  const callablePhone = isCallable(customer?.phone) ? customer.phone : null;
 
   const StatusPill = () => {
     if (sale.status === 'void') return <Badge variant="destructive">Voided</Badge>;
@@ -132,32 +171,45 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
               {sale.returnIds && sale.returnIds.length > 0 && (
                 <Badge variant="warning">{sale.returnIds.length} return(s)</Badge>
               )}
-              <div className="flex-1" />
-              <Link
-                to={`/sales/${sale.id}`}
-                className="text-[11px] inline-flex items-center gap-1 text-primary hover:underline"
-              >
-                Open full page <ExternalLink className="size-3" />
-              </Link>
+              {/* An "Open full page" link used to sit here pointing at
+                  /sales/:id. That route does not exist — App.tsx only routes
+                  /sales/:id/edit — so it landed the user on "Not Found". This
+                  drawer IS the full sale view; the link is gone rather than
+                  left as a trap. */}
             </div>
 
-            {/* Customer */}
-            {customer && (
-              <div className="rounded-lg border border-border p-3 bg-card flex items-center gap-3">
-                <div className="size-10 rounded-full bg-gradient-to-br from-primary to-accent grid place-items-center text-white font-bold text-xs">
-                  {customer.name
+            {/* CUSTOMER — including the phone number, big enough to dial from.
+                On a due or partial invoice this is the reason the employee opened
+                the screen, so the number is shown as a proper contact line with a
+                Call button rather than buried in 11px grey text. */}
+            {(customer || sale.customerName) && (
+              <div className="rounded-lg border border-border p-3 bg-card flex flex-wrap items-center gap-3">
+                <div className="size-10 rounded-full bg-gradient-to-br from-primary to-accent grid place-items-center text-white font-bold text-xs shrink-0">
+                  {(customer?.name ?? sale.customerName)
                     .split(' ')
                     .map((n) => n[0])
                     .slice(0, 2)
                     .join('')}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="font-semibold">{customer.name}</div>
-                  <div className="text-[11px] text-muted-foreground">
-                    {customer.phone} · {customer.group}
+                  <div className="font-semibold truncate">{customer?.name ?? sale.customerName}</div>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    {callablePhone ? (
+                      <span className="text-sm font-mono tabular font-semibold">
+                        {callablePhone}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">No phone on file</span>
+                    )}
+                    {customer?.group && (
+                      <Badge variant="default">{customer.group}</Badge>
+                    )}
                   </div>
                 </div>
-                {customer.due > 0 && (
+                {callablePhone && (
+                  <PhoneAction phone={callablePhone} label={customer?.name} />
+                )}
+                {customer && customer.due > 0 && (
                   <Badge variant="destructive">Total Due {formatBDT(customer.due)}</Badge>
                 )}
               </div>
@@ -274,11 +326,11 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
 
         {/* Footer actions */}
         <div className="border-t border-border bg-card px-4 py-3 flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm">
-            <Printer className="size-3.5" /> Print
-          </Button>
-          <Button variant="outline" size="sm">
-            <ReceiptIcon className="size-3.5" /> Re-print
+          {/* Both of these had NO onClick — they looked live and did nothing.
+              One button now, doing the one thing there is to do: show the stored
+              invoice, ready to print or save as PDF. */}
+          <Button variant="outline" size="sm" onClick={() => setPrintOpen(true)}>
+            <Printer className="size-3.5" /> Print invoice
           </Button>
           {sale.status === 'final' && sale.due > 0 && (
             <Button size="sm" onClick={() => setPayOpen(true)}>
@@ -355,6 +407,13 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
         open={payOpen}
         onClose={() => setPayOpen(false)}
         sale={sale}
+      />
+
+      <InvoicePrintModal
+        open={printOpen}
+        onClose={() => setPrintOpen(false)}
+        sale={sale}
+        customer={customer}
       />
     </>
   );

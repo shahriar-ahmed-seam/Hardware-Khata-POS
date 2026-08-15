@@ -36,11 +36,54 @@ export interface PageQuery {
   userId?: string;
   /** Payment method present on the document. */
   method?: string;
+  /**
+   * How much of the document has been settled.
+   *
+   * WHY THIS IS IN SQL AND NOT IN THE UI
+   * The Sales and Purchases screens filtered Paid / Partial / Due in JavaScript
+   * over the rows of the CURRENT PAGE. With 50 rows a page and a year of history
+   * that is a trap dressed up as a filter: clicking "Due" showed the unpaid sales
+   * among the newest fifty and confidently rendered "No sales match these
+   * filters" when the shop had thirty unpaid invoices on page four. The pager and
+   * the page totals were wrong for the same reason.
+   *
+   * `paid`, `due` and `total` are real columns on `sales` / `purchases`, so this
+   * is a plain WHERE and the count, the pages and the totals all agree.
+   *
+   *   'paid'    — nothing left owing
+   *   'partial' — something paid, something still owing
+   *   'due'     — nothing paid at all, and something owing
+   *
+   * Compared with a 1-paisa epsilon, like every other money comparison here:
+   * `due` is REAL, so `due = 0` would miss a row sitting at 0.0000001.
+   */
+  payment?: 'paid' | 'partial' | 'due';
   /** Inclusive ISO date bounds. */
   from?: string;
   to?: string;
   /** Free text over the document ref and the counterparty name. */
   q?: string;
+}
+
+/** Money epsilon for the payment-state filter. See `PageQuery.payment`. */
+const PAISA = 0.005;
+
+/**
+ * The WHERE fragment for a payment state, over a table aliased as `alias`.
+ * Shared by sales and purchases on purpose: "partially paid" has to mean the same
+ * thing on both sides of the shop's books.
+ */
+function paymentStateSql(alias: string, state: PageQuery['payment']): string | null {
+  switch (state) {
+    case 'paid':
+      return `${alias}.due <= ${PAISA}`;
+    case 'partial':
+      return `${alias}.paid > ${PAISA} AND ${alias}.due > ${PAISA}`;
+    case 'due':
+      return `${alias}.paid <= ${PAISA} AND ${alias}.due > ${PAISA}`;
+    default:
+      return null;
+  }
 }
 
 export interface Page<T> {
@@ -122,6 +165,8 @@ export function listSalesPage(db: DB, query: PageQuery = {}): Page<Record<string
     where.push('EXISTS (SELECT 1 FROM sale_payments sp WHERE sp.sale_id = s.id AND sp.method = @method)');
     params.method = query.method;
   }
+  const salePayment = paymentStateSql('s', query.payment);
+  if (salePayment) where.push(`(${salePayment})`);
 
   const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
   const joinSql = 'LEFT JOIN customers c ON c.id = s.customer_id';
@@ -212,6 +257,8 @@ export function listPurchasesPage(db: DB, query: PageQuery = {}): Page<Record<st
     where.push('(LOWER(p.ref_no) LIKE @q OR LOWER(COALESCE(sup.name, \'\')) LIKE @q)');
     params.q = `%${query.q.toLowerCase()}%`;
   }
+  const purchasePayment = paymentStateSql('p', query.payment);
+  if (purchasePayment) where.push(`(${purchasePayment})`);
 
   const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
   const joinSql = 'LEFT JOIN suppliers sup ON sup.id = p.supplier_id';

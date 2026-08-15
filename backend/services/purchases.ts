@@ -7,6 +7,7 @@ import { recordMovement } from './stock.ts';
 import { postCashToOpenShift } from './cash.ts';
 import { logActivity } from './activity.ts';
 import { nextRef } from './sequences.ts';
+import { setProductCost } from './costing.ts';
 
 export type PurchaseStatus = 'received' | 'ordered' | 'in-transit' | 'cancelled';
 
@@ -194,11 +195,44 @@ export function createPurchase(db: DB, input: CreatePurchaseInput) {
           userId: input.userId,
           at: date,
         });
-        // optionally update product sell price + cost
+        /**
+         * RECORD WHAT WE JUST PAID — through the cost history, not a raw UPDATE.
+         *
+         * This used to be `UPDATE products SET price = ?, cost = ?` and it was
+         * wrong in two ways the owner could see:
+         *
+         *  1. It only ran when the line carried a NEW SELL PRICE. Buy the same
+         *     product at a higher price without retyping its sell price and the
+         *     shop's recorded buying price never moved at all.
+         *  2. Even when it did run, it wrote `products.cost` directly, bypassing
+         *     `product_cost_history`. `avg_cost` is recomputed FROM that history
+         *     (services/costing.ts), so the "average purchase price" simply never
+         *     changed on a purchase — which is exactly the reported bug — and the
+         *     cache was left disagreeing with its own source of truth.
+         *
+         * `setProductCost` appends the line's unit cost and recomputes `cost`,
+         * `avg_cost` and `cost_updated_at` from the whole history, so both the
+         * current and the average buying price move on every goods-received
+         * note. It is a nested `tx()`, which better-sqlite3 implements with a
+         * SAVEPOINT, so it joins this transaction rather than committing early.
+         *
+         * Cost before TAX is deliberate: it is what the goods cost, matching the
+         * `unitCost` on the stock movement above (which drives COGS/valuation).
+         */
+        setProductCost(db, {
+          productId: l.input.productId,
+          cost: l.unitCostBeforeTax,
+          userId: input.userId,
+          source: 'purchase',
+          note: `Purchase ${refNo}`,
+          at: date,
+        });
+
+        // The SELL price is a separate decision and stays opt-in: it only moves
+        // when the buyer typed a new one on the line.
         if (l.input.newSellPrice) {
-          db.prepare('UPDATE products SET price = ?, cost = ?, updated_at = ? WHERE id = ?').run(
+          db.prepare('UPDATE products SET price = ?, updated_at = ? WHERE id = ?').run(
             l.input.newSellPrice,
-            l.unitCostBeforeTax,
             date,
             l.input.productId,
           );

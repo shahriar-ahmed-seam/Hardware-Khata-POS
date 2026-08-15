@@ -1,3 +1,7 @@
+
+
+
+
 # Frontend Map — where to edit what
 
 > **Who this is for:** you, changing how the app *looks*, without going near the
@@ -11,18 +15,18 @@
 
 ## 0. The 60-second version
 
-| I want to change… | Open this |
-|---|---|
-| Colours, dark mode, radius | `src/styles/globals.css` (the CSS variables at the top) |
-| Font sizes everywhere | `tailwind.config.js` → `theme.extend.fontSize` |
-| A button / input / card looks wrong **everywhere** | `src/components/ui/` |
-| The window top bar | `src/components/layout/Titlebar.tsx` |
-| The left menu and its items | `src/components/layout/Sidebar.tsx` |
-| The POS (checkout) screen | `src/pages/POS.tsx` + `src/components/pos/` |
-| The printed receipt | `src/components/pos/Receipt.tsx` + print CSS in `globals.css` |
-| The dashboard cards | `src/components/dashboard/` |
-| One specific screen | `src/pages/<Name>.tsx` — names match the menu |
-| Bangla wording | `src/lib/bn/dict.ts` (add one line, no component edit) |
+| I want to change…                                      | Open this                                                         |
+| ------------------------------------------------------- | ----------------------------------------------------------------- |
+| Colours, dark mode, radius                              | `src/styles/globals.css` (the CSS variables at the top)         |
+| Font sizes everywhere                                   | `tailwind.config.js` → `theme.extend.fontSize`               |
+| A button / input / card looks wrong**everywhere** | `src/components/ui/`                                            |
+| The window top bar                                      | `src/components/layout/Titlebar.tsx`                            |
+| The left menu and its items                             | `src/components/layout/Sidebar.tsx`                             |
+| The POS (checkout) screen                               | `src/pages/POS.tsx` + `src/components/pos/`                   |
+| The printed receipt                                     | `src/components/pos/Receipt.tsx` + print CSS in `globals.css` |
+| The dashboard cards                                     | `src/components/dashboard/`                                     |
+| One specific screen                                     | `src/pages/<Name>.tsx` — names match the menu                  |
+| Bangla wording                                          | `src/lib/bn/dict.ts` (add one line, no component edit)          |
 
 Run `npm run dev` while editing — the screen reloads as you save.
 
@@ -45,6 +49,7 @@ main.tsx                 boots React
   (also handles the narrow-window sidebar collapse).
 
 ### Lazy screens — don't be surprised
+
 Reports and Settings pages are loaded **on demand** (`lazy(() => import(...))` in
 `App.tsx`) so the app starts faster on the slow PC. They are still ordinary files
 you edit normally. Same for the dashboard chart widgets
@@ -57,6 +62,7 @@ page, copy the `lazy(...)` style of its neighbours; anything else can be a plain
 ## 2. Design tokens — change these first
 
 ### `src/styles/globals.css`
+
 The single source of colour. Everything else refers to these, so editing one
 variable restyles the whole app.
 
@@ -74,6 +80,7 @@ variable restyles the whole app.
 > is why — change the default in `stores/settings.ts` instead.
 
 ### `tailwind.config.js`
+
 - `theme.extend.colors` — maps the CSS variables to Tailwind names, so
   `bg-primary` / `text-warning` work. Add a colour here **and** in `globals.css`.
 - `theme.extend.fontSize` — **the whole app's type scale is bumped ~2px** over
@@ -89,26 +96,26 @@ variable restyles the whole app.
 
 Edit one of these and **every screen changes**. This is usually what you want.
 
-| File | What it is |
-|---|---|
-| `Button.tsx` | All buttons. Variants: `primary`, `outline`, `ghost`, `destructive`; sizes `sm`/default |
-| `Input.tsx` | All single-line text fields |
-| `NumberField.tsx` | Numeric input (money/qty) — right-aligned, tabular digits |
-| `Card.tsx` | `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent` |
-| `Badge.tsx` | Status pills. Variants `default`/`info`/`success`/`warning`/`destructive` |
-| `Modal.tsx` | Centred dialog |
-| `Drawer.tsx` | Side panel (used for edit forms) |
-| `ConfirmDialog.tsx` | The global "are you sure?" — driven by `stores/confirm.ts` |
-| `PromptDialog.tsx` | The global "type a reason" — driven by `stores/prompt.ts` |
-| `Toaster.tsx` | Corner notifications — driven by `stores/toast.ts` |
-| `PageHeader.tsx` | The title + subtitle + action buttons strip at the top of a page |
-| `Pagination.tsx` | Page-size + prev/next footer on long lists |
-| `Popover.tsx` | Click-to-open floating panel |
-| `Splitter.tsx` | The draggable divider on the POS screen |
-| `Skeleton.tsx` / `EmptyState.tsx` / `LoadingOverlay.tsx` | Loading + empty states |
-| `PrintSheet.tsx` | Portals content outside `#root` so **only it** prints |
-| `ColumnsPanel.tsx` | The "which columns" chooser on list screens |
-| `ToggleRow.tsx` | Label + description + switch row used across Settings |
+| File                                                           | What it is                                                                                       |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `Button.tsx`                                                 | All buttons. Variants:`primary`, `outline`, `ghost`, `destructive`; sizes `sm`/default |
+| `Input.tsx`                                                  | All single-line text fields                                                                      |
+| `NumberField.tsx`                                            | Numeric input (money/qty) — right-aligned, tabular digits                                       |
+| `Card.tsx`                                                   | `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`                    |
+| `Badge.tsx`                                                  | Status pills. Variants`default`/`info`/`success`/`warning`/`destructive`               |
+| `Modal.tsx`                                                  | Centred dialog                                                                                   |
+| `Drawer.tsx`                                                 | Side panel (used for edit forms)                                                                 |
+| `ConfirmDialog.tsx`                                          | The global "are you sure?" — driven by`stores/confirm.ts`                                     |
+| `PromptDialog.tsx`                                           | The global "type a reason" — driven by`stores/prompt.ts`                                      |
+| `Toaster.tsx`                                                | Corner notifications — driven by`stores/toast.ts`                                             |
+| `PageHeader.tsx`                                             | The title + subtitle + action buttons strip at the top of a page                                 |
+| `Pagination.tsx`                                             | Page-size + prev/next footer on long lists                                                       |
+| `Popover.tsx`                                                | Click-to-open floating panel                                                                     |
+| `Splitter.tsx`                                               | The draggable divider on the POS screen                                                          |
+| `Skeleton.tsx` / `EmptyState.tsx` / `LoadingOverlay.tsx` | Loading + empty states                                                                           |
+| `PrintSheet.tsx`                                             | Portals content outside`#root` so **only it** prints                                     |
+| `ColumnsPanel.tsx`                                           | The "which columns" chooser on list screens                                                      |
+| `ToggleRow.tsx`                                              | Label + description + switch row used across Settings                                            |
 
 **Two rules for dialogs:** never use the browser's `confirm()` / `alert()` /
 `prompt()` (they break keyboard focus on Windows — use the stores above), and any
@@ -119,12 +126,12 @@ not steal the caret from it.
 
 ## 4. Layout chrome — `src/components/layout/`
 
-| File | Notes |
-|---|---|
-| `Titlebar.tsx` | Custom window bar: brand, global search, shift pill, min/max/close, account menu. **Anything clickable needs the `titlebar-no-drag` class**, or the OS treats the click as dragging the window. The account menu is portalled to `<body>`. |
-| `Sidebar.tsx` | The whole menu. The `nav` array near the top **is** the menu — labels, icons, links, groups. Edit that array to add/rename/reorder items. Collapses to icons on narrow windows. |
-| `AppShell.tsx` | Titlebar + Sidebar + scrolling `<main>`. Owns the responsive collapse and the mobile scrim. |
-| `GlobalSearch.tsx` | The Ctrl+K search box in the titlebar. |
+| File                 | Notes                                                                                                                                                                                                                                               |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Titlebar.tsx`     | Custom window bar: brand, global search, shift pill, min/max/close, account menu.**Anything clickable needs the `titlebar-no-drag` class**, or the OS treats the click as dragging the window. The account menu is portalled to `<body>`. |
+| `Sidebar.tsx`      | The whole menu. The`nav` array near the top **is** the menu — labels, icons, links, groups. Edit that array to add/rename/reorder items. Collapses to icons on narrow windows.                                                             |
+| `AppShell.tsx`     | Titlebar + Sidebar + scrolling`<main>`. Owns the responsive collapse and the mobile scrim.                                                                                                                                                        |
+| `GlobalSearch.tsx` | The Ctrl+K search box in the titlebar.                                                                                                                                                                                                              |
 
 ---
 
@@ -133,12 +140,14 @@ not steal the caret from it.
 One file per screen, named after the menu item. Highlights:
 
 **Selling**
+
 - `POS.tsx` — the checkout screen. Layout, keyboard shortcuts (F2–F10), cart
   state wiring. Visual detail lives in `components/pos/`.
 - `Sales.tsx` (list) · `AddSale.tsx` (form-based sale **and** the edit-a-sale
   screen) · `Drafts.tsx` · `Quotations.tsx` · `SellReturns.tsx` · `Shipments.tsx`
 
 **Catalogue**
+
 - `Products.tsx` — the big product table (columns, filters, bulk actions).
 - `ProductEdit.tsx` — the full 25-field product form (renders
   `components/products/ProductForm.tsx`).
@@ -174,18 +183,20 @@ from the menu (no backend existed). Ignore them.
 ## 6. Feature components
 
 ### `src/components/pos/` — the checkout screen
-| File | What it draws |
-|---|---|
-| `ProductPanel.tsx` | Search box, category/brand chips, and the product **grid** and **list** views. Grid columns come from the *panel* width, not the window — don't switch it to `md:`/`lg:` breakpoints, that was a bug. |
-| `CartPanel.tsx` | Cart tabs, customer strip, the totals footer and the big action bar |
-| `CartLineRow.tsx` | One line in the cart: qty stepper, unit, discount drawer, and the buying/avg/selling price strip |
-| `PaymentModal.tsx` | Take payment (cash/bKash/card/split) |
-| `Receipt.tsx` | **The printed receipt layout** |
-| `ReceiptModal.tsx` | The after-sale popup wrapping the receipt (Print / Save as PDF) |
-| `CustomerPicker.tsx` · `HeldList.tsx` · `ShortcutsOverlay.tsx` | Pickers and the `?` help overlay |
-| `types.ts` | Cart line/total **math** — careful, this is money |
+
+| File                                                                   | What it draws                                                                                                                                                                                                           |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ProductPanel.tsx`                                                   | Search box, category/brand chips, and the product**grid** and **list** views. Grid columns come from the *panel* width, not the window — don't switch it to `md:`/`lg:` breakpoints, that was a bug. |
+| `CartPanel.tsx`                                                      | Cart tabs, customer strip, the totals footer and the big action bar                                                                                                                                                     |
+| `CartLineRow.tsx`                                                    | One line in the cart: qty stepper, unit, discount drawer, and the buying/avg/selling price strip                                                                                                                        |
+| `PaymentModal.tsx`                                                   | Take payment (cash/bKash/card/split)                                                                                                                                                                                    |
+| `Receipt.tsx`                                                        | **The printed receipt layout**                                                                                                                                                                                    |
+| `ReceiptModal.tsx`                                                   | The after-sale popup wrapping the receipt (Print / Save as PDF)                                                                                                                                                         |
+| `CustomerPicker.tsx` · `HeldList.tsx` · `ShortcutsOverlay.tsx` | Pickers and the`?` help overlay                                                                                                                                                                                       |
+| `types.ts`                                                           | Cart line/total**math** — careful, this is money                                                                                                                                                                 |
 
 ### `src/components/dashboard/`
+
 - `widgets.tsx` — **every chart and list widget body.** The only file that uses
   `recharts`; loaded on demand via `lazyWidgets.ts`.
 - `widgetRegistry.tsx` — maps a widget id → component + its grid width. Add a
@@ -198,6 +209,7 @@ from the menu (no backend existed). Ignore them.
 - `PendriveBackup.tsx` — the "Backup to Pendrive" button.
 
 ### Other groups
+
 `components/products/` (ProductForm, QuickUpdateModal, ProductImage) ·
 `components/sales/` (SaleDetail drawer, payment/return/shipment modals) ·
 `components/purchases/` · `components/contacts/` (CustomerForm, SupplierForm,
@@ -230,6 +242,7 @@ component → hooks/use*.ts  → lib/api.ts → IPC → backend (SQLite)
 - **`types/domain.ts`** — the shared `Product` / `Customer` / … shapes.
 
 ### Showing or hiding by role
+
 `hooks/useCan.ts` — `useCan('sales.edit')` / `useCanAll([...])`. Use it to hide a
 button a cashier may not use. It is **presentation only**; the real gate is in
 the Electron layer, so hiding a button is never a security decision.

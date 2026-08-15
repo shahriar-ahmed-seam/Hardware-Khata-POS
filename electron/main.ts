@@ -173,6 +173,39 @@ ipcMain.handle('window:toggleMaximize', () => {
 ipcMain.handle('window:close', () => mainWindow?.close());
 ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() ?? false);
 
+/**
+ * FORCE A FULL REPAINT OF THE WINDOW.
+ *
+ * The reported symptom: after the idle timeout the app stopped responding to
+ * clicks but the lock screen was NOT on screen; minimising and restoring the
+ * window revealed it. That is a compositing bug, not a React one. The lock screen
+ * really had mounted (which is why clicks went nowhere: it covers everything),
+ * but nothing new was painted, so the stale frame stayed on the glass.
+ *
+ * It happens because the DOM change came from a timer after minutes of no input
+ * at all. Chromium had nothing to draw for a long time, and on Windows the frame
+ * it eventually produces can be dropped; minimise/restore forces the OS to
+ * invalidate the window, which is exactly what fixes it — so we do that
+ * deliberately instead of leaving the shopkeeper to discover the trick.
+ *
+ * `webContents.invalidate()` schedules a full repaint of the window the contents
+ * are in. It is cheap, and it is only called when locking.
+ */
+ipcMain.handle('window:repaint', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  try {
+    // A window the user has minimised is a normal case (the lock fired while they
+    // were away); restoring it would yank focus off whatever they are using now.
+    // Left alone deliberately — the repaint below still applies when they return.
+    mainWindow.webContents.invalidate();
+    return true;
+  } catch {
+    // Older Electron builds may not expose invalidate(). The renderer has its own
+    // fallback nudge, so a failure here is not fatal.
+    return false;
+  }
+});
+
 ipcMain.handle('theme:set', (_e, mode: 'light' | 'dark' | 'system') => {
   nativeTheme.themeSource = mode;
   return nativeTheme.shouldUseDarkColors;

@@ -190,6 +190,15 @@ export interface SalesQuery {
   customerId?: string;
   userId?: string;
   method?: string;
+  /**
+   * Settlement state, filtered IN SQL.
+   *
+   * This used to be a client-side filter over the rows of the loaded page, which
+   * meant "Due" showed only the unpaid invoices among the newest 50 and reported
+   * "no sales match" whenever the unpaid ones were further back. See
+   * `PageQuery.payment` in backend/services/paged.ts.
+   */
+  payment?: 'paid' | 'partial' | 'due';
   from?: string;
   to?: string;
   q?: string;
@@ -205,7 +214,9 @@ interface SalesPageResponse {
 export const DEFAULT_SALES_QUERY: SalesQuery = {
   page: 1,
   pageSize: 50,
-  statuses: ['final', 'void'],
+  // Voided sales are excluded by default; the Sales screen has a toggle that adds
+  // them back. Drafts and Quotations set their own statuses.
+  statuses: ['final'],
 };
 
 /** Guards against out-of-order responses when the user types or pages quickly. */
@@ -275,6 +286,7 @@ export const useSales = create<SalesState>((set, get) => ({
         customerId: query.customerId === 'all' ? undefined : query.customerId,
         userId: query.userId === 'all' ? undefined : query.userId,
         method: query.method === 'all' ? undefined : query.method,
+        payment: query.payment,
         from: query.from,
         to: query.to,
         q: query.q?.trim() || undefined,

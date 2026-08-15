@@ -401,6 +401,8 @@ function CostHistoryPopup({ product, onClose }: { product: Product; onClose: () 
                         <span>Current price</span>
                       ) : e.source === 'initial' ? (
                         <span>Opening price</span>
+                      ) : e.source === 'purchase' ? (
+                        <span>From a purchase</span>
                       ) : (
                         <span>Changed</span>
                       )}

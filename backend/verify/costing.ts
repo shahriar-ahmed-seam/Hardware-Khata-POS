@@ -22,6 +22,7 @@ import { buildApi } from '../api.ts';
 import { Suite } from './assert.ts';
 import { computeAvgCost, listCostHistory, setProductCost } from '../services/costing.ts';
 import { createProduct } from '../services/catalog.ts';
+import { createPurchase } from '../services/purchases.ts';
 import { weightedAvgCost, recordMovement } from '../services/stock.ts';
 import { round2 } from '../core/money.ts';
 
@@ -254,6 +255,73 @@ export function runCosting(s: Suite) {
     Math.abs(computeAvgCost(db, cogsId) - weightedAvgCost(db, cogsId)) > 0.01,
   );
 
+  // ------------------- A PURCHASE MOVES BOTH BUYING PRICES (the reported bug)
+  //
+  // Before this, `createPurchase` wrote `products.cost` with a raw UPDATE and
+  // ONLY when the line carried a new sell price — so the average purchase price
+  // never moved on a purchase, and when it did fire the cache silently stopped
+  // agreeing with its own history. These checks pin both halves.
+  s.section('costing-purchase-feeds-history');
+  const buyId = createProduct(db, {
+    sku: 'COST-BUY',
+    name: 'Purchased Widget',
+    cost: 100,
+    price: 150,
+    unit: 'pc',
+  }).id;
+  s.money('opening buying price is the created cost', costOf(db, buyId), 100);
+
+  // Buy at 120 and DO NOT touch the sell price — the old code did nothing here.
+  createPurchase(db, {
+    branchId: 'br_mp',
+    userId: 'u_admin',
+    supplierId: 'sp1',
+    lines: [{ productId: buyId, qty: 10, unitCostBeforeDisc: 120 }],
+  });
+  s.money('a purchase updates the CURRENT buying price', costOf(db, buyId), 120);
+  s.money('a purchase updates the AVERAGE buying price', computeAvgCost(db, buyId), 110);
+  s.eq(
+    'the purchase appended one history entry',
+    listCostHistory(db, buyId).filter((h) => h.source === 'purchase').length,
+    1,
+  );
+  s.eq(
+    'the entry names the purchase it came from',
+    listCostHistory(db, buyId)[0].note?.startsWith('Purchase ') ?? false,
+    true,
+  );
+
+  // A second purchase at 140 → mean of 100, 120, 140.
+  createPurchase(db, {
+    branchId: 'br_mp',
+    userId: 'u_admin',
+    supplierId: 'sp1',
+    lines: [{ productId: buyId, qty: 5, unitCostBeforeDisc: 140, newSellPrice: 200 }],
+  });
+  s.money('the average blends every purchase', computeAvgCost(db, buyId), round2((100 + 120 + 140) / 3));
+  s.money('a new sell price on the line still applies', priceOf(db, buyId), 200);
+  s.money(
+    'the cached cost still equals the newest entry',
+    costOf(db, buyId),
+    listCostHistory(db, buyId)[0].cost,
+  );
+
+  // An ORDERED purchase has not arrived, so it must not claim a buying price
+  // any more than it claims stock.
+  const avgBeforeOrdered = computeAvgCost(db, buyId);
+  createPurchase(db, {
+    status: 'ordered',
+    branchId: 'br_mp',
+    userId: 'u_admin',
+    supplierId: 'sp1',
+    lines: [{ productId: buyId, qty: 5, unitCostBeforeDisc: 999 }],
+  });
+  s.money(
+    'an ordered (not received) purchase does not record a buying price',
+    computeAvgCost(db, buyId),
+    avgBeforeOrdered,
+  );
+
   // ------------------------------------------- the read paths expose it
   s.section('costing-read-paths');
   const listed = (call('products.list', {}) as Record<string, any>[]).find((p) => p.id === id);
@@ -294,6 +362,10 @@ export function runCosting(s: Suite) {
 
 function costOf(db: DB, productId: string): number {
   return (db.prepare('SELECT cost FROM products WHERE id = ?').get(productId) as { cost: number }).cost;
+}
+
+function priceOf(db: DB, productId: string): number {
+  return (db.prepare('SELECT price FROM products WHERE id = ?').get(productId) as { price: number }).price;
 }
 
 // ---- standalone runner (mirrors paging.ts / backup.ts) ----

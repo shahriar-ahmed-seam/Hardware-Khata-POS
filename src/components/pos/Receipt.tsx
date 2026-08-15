@@ -14,6 +14,13 @@ interface Props {
   customer?: Customer;
   /** Who rang the sale. Printed as "Served by" when the setting is on. */
   cashierName?: string;
+  /**
+   * The invoice's own date/time (ISO). Defaults to NOW, which is right for a
+   * receipt printed at the moment of sale — but wrong for re-printing an old
+   * one, where printing today's date on last week's invoice is a factual error
+   * the customer is then holding.
+   */
+  dateISO?: string;
   /** Optional explicit override; when omitted the identity is read from settings. */
   business?: {
     name: string;
@@ -42,6 +49,7 @@ export function Receipt({
   customer: customerProp,
   cashierName,
   business: businessProp,
+  dateISO,
 }: Props) {
   const settingsBusiness = useSettings((s) => s.business);
   const receipt = useSettings((s) => s.receipt);
@@ -70,7 +78,10 @@ export function Receipt({
   // Customer is whatever the caller resolved from the backend list; no lookup fallback.
   const customer = customerProp;
   const totals = computeTotals(cart);
-  const now = new Date();
+  // An explicit invoice date wins; otherwise this is a receipt being printed as
+  // the sale happens, so "now" is correct.
+  const stamp = dateISO ? new Date(dateISO) : new Date();
+  const now = Number.isNaN(stamp.getTime()) ? new Date() : stamp;
   const date = `${now.toLocaleDateString('en-GB')} ${now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
 
   const totalQty = cart.lines.reduce((s, l) => s + (l.qty || 0), 0);

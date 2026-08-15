@@ -37,7 +37,19 @@ import { logActivity } from './activity.ts';
  * math. This average is a purchasing reference figure for the owner.
  */
 
-export type CostSource = 'manual' | 'initial';
+/**
+ * Where a recorded buying price came from.
+ *   'manual'   — typed into Update Price & Stock
+ *   'initial'  — the product's opening cost, captured when it was created
+ *   'purchase' — the unit cost on a RECEIVED purchase line (see
+ *                services/purchases.ts). This one is why the average moves on
+ *                its own: the shop's real buying price changes when they buy,
+ *                not when someone remembers to retype it.
+ *
+ * The column has no CHECK constraint, so adding a value here is schema-safe on
+ * an existing database — no migration needed.
+ */
+export type CostSource = 'manual' | 'initial' | 'purchase';
 
 export interface CostHistoryEntry {
   id: string;
@@ -194,14 +206,19 @@ export function setProductCost(db: DB, input: SetCostInput): CostInfo {
 
     const info = syncProductCostCache(db, input.productId);
 
-    logActivity(db, {
-      by: input.userId,
-      action: 'edited',
-      entity: 'product',
-      entityId: input.productId,
-      message: `Buying price set to ${cost}`,
-      at,
-    });
+    // A purchase already writes its own activity entry (and its own audit row),
+    // so logging every line here as well would bury the shop's activity feed
+    // under one "Buying price set to …" per item on every goods-received note.
+    if ((input.source ?? 'manual') !== 'purchase') {
+      logActivity(db, {
+        by: input.userId,
+        action: 'edited',
+        entity: 'product',
+        entityId: input.productId,
+        message: `Buying price set to ${cost}`,
+        at,
+      });
+    }
 
     return info;
   });
@@ -235,7 +252,7 @@ export function listCostHistory(db: DB, productId: string, limit = 50): CostHist
     at: r.at,
     userId: r.user_id,
     userName: r.user_name,
-    source: (r.source === 'initial' ? 'initial' : 'manual') as CostSource,
+    source: (r.source === 'initial' || r.source === 'purchase' ? r.source : 'manual') as CostSource,
     note: r.note,
   }));
 }

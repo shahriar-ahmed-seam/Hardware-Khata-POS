@@ -56,6 +56,12 @@ interface Props {
    * stale the moment the owner records a new buying price.
    */
   costOf?: (productId: string) => { cost: number | null; avgCost: number | null };
+  /**
+   * Catalogue selling price for a product in the cart's CURRENT price group.
+   * Only needed so a hand-typed price can be undone back to the list price; same
+   * live-lookup reasoning as `costOf`.
+   */
+  listPriceOf?: (productId: string) => number | null;
   // Actions
   onPickCustomer: () => void;
   onPay: (startWith?: PaymentMethod) => void;
@@ -77,6 +83,7 @@ export function CartPanel({
   customers = [],
   busy = false,
   costOf,
+  listPriceOf,
   onPickCustomer,
   onPay,
   onSplitPay,
@@ -244,6 +251,7 @@ export function CartPanel({
                 line={l}
                 cost={prices?.cost ?? null}
                 avgCost={prices?.avgCost ?? null}
+                listPrice={listPriceOf?.(l.productId) ?? null}
                 onChange={(n) => updateLine(i, n)}
                 onRemove={() => removeLine(i)}
               />

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Printer,
@@ -6,8 +6,6 @@ import {
   Edit2,
   Ban,
   Undo2,
-  ExternalLink,
-  Receipt as ReceiptIcon,
   Trash2,
   History,
 } from 'lucide-react';
@@ -18,9 +16,14 @@ import { usePurchases } from '@/stores/purchases';
 import { confirm } from '@/stores/confirm';
 import { promptText } from '@/stores/prompt';
 import { useCan } from '@/hooks/useCan';
+import { api } from '@/lib/api';
+import { toSupplier, type BackendSupplier } from '@/hooks/contactAdapter';
+import type { Supplier } from '@/types/domain';
 import { cn, formatBDT } from '@/lib/utils';
+import { PhoneAction, isCallable } from '@/components/ui/PhoneAction';
 import { AddPurchasePaymentModal } from './AddPurchasePaymentModal';
 import { CreatePurchaseReturnModal } from './CreatePurchaseReturnModal';
+import { PurchasePrintModal } from './PurchasePrintModal';
 
 interface Props {
   open: boolean;
@@ -37,10 +40,49 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
   const purchase = purchases.find((p) => p.id === purchaseId) ?? null;
   const [payOpen, setPayOpen] = useState(false);
   const [returnOpen, setReturnOpen] = useState(false);
+  const [printOpen, setPrintOpen] = useState(false);
+
+  /**
+   * SUPPLIER PHONE NUMBER.
+   *
+   * The purchase row itself only carries the supplier's name and address, and
+   * `suppliers` in the contacts store is ONE PAGE, so the number was simply not
+   * on screen. When you are querying a delivery you need to ring them, so the
+   * supplier is read directly by id when the store does not have them.
+   */
+  const supplierId = purchase?.supplierId ?? '';
+  const [supplier, setSupplier] = useState<Supplier | null>(null);
+
+  useEffect(() => {
+    if (!open || !supplierId) {
+      setSupplier(null);
+      return;
+    }
+    let alive = true;
+    void api<BackendSupplier | null>('suppliers.get', { id: supplierId })
+      .then((row) => {
+        if (alive && row) setSupplier(toSupplier(row));
+      })
+      .catch(() => {
+        // No backend / unknown id: the block below shows what the purchase row
+        // holds rather than inventing a number.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open, supplierId]);
 
   if (!purchase) {
-    return <Drawer open={open} onClose={onClose} title="Purchase" width="max-w-3xl">{null}</Drawer>;
+    return (
+      <Drawer open={open} onClose={onClose} title="Purchase" width="max-w-3xl">
+        <div className="p-8 text-center text-sm text-muted-foreground">
+          This purchase is not on the page that is loaded. Open it from the Purchases list.
+        </div>
+      </Drawer>
+    );
   }
+
+  const supplierPhone = isCallable(supplier?.phone) ? supplier.phone : null;
 
   const StatusPill = () => {
     if (purchase.status === 'cancelled') return <Badge variant="destructive">Cancelled</Badge>;
@@ -74,23 +116,33 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
               {purchase.returnIds && purchase.returnIds.length > 0 && (
                 <Badge variant="warning">{purchase.returnIds.length} return(s)</Badge>
               )}
-              <div className="flex-1" />
-              <Link
-                to={`/purchases/${purchase.id}`}
-                className="text-[11px] inline-flex items-center gap-1 text-primary hover:underline"
-              >
-                Open full page <ExternalLink className="size-3" />
-              </Link>
+              {/* An "Open full page" link pointed at /purchases/:id, which is not
+                  a route (App.tsx only has /purchases/:id/edit), so it landed on
+                  "Not Found". This drawer is the full purchase view. */}
             </div>
 
-            {/* Supplier info */}
-            <div className="rounded-lg border border-border p-3 bg-card flex items-center gap-3">
+            {/* SUPPLIER — with a phone number you can actually ring, which matters
+                most on a purchase that is still part-paid. */}
+            <div className="rounded-lg border border-border p-3 bg-card flex flex-wrap items-center gap-3">
               <div className="flex-1 min-w-0">
-                <div className="font-semibold">{purchase.supplierName}</div>
+                <div className="font-semibold truncate">{purchase.supplierName || '—'}</div>
                 {purchase.supplierAddress && (
                   <div className="text-[11px] text-muted-foreground">{purchase.supplierAddress}</div>
                 )}
+                <div className="mt-0.5">
+                  {supplierPhone ? (
+                    <span className="text-sm font-mono tabular font-semibold">{supplierPhone}</span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">No phone on file</span>
+                  )}
+                </div>
               </div>
+              {supplierPhone && (
+                <PhoneAction phone={supplierPhone} label={purchase.supplierName} />
+              )}
+              {supplier && supplier.due > 0 && (
+                <Badge variant="destructive">Total payable {formatBDT(supplier.due)}</Badge>
+              )}
             </div>
 
             {/* Lines */}
@@ -216,11 +268,10 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
 
         {/* Footer actions */}
         <div className="border-t border-border bg-card px-4 py-3 flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm">
+          {/* Both of these had NO onClick. One button now, printing the goods
+              received note. */}
+          <Button variant="outline" size="sm" onClick={() => setPrintOpen(true)}>
             <Printer className="size-3.5" /> Print
-          </Button>
-          <Button variant="outline" size="sm">
-            <ReceiptIcon className="size-3.5" /> Re-print
           </Button>
           {purchase.status !== 'cancelled' && purchase.due > 0 && (
             <Button size="sm" onClick={() => setPayOpen(true)}>
@@ -282,6 +333,7 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
 
       <AddPurchasePaymentModal open={payOpen} onClose={() => setPayOpen(false)} purchase={purchase} />
       <CreatePurchaseReturnModal open={returnOpen} onClose={() => setReturnOpen(false)} purchaseId={purchase.id} />
+      <PurchasePrintModal open={printOpen} onClose={() => setPrintOpen(false)} purchase={purchase} />
     </>
   );
 }

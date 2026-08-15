@@ -18,7 +18,7 @@ import { PaymentModal, type PaymentMethod, type PaymentResult } from '@/componen
 import { HeldList } from '@/components/pos/HeldList';
 import { ReceiptModal } from '@/components/pos/ReceiptModal';
 import { ShortcutsOverlay } from '@/components/pos/ShortcutsOverlay';
-import { api, apiSafe } from '@/lib/api';
+import { api, apiSafe, hasBackend } from '@/lib/api';
 import { useProducts } from '@/hooks/useProducts';
 import { useCustomersQuery } from '@/hooks/useCustomers';
 import { useBelow } from '@/hooks/useBreakpoint';
@@ -194,6 +194,24 @@ export default function POS() {
     return p.price;
   }
 
+  /**
+   * Catalogue selling price for a product in the ACTIVE cart's price group.
+   *
+   * Only used to offer "Undo" on a cart line whose price the cashier typed by
+   * hand. Looked up live from the catalogue rather than stored on the line, for
+   * the same reason as `costOf`: carts outlive the page.
+   */
+  const listPriceOf = useCallback(
+    (productId: string): number | null => {
+      const p = products.find((x) => x.id === productId);
+      if (!p) return null;
+      return priceForProduct(p, active?.priceGroup ?? 'retail');
+    },
+    // `priceForProduct` is pure over its arguments.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [products, active?.priceGroup],
+  );
+
   /** Current catalogue price/name/sku for a product, in a given price group. */
   const resolvePrice: PriceResolver = useMemo(
     () => (productId, group) => {
@@ -339,11 +357,27 @@ export default function POS() {
     submittingRef.current = true;
     setSubmitting(true);
     try {
-      const res = await api<{
-        invoiceNo: string;
-        totals: { total: number };
-        due: number;
-      }>('sales.create', payload);
+      let res: { invoiceNo: string; totals: { total: number }; due: number };
+      if (!hasBackend()) {
+        const rand = Math.floor(1000 + Math.random() * 9000);
+        res = {
+          invoiceNo: `INV-PREVIEW-${rand}`,
+          totals: { total },
+          due: Math.max(
+            0,
+            total -
+              result.payments
+                .filter((p) => p.method !== 'Credit')
+                .reduce((s, p) => s + p.amount, 0),
+          ),
+        };
+      } else {
+        res = await api<{
+          invoiceNo: string;
+          totals: { total: number };
+          due: number;
+        }>('sales.create', payload);
+      }
       const invoiceNo = res.invoiceNo;
       // Safety net: the cart math mirrors the backend core, so these should be
       // identical. If they ever drift, surface a warning (not a hard error —
@@ -426,7 +460,13 @@ export default function POS() {
     submittingRef.current = true;
     setSubmitting(true);
     try {
-      const res = await api<{ invoiceNo: string }>('sales.create', payload);
+      let res: { invoiceNo: string };
+      if (!hasBackend()) {
+        const rand = Math.floor(1000 + Math.random() * 9000);
+        res = { invoiceNo: `${status === 'draft' ? 'DFT' : 'QUO'}-${rand}` };
+      } else {
+        res = await api<{ invoiceNo: string }>('sales.create', payload);
+      }
       toast.success(
         `${status === 'draft' ? 'Draft' : 'Quotation'} ${res.invoiceNo} saved`,
       );
@@ -537,6 +577,7 @@ export default function POS() {
       customers={customers}
       busy={submitting}
       costOf={costOf}
+      listPriceOf={listPriceOf}
       onPickCustomer={onPickCustomer}
       onPay={(m) => openPay(m)}
       onSplitPay={openSplitPay}

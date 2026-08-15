@@ -19,6 +19,12 @@ interface Props {
   cost?: number | null;
   /** Mean of every recorded buying price (products.avg_cost). */
   avgCost?: number | null;
+  /**
+   * The product's CATALOGUE price for the cart's current price group. Only used
+   * to offer "Undo" after the cashier has typed a price by hand — looked up live
+   * for the same reason `cost` is, so it can never be a stale copy.
+   */
+  listPrice?: number | null;
 }
 
 const FIELD_H = 'h-11'; // Uniform height for every input/select/button in the row
@@ -30,6 +36,7 @@ export function CartLineRow({
   onRemove,
   cost = null,
   avgCost = null,
+  listPrice = null,
 }: Props) {
   // Unit labels come from the backend units catalog (cached by react-query, so
   // every row shares one fetch). The seed-data fallback was removed; until the
@@ -233,8 +240,55 @@ export function CartLineRow({
       <div className="mt-2 grid grid-cols-3 gap-2 rounded-md bg-secondary/40 px-2 py-1.5">
         <PriceCell label="Buying price" value={cost} tone="text-warning" />
         <PriceCell label="Avg. buying price" value={avgCost} tone="text-primary" />
-        <PriceCell label="Selling price" value={up} tone="text-success" />
+        {/*
+          SELLING PRICE IS EDITABLE — for THIS SALE ONLY.
+          A hardware counter bargains ("240 each if I take twenty"), and until now
+          the cashier's only options were a discount percentage or walking away
+          from the sale. Typing here sets the price on this cart line and nothing
+          else: the product's catalogue price is untouched, so tomorrow's customer
+          still sees the list price. `priceOverride` is what stops a price-group
+          switch or a restored cart from quietly snapping it back (stores/posCart).
+        */}
+        <div className="min-w-0">
+          <div className="text-2xs text-muted-foreground leading-none truncate">
+            Selling price
+          </div>
+          <NumberField
+            value={up}
+            onChangeNumber={(v) =>
+              onChange({
+                ...line,
+                // What was typed IS the selling price, so any markup that was
+                // folded into it is cleared rather than multiplied on top.
+                basePrice: Math.max(0, v),
+                markupPct: 0,
+                priceOverride: true,
+              })
+            }
+            title="Price for this sale only — the product's price does not change"
+            className="mt-0.5 h-7 w-full px-1.5 text-right text-xs font-bold text-success"
+          />
+        </div>
       </div>
+
+      {line.priceOverride && (
+        <div className="mt-1.5 flex items-center gap-2 rounded-md bg-primary/10 px-2 py-1 text-2xs text-primary">
+          <span className="flex-1 min-w-0 truncate">
+            Price changed for this sale only — the product's price is unchanged.
+          </span>
+          {listPrice !== null && (
+            <button
+              onClick={() =>
+                onChange({ ...line, basePrice: listPrice, markupPct: 0, priceOverride: false })
+              }
+              className="shrink-0 font-semibold underline hover:no-underline"
+              title={`Put it back to the catalogue price (৳ ${listPrice.toFixed(2)})`}
+            >
+              Undo
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Computed strip */}
       <div className="mt-2 flex items-center justify-between gap-2 text-2xs text-muted-foreground font-mono tabular">

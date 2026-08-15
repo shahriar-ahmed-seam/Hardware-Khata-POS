@@ -26,15 +26,41 @@ import { OpenShiftModal } from '@/components/cash/OpenShiftModal';
 import { CashMoveModal } from '@/components/cash/CashMoveModal';
 import { CloseShiftModal } from '@/components/cash/CloseShiftModal';
 import { ShiftReport } from '@/components/cash/ShiftReport';
+import { useBranches } from '@/stores/branches';
+import { useUsers } from '@/stores/users';
+import { useAuth } from '@/stores/auth';
 import { formatBDT, cn } from '@/lib/utils';
 
 export default function CashRegister() {
-  const branch = 'Mirpur Branch'; // future: from titlebar branch context
-  const cashier = 'Seam';
+  /**
+   * The branch and the cashier were the literal strings 'Mirpur Branch' and
+   * 'Seam'. Both are printed on this screen and on the Z-report, so on any shop
+   * that is not the demo fixture they named the wrong branch and credited the
+   * wrong person for the drawer.
+   *
+   * `getCurrentShift` ignores the branch string under the backend (it returns the
+   * one open shift), so this value is display-only — which is exactly why it has
+   * to be the real name.
+   */
+  const branches = useBranches((s) => s.items);
+  const hydrateBranches = useBranches((s) => s.hydrate);
+  const currentUser = useAuth((s) => s.currentUserId);
+  const users = useUsers((s) => s.users);
+  const hydrateUsers = useUsers((s) => s.hydrate);
+
+  const branch =
+    branches.find((b) => b.isDefault)?.name ?? branches[0]?.name ?? '';
+  const cashier = users.find((u) => u.id === currentUser)?.name ?? '';
+
   const hydrate = useCashRegister((s) => s.hydrate);
   const getCurrent = useCashRegister((s) => s.getCurrentShift);
   const movements = useCashRegister((s) => s.movements);
   const shift = getCurrent(branch);
+
+  useEffect(() => {
+    void hydrateBranches();
+    void hydrateUsers();
+  }, [hydrateBranches, hydrateUsers]);
 
   const [openShiftOpen, setOpenShiftOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState<null | 'in' | 'out'>(null);

@@ -1,7 +1,7 @@
 # Hardware Khata POS — Releasing & Updating
 
-**Current version: 0.3.0** · Windows x64 · NSIS installer, per-user (no admin needed)
-Installer: `release/HardwareKhataPOS-Setup-0.3.0.exe` (~82 MB)
+**Current version: 0.4.0** · Windows x64 · NSIS installer, per-user (no admin needed)
+Installer: `release/HardwareKhataPOS-Setup-0.4.0.exe` (~82 MB)
 
 ---
 
@@ -42,10 +42,10 @@ shop PC: opens the app ─────────┘
 
 ```powershell
 # 1. bump the version (this is what clients compare against)
-#    package.json → "version": "0.3.0"
+#    package.json → "version": "0.4.0"
 
 # 2. prove it still works
-npm run backend:verify:all          # 962 checks, seven suites
+npm run backend:verify:all          # 999 checks, seven suites
 npx tsc --noEmit -p tsconfig.json
 npm run i18n:check
 npm run rebuild:electron            # leave the native module on the Electron ABI
@@ -72,12 +72,87 @@ always be run by hand — it upgrades in place and never touches the database.
 `%APPDATA%\pos\pos.db` — **outside** the install folder, so installing,
 upgrading and uninstalling never touch it.
 
-- Schema is at **v5**; migrations run automatically on launch and are additive.
+- Schema is at **v6**; migrations run automatically on launch and are additive.
+  **0.4.0 adds no migration at all**, so upgrading to it cannot touch your data.
 - Backups: Settings → Backup & Cloud writes verified `VACUUM INTO` snapshots
   (`pos-backup-YYYYMMDD-HHMMSS.sqlite3`) and keeps the newest N (default 14).
   Point the folder at OneDrive/Drive/Dropbox and the copy leaves the shop.
 - **Pendrive copy:** the dashboard has a *Backup to Pendrive* button, plus a card
   in Settings → Backup. That is the copy that survives a stolen or dead PC.
+
+---
+
+## 2a. What's in 0.4.0
+
+> **Upgrading is enough — do NOT reinstall.** There is **no schema change** in
+> this release, so `%APPDATA%\pos\pos.db` is untouched: every product, customer,
+> sale, purchase, balance and photo stays exactly as it is. Settings → Updates →
+> Download, then Restart and install.
+
+**The average purchase price now actually moves when you buy.** This was the
+reported bug. Recording a purchase wrote the product's buying price with a direct
+column write, and *only* if you also typed a new selling price on that line. So
+buying the same item at a higher price changed nothing at all — and even when it
+did fire, it skipped the price-history table that the average is calculated from,
+so the average never budged. Every received purchase line is now recorded in the
+price history, and both the current and the average buying price are recalculated
+from it.
+**Note:** this applies to purchases recorded from 0.4.0 onward. Purchases you
+entered before this were never written into the price history, so the average will
+start moving from your next purchase — it cannot be back-filled from data that was
+never captured.
+
+**Buttons that did nothing, now working.** Print and Re-print on a sale, on the
+sales list, on a purchase and on the purchases list had no action attached at all.
+They now show the stored invoice (or the goods received note for a purchase) ready
+to print or save as PDF — the original document, with its original date, not a
+re-creation. Export writes the CSV. "Add new product" on the New Purchase screen
+works. Two "Open full page" links that led to a Not Found page are gone.
+
+**Paid / Partial / Due filters were only searching the page you were looking at.**
+On a shop with history, clicking "Due" searched the newest 50 invoices and told you
+"No sales match" while unpaid invoices sat further back — and the totals disagreed
+with the rows on screen. They now search the whole book.
+
+**Custom date range was dropping its last day.** Choosing 1st to 10th reported
+nine days. Fixed, and the range now starts and ends on your clock rather than UTC.
+
+**Add a category, brand, customer or product without losing what you were typing.**
+A `+` beside Category and Brand on the product form, a `+` beside Customer on the
+sale form, and "Add new product" on both the purchase and sale screens. Everything
+is saved for good and selected straight away. A product added from a purchase has
+its opening stock locked to 0 on purpose — the quantity arrives on the purchase
+line, and entering it twice would double your stock.
+
+**You can change a selling price in the POS cart.** For that sale only: the
+product's price in your catalogue does not change, and the typed price survives a
+price-group switch and an app restart. An Undo puts it back.
+
+**The screen lock now appears when it locks.** It was locking correctly — which is
+why nothing was clickable — but the window was not repainting, so you only saw the
+lock screen after minimising and restoring. The idle timer was also rearmed
+wrongly and could leave the shop unlocked for longer than the setting said.
+
+**Roomier purchase and sale screens.** The item table now uses the full width
+instead of two-thirds, so a whole line is visible without scrolling sideways; the
+summary and order charges moved underneath.
+
+**Voided sales and cancelled purchases are hidden** behind a small "Show voided" /
+"Show cancelled" button. Nothing is deleted — they are still there when you ask.
+
+**Dashboard.** The shortcut buttons are a fixed two-row grid, so they no longer
+re-flow or slide under the sidebar when the window is narrowed. New panel showing
+**who owes you and who you owe**, with phone numbers you can copy. The date line
+showed a hard-coded "Tuesday, May 26, 2026 · Mirpur Branch"; it shows today and
+your real branch. Several shortcuts opened a list instead of the thing they named.
+
+**Wrong branch names removed.** The expense form offered three branches that do not
+exist on your shop, and the Cash Register screen and Z-report printed "Mirpur
+Branch" and "Seam" regardless of who was signed in.
+
+Also: customer and supplier phone numbers on unpaid documents, with a Copy button
+(a desktop PC usually has nothing to dial `tel:` links with, so copying is the
+honest option), and +47 Bangla phrases (2,353 total).
 
 ---
 
@@ -153,19 +228,19 @@ the internet.
 
 ## 4. Verification
 
-962 checks across seven suites, all green:
+999 checks across seven suites, all green:
 
 | Suite | Checks |
 |---|---:|
-| `all.ts` | 378 |
+| `all.ts` | 385 |
 | `api.ts` | 209 (150 channels) |
-| `run.ts` | 56 |
+| `run.ts` | 65 |
 | `e2e.ts` | 68 |
-| `paging.ts` | 80 |
+| `paging.ts` | 91 |
 | `backup.ts` | 120 |
-| `costing.ts` | 51 |
+| `costing.ts` | 61 |
 
-Plus `npm run i18n:check` — 32 checks, 2,290 Bangla phrases.
+Plus `npm run i18n:check` — 32 checks, 2,353 Bangla phrases.
 `npm run lint` does **not** work (eslint is not installed); `tsc` is the gate.
 
 ---

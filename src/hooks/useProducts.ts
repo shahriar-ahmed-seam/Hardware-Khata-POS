@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, hasBackend } from '@/lib/api';
 import type { Product } from '@/types/domain';
+import { BROWSER_MOCK_PRODUCTS } from '@/lib/browserMock';
 
 /**
  * Products data hooks (backend-backed).
@@ -113,6 +114,9 @@ export function useProducts(branchId?: string) {
   return useQuery({
     queryKey: [KEY, branchId ?? 'all'],
     queryFn: async () => {
+      if (!hasBackend()) {
+        return BROWSER_MOCK_PRODUCTS;
+      }
       const rows = await api<BackendProduct[]>('products.list', { branchId });
       return rows.map(toProduct);
     },
@@ -207,7 +211,8 @@ export interface CostHistoryEntry {
   at: string;
   userId: string | null;
   userName: string | null;
-  source: 'manual' | 'initial';
+  /** 'purchase' = recorded automatically by a received purchase line. */
+  source: 'manual' | 'initial' | 'purchase';
   note: string | null;
 }
 

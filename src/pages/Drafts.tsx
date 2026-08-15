@@ -36,6 +36,10 @@ export default function Drafts() {
       customerId: undefined,
       userId: undefined,
       method: undefined,
+      // The Sales screen's Paid/Partial/Due chip is a real SQL filter now, and
+      // this store is shared, so it has to be cleared here too or a draft list
+      // would silently inherit "unpaid only".
+      payment: undefined,
       from: undefined,
       to: undefined,
     });

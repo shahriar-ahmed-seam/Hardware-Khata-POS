@@ -6,6 +6,11 @@ contextBridge.exposeInMainWorld('api', {
     toggleMaximize: () => ipcRenderer.invoke('window:toggleMaximize'),
     close: () => ipcRenderer.invoke('window:close'),
     isMaximized: () => ipcRenderer.invoke('window:isMaximized'),
+    /**
+     * Ask the main process to schedule a full repaint. Used when the idle lock
+     * engages: see the handler in electron/main.ts for why that is necessary.
+     */
+    repaint: () => ipcRenderer.invoke('window:repaint'),
     onMaximizeChange: (cb: (max: boolean) => void) => {
       const listener = (_: unknown, max: boolean) => cb(max);
       ipcRenderer.on('window:maximized', listener);

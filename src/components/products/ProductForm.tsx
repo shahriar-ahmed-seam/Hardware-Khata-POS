@@ -20,6 +20,7 @@ import { fileToStoredImage, usableImage } from '@/lib/imageFile';
 import { toast } from '@/stores/toast';
 import { cn } from '@/lib/utils';
 import { NumberField } from '@/components/ui/NumberField';
+import { NewCategoryModal, NewBrandModal } from './QuickCatalogModal';
 
 interface Props {
   initial?: Product;
@@ -28,6 +29,19 @@ interface Props {
   /** When true, render in drawer mode (no top back button, slimmer headers). */
   asDrawer?: boolean;
   onCancel?: () => void;
+  /**
+   * Force opening stock to 0 and make it un-editable.
+   *
+   * Used when the form is opened FROM a purchase (Add Purchase → "Add new
+   * product"): the quantity is about to arrive on that very purchase, so typing
+   * an opening stock here as well would record the same goods twice — once as an
+   * opening balance and once as the goods received. The reorder level stays
+   * editable, because the low-stock warning is a property of the product, not of
+   * this purchase.
+   */
+  lockStock?: boolean;
+  /** Label for the primary button — the caller knows what happens next. */
+  saveLabel?: string;
 }
 
 const EMPTY: Product = {
@@ -53,9 +67,23 @@ const EMPTY: Product = {
   description: '',
 };
 
-export function ProductForm({ initial, onSave, onDelete, asDrawer, onCancel }: Props) {
+export function ProductForm({
+  initial,
+  onSave,
+  onDelete,
+  asDrawer,
+  onCancel,
+  lockStock,
+  saveLabel,
+}: Props) {
   const nav = useNavigate();
-  const [p, setP] = useState<Product>(initial ?? EMPTY);
+  const [p, setP] = useState<Product>(
+    initial ?? (lockStock ? { ...EMPTY, stock: 0 } : EMPTY),
+  );
+  // Inline creation of a missing category / brand, so a half-filled product form
+  // never has to be abandoned to go and add one.
+  const [newCategoryOpen, setNewCategoryOpen] = useState(false);
+  const [newBrandOpen, setNewBrandOpen] = useState(false);
   // `usableImage` drops the dead `blob:` values written by builds before the
   // image fix, so an old product shows its category placeholder instead of a
   // broken-image icon.
@@ -132,6 +160,10 @@ export function ProductForm({ initial, onSave, onDelete, asDrawer, onCancel }: P
     if (!p.name.trim() || !p.sku.trim() || p.price <= 0) return;
     const finalProduct: Product = {
       ...p,
+      // Belt and braces: the field is read-only in lockStock mode, so this only
+      // matters if the value arrived some other way. Sending an opening stock
+      // from the purchase flow would double-count the goods.
+      stock: lockStock ? 0 : p.stock,
       id: p.id || `p_${Date.now()}`,
       createdAt: p.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -174,11 +206,15 @@ export function ProductForm({ initial, onSave, onDelete, asDrawer, onCancel }: P
                     <Trash2 className="size-4" /> Delete
                   </Button>
                 )}
-                <Button variant="outline" onClick={() => setP(initial ?? EMPTY)}>
+                <Button
+                  variant="outline"
+                  onClick={() => setP(initial ?? (lockStock ? { ...EMPTY, stock: 0 } : EMPTY))}
+                >
                   <RotateCcw className="size-4" /> Reset
                 </Button>
                 <Button onClick={submit} disabled={!isValid}>
-                  <Save className="size-4" /> {initial ? 'Save Changes' : 'Save Product'}
+                  <Save className="size-4" />{' '}
+                  {saveLabel ?? (initial ? 'Save Changes' : 'Save Product')}
                 </Button>
               </>
             }
@@ -314,25 +350,42 @@ export function ProductForm({ initial, onSave, onDelete, asDrawer, onCancel }: P
                   >
                     <Input value={p.barcode} onChange={(e) => set('barcode', e.target.value)} placeholder="8801XXXXXXXXX" />
                   </Field>
+                  {/* The + opens a small dialog that saves a real category /
+                      brand through the same channel the Catalogue screens use,
+                      then selects it here. Without it, a product with a new
+                      brand meant abandoning this form mid-way. */}
                   <Field label="Category">
-                    <Select value={p.categoryId} onChange={(v) => set('categoryId', v)}>
-                      <option value="">Select category…</option>
-                      {categories.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </Select>
+                    <div className="flex items-center gap-1.5">
+                      <div className="flex-1 min-w-0">
+                        <Select value={p.categoryId} onChange={(v) => set('categoryId', v)}>
+                          <option value="">Select category…</option>
+                          {categories.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </Select>
+                      </div>
+                      <AddInlineButton
+                        title="Add new category"
+                        onClick={() => setNewCategoryOpen(true)}
+                      />
+                    </div>
                   </Field>
                   <Field label="Brand">
-                    <Select value={p.brandId} onChange={(v) => set('brandId', v)}>
-                      <option value="">Select brand…</option>
-                      {brands.map((b) => (
-                        <option key={b.id} value={b.id}>
-                          {b.name}
-                        </option>
-                      ))}
-                    </Select>
+                    <div className="flex items-center gap-1.5">
+                      <div className="flex-1 min-w-0">
+                        <Select value={p.brandId} onChange={(v) => set('brandId', v)}>
+                          <option value="">Select brand…</option>
+                          {brands.map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.name}
+                            </option>
+                          ))}
+                        </Select>
+                      </div>
+                      <AddInlineButton title="Add new brand" onClick={() => setNewBrandOpen(true)} />
+                    </div>
                   </Field>
                 </div>
               </Section>
@@ -431,13 +484,24 @@ export function ProductForm({ initial, onSave, onDelete, asDrawer, onCancel }: P
               <Section
                 title="Stock"
                 subtitle={
-                  initial
-                    ? 'Counted from stock movements — not typed here'
-                    : 'Opening quantity for this product'
+                  lockStock
+                    ? 'Comes in on this purchase — not typed here'
+                    : initial
+                      ? 'Counted from stock movements — not typed here'
+                      : 'Opening quantity for this product'
                 }
               >
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {initial ? (
+                  {lockStock ? (
+                    <Field
+                      label="Opening stock"
+                      hint="Locked to 0 on purpose. The quantity you are buying is entered on the purchase line, which is what puts it into stock. Typing it here too would count the same goods twice."
+                    >
+                      <div className="h-9 flex items-center px-3 rounded-md border border-input bg-muted/40 font-mono tabular text-sm text-muted-foreground">
+                        0 {p.unit}
+                      </div>
+                    </Field>
+                  ) : initial ? (
                     <Field
                       label="In stock now"
                       hint="To change it, use Update Price & Stock on the Products or Stock screen. That records a stock correction, so your history stays right."
@@ -492,12 +556,40 @@ export function ProductForm({ initial, onSave, onDelete, asDrawer, onCancel }: P
               </Button>
             )}
             <Button onClick={submit} disabled={!isValid}>
-              <Save className="size-4" /> Save
+              <Save className="size-4" /> {saveLabel ?? 'Save'}
             </Button>
           </div>
         </div>
       )}
+
+      {/* Inline category / brand creation. Mounted here so both the page and the
+          drawer version of this form get them. */}
+      <NewCategoryModal
+        open={newCategoryOpen}
+        onClose={() => setNewCategoryOpen(false)}
+        onCreated={(id) => set('categoryId', id)}
+      />
+      <NewBrandModal
+        open={newBrandOpen}
+        onClose={() => setNewBrandOpen(false)}
+        onCreated={(id) => set('brandId', id)}
+      />
     </div>
+  );
+}
+
+/** The small "+" beside a dropdown that can be added to on the spot. */
+function AddInlineButton({ title, onClick }: { title: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-label={title}
+      className="size-9 shrink-0 grid place-items-center rounded-md border border-border text-muted-foreground hover:border-primary hover:bg-primary/10 hover:text-primary transition"
+    >
+      <Plus className="size-4" />
+    </button>
   );
 }
 

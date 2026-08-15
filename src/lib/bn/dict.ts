@@ -3020,3 +3020,96 @@ Object.assign(BN, {
   'That picture appears to be empty.': 'ছবিটি খালি বলে মনে হচ্ছে।',
   'This computer could not process the picture.': 'এই কম্পিউটার ছবিটি প্রস্তুত করতে পারেনি।',
 });
+
+// ---------------------------------------------------------------------------
+// APPEND-ONLY BLOCK — inline create (category / brand / product / customer),
+// full-width purchase & sale forms, working print buttons, hidden voided rows,
+// the editable POS selling price, and the dashboard's fixed shortcut grid +
+// dues panel.
+//
+// Every key here is the COMPLETE rendered text of one element, because the
+// translation layer swaps whole text nodes (see lib/bn/translate.ts).
+// ---------------------------------------------------------------------------
+Object.assign(BN, {
+  // --- inline category / brand creation, from the product form
+  'Add new category': 'নতুন ক্যাটাগরি যোগ করুন',
+  'Add new brand': 'নতুন ব্র্যান্ড যোগ করুন',
+  'Add New Category': 'নতুন ক্যাটাগরি',
+  'Add New Brand': 'নতুন ব্র্যান্ড',
+  'Created and selected for this product': 'তৈরি হয়ে এই পণ্যের জন্য নির্বাচিত হবে',
+  'Category name': 'ক্যাটাগরির নাম',
+  'Brand name': 'ব্র্যান্ডের নাম',
+  'Optional — one emoji, shown in lists': 'ঐচ্ছিক — একটি ইমোজি, তালিকায় দেখাবে',
+  'This is the same category list as Catalogue → Categories. Adding it here saves it for good.':
+    'এটি ক্যাটালগ → ক্যাটাগরি-র একই তালিকা। এখানে যোগ করলে স্থায়ীভাবে জমা থাকে।',
+  'This is the same brand list as Catalogue → Brands. Adding it here saves it for good.':
+    'এটি ক্যাটালগ → ব্র্যান্ড-এর একই তালিকা। এখানে যোগ করলে স্থায়ীভাবে জমা থাকে।',
+
+  // --- inline product creation, from a purchase or a sale
+  'Add new product': 'নতুন পণ্য যোগ করুন',
+  'Add New Product': 'নতুন পণ্য',
+  'Save & Add': 'সংরক্ষণ ও যোগ',
+  'Saved to your catalogue and added to this purchase. Stock arrives on the purchase line.':
+    'আপনার ক্যাটালগে জমা হয়ে এই ক্রয়ে যোগ হবে। স্টক ক্রয়ের লাইন থেকেই আসবে।',
+  'Saved to your catalogue and added to this sale.':
+    'আপনার ক্যাটালগে জমা হয়ে এই বিক্রয়ে যোগ হবে।',
+  'Comes in on this purchase — not typed here': 'এই ক্রয়েই আসছে — এখানে লেখার দরকার নেই',
+  'Could not save the product': 'পণ্যটি সংরক্ষণ করা যায়নি',
+
+  // --- purchase / sale form layout
+  // ('Sell Price' and 'Line Total' are already translated in an earlier block.)
+  'Net Cost': 'নিট দাম',
+  'Remove line': 'লাইন মুছুন',
+
+  // --- printing an existing invoice / purchase
+  'Print invoice': 'চালান প্রিন্ট করুন',
+  'Print goods received note': 'মাল প্রাপ্তির রসিদ প্রিন্ট করুন',
+  'The original invoice, reprinted. Nothing about it changes.':
+    'মূল চালানটিই আবার প্রিন্ট হচ্ছে। এতে কিছুই বদলায় না।',
+  "File this against the supplier's own invoice.":
+    'সরবরাহকারীর নিজের চালানের সঙ্গে এটি রাখুন।',
+  // ('Goods Received Note' is already translated in an earlier block.)
+  'Balance owed': 'বাকি পরিমাণ',
+  'Received by': 'গ্রহণ করেছেন',
+  'Supplier / driver': 'সরবরাহকারী / চালক',
+  'Export all': 'সব রপ্তানি করুন',
+
+  // --- hiding cancelled / voided documents
+  'Show voided': 'বাতিলকৃত দেখান',
+  'Voided shown': 'বাতিলকৃত দেখানো হচ্ছে',
+  'Voided only': 'শুধু বাতিলকৃত',
+  'Show cancelled': 'বাতিলকৃত দেখান',
+  'Cancelled shown': 'বাতিলকৃত দেখানো হচ্ছে',
+
+  // --- contacting a customer / supplier about an unpaid document
+  'Copy number': 'নম্বর কপি করুন',
+  Copied: 'কপি হয়েছে',
+  'No phone on file': 'ফোন নম্বর নেই',
+  'Could not copy the number': 'নম্বর কপি করা যায়নি',
+
+  // --- POS: the selling price can be changed for one sale only
+  "Price changed for this sale only — the product's price is unchanged.":
+    'শুধু এই বিক্রয়ের জন্য দাম বদলানো হয়েছে — পণ্যের দাম বদলায়নি।',
+  Undo: 'ফিরিয়ে নিন',
+
+  // --- dashboard: fixed shortcut grid
+  'Sell at the counter': 'কাউন্টারে বিক্রি',
+  'Form-based invoice': 'ফর্মে চালান',
+  'Goods received': 'মাল গ্রহণ',
+  Breakdown: 'বিস্তারিত',
+  'Add to catalogue': 'ক্যাটালগে যোগ',
+  // ('Walk-in or contractor' is already translated in an earlier block.)
+  'Rent, salary, transport': 'ভাড়া, বেতন, পরিবহন',
+  'A copy you can take home': 'বাড়িতে নেওয়ার মতো একটি কপি',
+
+  // --- dashboard: who owes us / who we owe
+  'Customers who owe us': 'যাদের কাছে টাকা পাওনা',
+  'Suppliers we owe': 'যাদের টাকা দিতে হবে',
+  'Nobody owes you anything right now.': 'এখন কারও কাছে টাকা পাওনা নেই।',
+  'You are square with every supplier.': 'কোনো সরবরাহকারীর টাকা বাকি নেই।',
+  Collect: 'আদায় করুন',
+
+  // --- dashboard: custom date range
+  'Custom range': 'নিজের সময়সীমা',
+  'The end date is before the start date.': 'শেষ তারিখ শুরুর তারিখের আগে পড়েছে।',
+});

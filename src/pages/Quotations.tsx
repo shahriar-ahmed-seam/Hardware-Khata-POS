@@ -37,6 +37,9 @@ export default function Quotations() {
       customerId: undefined,
       userId: undefined,
       method: undefined,
+      // Cleared for the same reason as the others: the Sales screen's
+      // Paid/Partial/Due chip is a real SQL filter on this shared store.
+      payment: undefined,
       from: undefined,
       to: undefined,
     });

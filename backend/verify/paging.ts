@@ -158,6 +158,75 @@ export function runPaging(s: Suite) {
     branchScoped.rows.every((r) => r.branch_id === 'br_mp'),
   );
 
+  /**
+   * ---- PAYMENT STATE (Paid / Partial / Due) ----
+   *
+   * These three were filtered in the UI over the rows of the loaded page, so
+   * "Due" reported "no sales match" whenever the unpaid invoices happened to sit
+   * past page one, and the pager and page totals disagreed with what was on
+   * screen. They are SQL filters now, so `total` has to be the TRUE count across
+   * the whole history — which is what these checks pin.
+   */
+  s.section('paging-payment-state');
+  {
+    const EPS = 0.005;
+    const finals = all.filter((r) => r.status === 'final');
+    const expectPaid = finals.filter((r) => r.due <= EPS).length;
+    const expectPartial = finals.filter((r) => r.paid > EPS && r.due > EPS).length;
+    const expectDue = finals.filter((r) => r.paid <= EPS && r.due > EPS).length;
+
+    const paid = call('sales.listPage', { pageSize: 200, statuses: ['final'], payment: 'paid' }) as Page;
+    const partial = call('sales.listPage', { pageSize: 200, statuses: ['final'], payment: 'partial' }) as Page;
+    const due = call('sales.listPage', { pageSize: 200, statuses: ['final'], payment: 'due' }) as Page;
+
+    s.eq('paid filter total is the true count, not the page', paid.total, expectPaid);
+    s.eq('partial filter total is the true count', partial.total, expectPartial);
+    s.eq('due filter total is the true count', due.total, expectDue);
+
+    s.ok('every paid row really owes nothing', paid.rows.every((r) => r.due <= EPS));
+    s.ok(
+      'every partial row has paid something AND owes something',
+      partial.rows.every((r) => r.paid > EPS && r.due > EPS),
+    );
+    s.ok('every due row has paid nothing', due.rows.every((r) => r.paid <= EPS));
+
+    // The three states must be a PARTITION of the finalized sales: no sale can be
+    // in two of them, and none can fall through the gaps.
+    s.eq(
+      'paid + partial + due accounts for every finalized sale',
+      paid.total + partial.total + due.total,
+      finals.length,
+    );
+
+    // Omitting the filter must not narrow anything.
+    s.eq(
+      'no payment filter means no payment narrowing',
+      (call('sales.listPage', { pageSize: 200, statuses: ['final'] }) as Page).total,
+      finals.length,
+    );
+
+    // Same rules on the buying side. "Partially paid" has to mean the same thing
+    // on both sides of the books, which is why one helper builds both.
+    const purchaseRows = call('purchases.list', {}) as Record<string, any>[];
+    const pPaid = call('purchases.listPage', { pageSize: 200, payment: 'paid' }) as Page;
+    const pPartial = call('purchases.listPage', { pageSize: 200, payment: 'partial' }) as Page;
+    const pDue = call('purchases.listPage', { pageSize: 200, payment: 'due' }) as Page;
+    s.eq(
+      'purchase paid filter total is the true count',
+      pPaid.total,
+      purchaseRows.filter((r) => r.due <= EPS).length,
+    );
+    s.ok(
+      'every partial purchase has paid something AND owes something',
+      pPartial.rows.every((r) => r.paid > EPS && r.due > EPS),
+    );
+    s.eq(
+      'paid + partial + due accounts for every purchase',
+      pPaid.total + pPartial.total + pDue.total,
+      purchaseRows.length,
+    );
+  }
+
   // ---- bounds ----
   s.section('paging-bounds');
   const beyond = call('sales.listPage', {

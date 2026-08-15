@@ -11,6 +11,7 @@ import {
   type RecurringFrequency,
 } from '@/stores/expenses';
 import { confirm } from '@/stores/confirm';
+import { useBranches } from '@/stores/branches';
 import { cn } from '@/lib/utils';
 import { NewExpenseCategoryModal } from './NewExpenseCategoryModal';
 
@@ -30,7 +31,14 @@ const FREQS: { id: RecurringFrequency; label: string }[] = [
   { id: 'yearly', label: 'Yearly' },
 ];
 
-const BRANCHES = ['Mirpur Branch', 'Uttara Branch', 'Dhanmondi Branch'];
+/*
+ * The branch list used to be the hard-coded array
+ * `['Mirpur Branch', 'Uttara Branch', 'Dhanmondi Branch']` — three names that
+ * only exist in the demo fixture. A real shop was therefore offered three
+ * branches it does not have, and the expense it filed named one of them. It reads
+ * the real `branches.list` through the branches store now, and defaults to the
+ * shop's default branch.
+ */
 
 interface Props {
   open: boolean;
@@ -44,19 +52,36 @@ export function AddExpenseDrawer({ open, onClose, initial }: Props) {
   const removeExpense = useExpenses((s) => s.deleteExpense);
   const categories = useExpenses((s) => s.categories);
 
+  // Real branches, from the backend.
+  const branches = useBranches((s) => s.items);
+  const hydrateBranches = useBranches((s) => s.hydrate);
+  useEffect(() => {
+    if (open) void hydrateBranches();
+  }, [open, hydrateBranches]);
+  const defaultBranchName =
+    branches.find((b) => b.isDefault)?.name ?? branches[0]?.name ?? '';
+
   const [date, setDate] = useState((initial?.date ?? new Date().toISOString()).slice(0, 16));
   const [categoryId, setCategoryId] = useState(initial?.categoryId ?? '');
   const [amount, setAmount] = useState(initial?.amount ?? 0);
   const [paymentMethod, setPaymentMethod] = useState<ExpensePaymentMethod>(initial?.paymentMethod ?? 'Cash');
   const [reference, setReference] = useState(initial?.reference ?? '');
   const [note, setNote] = useState(initial?.note ?? '');
-  const [branch, setBranch] = useState(initial?.branch ?? 'Mirpur Branch');
+  const [branch, setBranch] = useState(initial?.branch ?? '');
   const [attachmentName, setAttachmentName] = useState(initial?.attachmentName);
   const [recurring, setRecurring] = useState(!!initial?.recurring);
   const [frequency, setFrequency] = useState<RecurringFrequency>(initial?.frequency ?? 'monthly');
   const [recurringEnd, setRecurringEnd] = useState(initial?.recurringEnd ?? '');
 
   const [newCatOpen, setNewCatOpen] = useState(false);
+
+  // Branches arrive asynchronously, so adopt the default once the list lands
+  // (the same pattern as AddPurchase / AddSale).
+  useEffect(() => {
+    if (initial || branch) return;
+    if (defaultBranchName) setBranch(defaultBranchName);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultBranchName]);
 
   // Reset on open
   useEffect(() => {
@@ -67,7 +92,7 @@ export function AddExpenseDrawer({ open, onClose, initial }: Props) {
       setPaymentMethod('Cash');
       setReference('');
       setNote('');
-      setBranch('Mirpur Branch');
+      setBranch(defaultBranchName);
       setAttachmentName(undefined);
       setRecurring(false);
       setFrequency('monthly');
@@ -219,7 +244,12 @@ export function AddExpenseDrawer({ open, onClose, initial }: Props) {
                 onChange={(e) => setBranch(e.target.value)}
                 className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
               >
-                {BRANCHES.map((b) => (
+                {(branches.length > 0
+                  ? branches.map((b) => b.name)
+                  : branch
+                    ? [branch]
+                    : []
+                ).map((b) => (
                   <option key={b} value={b}>
                     {b}
                   </option>

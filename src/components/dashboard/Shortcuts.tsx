@@ -15,14 +15,21 @@ interface Props {
   onOpenProfit: () => void;
 }
 
-// More shortcuts shown in the dropdown menu
+/**
+ * Extra shortcuts, in the dropdown.
+ *
+ * Three of these pointed at a LIST page while claiming to create something: "New
+ * Purchase" opened the purchases list, "New Product" the product table, and
+ * "Profit / Loss Report" the reports index instead of the report. Every entry now
+ * goes where its label says, and every route is one that exists in App.tsx.
+ */
 const more = [
-  { to: '/purchases',          icon: ShoppingBag, label: 'New Purchase',     desc: 'Goods received from supplier' },
-  { to: '/products',           icon: Package,     label: 'New Product',      desc: 'Add to inventory' },
-  { to: '/contacts/customers', icon: Users,       label: 'New Customer',     desc: 'Walk-in or contractor' },
-  { to: '/expenses',           icon: Wallet,      label: 'New Expense',      desc: 'Rent, salary, transport…' },
-  { to: '/contacts/dues',      icon: HandCoins,   label: 'Receive Payment',  desc: 'Collect against dues' },
-  { to: '/reports',            icon: TrendingUp,  label: 'Profit / Loss Report', desc: 'View detailed report' },
+  { to: '/purchases/new',        icon: ShoppingBag, label: 'New Purchase',         desc: 'Goods received from supplier' },
+  { to: '/products/new',         icon: Package,     label: 'New Product',          desc: 'Add to inventory' },
+  { to: '/contacts/customers',   icon: Users,       label: 'New Customer',         desc: 'Walk-in or contractor' },
+  { to: '/expenses',             icon: Wallet,      label: 'New Expense',          desc: 'Rent, salary, transport…' },
+  { to: '/contacts/dues',        icon: HandCoins,   label: 'Receive Payment',      desc: 'Collect against dues' },
+  { to: '/reports/profit-loss',  icon: TrendingUp,  label: 'Profit / Loss Report', desc: 'View detailed report' },
 ];
 
 export function Shortcuts({ onOpenProfit }: Props) {

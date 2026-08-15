@@ -86,6 +86,9 @@ export function renderWidget(id: WidgetId, args: RenderArgs) {
     case 'activityFeed':
       return <Widget {...common}><W.ActivityFeed /></Widget>;
     case 'birthdayList':
-      return <Widget {...common} to="/sms" toLabel="Send wish"><W.BirthdayList /></Widget>;
+      // Linked to /sms, which is not routed at all — the SMS feature was removed
+      // because it had no backend, so the button landed on "Not Found". Points at
+      // the customer list instead, which is where you would act on it.
+      return <Widget {...common} to="/contacts/customers" toLabel="Customers"><W.BirthdayList /></Widget>;
   }
 }

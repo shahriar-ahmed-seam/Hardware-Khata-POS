@@ -9,6 +9,7 @@ import {
   Settings2,
   Calendar,
   Eye,
+  EyeOff,
   Printer,
   Undo2,
 } from 'lucide-react';
@@ -24,17 +25,29 @@ import { useSales, type SaleRecord, type SaleStatus } from '@/stores/sales';
 import { ALL_SALES_COLUMNS, SALES_COLUMN_META, useSalesUI, type SalesColumn } from '@/stores/salesUI';
 import { useCustomers } from '@/stores/contacts';
 import { useUsers } from '@/stores/users';
+import { useBackup } from '@/stores/backup';
 import { formatBDT, cn } from '@/lib/utils';
 import { SkeletonTable } from '@/components/ui/Skeleton';
 import { SaleDetail } from '@/components/sales/SaleDetail';
 import { CreateReturnModal } from '@/components/sales/CreateReturnModal';
 import { CreateShipmentModal } from '@/components/sales/CreateShipmentModal';
+import { InvoicePrintModal } from '@/components/sales/InvoicePrintModal';
 
 type DateFilter = 'today' | 'week' | 'month' | 'all' | 'custom';
 type StatusFilter = 'all' | 'paid' | 'partial' | 'due' | 'voided';
 
-/** Statuses this screen lists when the "voided only" chip is NOT active. */
-const LIST_STATUSES: SaleStatus[] = ['final', 'void'];
+/**
+ * VOIDED SALES ARE HIDDEN BY DEFAULT.
+ *
+ * A void is a cancelled sale: its stock went back on the shelf and its cash came
+ * back out, so it contributes nothing but noise to the list an employee reads all
+ * day — and a greyed-out row with a real invoice number and a real total is easy
+ * to mistake for a live sale. They are never deleted (the audit trail is the
+ * whole point of voiding rather than deleting), just filtered out, and one small
+ * button brings them back.
+ */
+const ACTIVE_STATUSES: SaleStatus[] = ['final'];
+const WITH_VOID_STATUSES: SaleStatus[] = ['final', 'void'];
 
 /**
  * Turn a date preset into inclusive ISO bounds for the server query.
@@ -81,6 +94,11 @@ export default function Sales() {
   const users = useUsers((s) => s.users);
   const hydrateUsers = useUsers((s) => s.hydrate);
 
+  // CSV export reuses the backup store's channel, so there is one exporter in the
+  // app rather than a second one that could disagree with it.
+  const exportCsv = useBackup((s) => s.exportCsv);
+  const exportBusy = useBackup((s) => s.busy);
+
   const [q, setQ] = useState(() => searchParams.get('q') ?? '');
   const [date, setDate] = useState<DateFilter>('all');
   const [status, setStatus] = useState<StatusFilter>('all');
@@ -91,6 +109,9 @@ export default function Sales() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [returnFor, setReturnFor] = useState<string | null>(null);
   const [shipmentFor, setShipmentFor] = useState<string | null>(null);
+  const [printFor, setPrintFor] = useState<SaleRecord | null>(null);
+  /** Off by default — see ACTIVE_STATUSES above. */
+  const [showVoided, setShowVoided] = useState(false);
 
   // Load ONE page on mount. This screen owns `statuses: ['final','void']` —
   // drafts and quotations have their own pages with their own query. An initial
@@ -101,12 +122,13 @@ export default function Sales() {
     // by Drafts/Quotations (they share this store) can't silently narrow the list
     // while the controls below all read "all".
     void loadPage({
-      statuses: LIST_STATUSES,
+      statuses: ACTIVE_STATUSES,
       page: 1,
       q: initialQ.current.trim() || undefined,
       customerId: undefined,
       userId: undefined,
       method: undefined,
+      payment: undefined,
       from: undefined,
       to: undefined,
     });
@@ -135,23 +157,49 @@ export default function Sales() {
    * rows of the current page (the UI states that next to the chips). Only
    * 'voided' maps to a real lifecycle status, so that one goes into the query.
    */
+  const baseStatuses = () => (showVoided ? WITH_VOID_STATUSES : ACTIVE_STATUSES);
+
+  /**
+   * Paid / Partial / Due now go into the SQL query.
+   *
+   * They used to be filtered here in JavaScript over the rows of the loaded page,
+   * with a note in the UI saying so. That is a trap rather than a caveat: on a
+   * shop with history, clicking "Due" filtered the newest 50 invoices and said
+   * "No sales match these filters" while thirty unpaid ones sat on page four, and
+   * the pager and the page totals disagreed with the rows on screen. See
+   * `PageQuery.payment` in backend/services/paged.ts.
+   */
   const onStatus = (next: StatusFilter) => {
     setStatus(next);
-    const statuses: SaleStatus[] = next === 'voided' ? ['void'] : LIST_STATUSES;
-    if (statuses.join() !== query.statuses.join()) void loadPage({ statuses });
+    const statuses: SaleStatus[] = next === 'voided' ? ['void'] : baseStatuses();
+    const payment =
+      next === 'paid' || next === 'partial' || next === 'due' ? next : undefined;
+    void loadPage({ statuses, payment, page: 1 });
   };
 
-  // Server already narrowed by status / customer / user / method / date / text.
-  // Only the derived payment chips are applied here, over this page's rows.
-  const pageRows = useMemo(() => {
-    if (status === 'all' || status === 'voided') return sales;
-    return sales.filter((s) => {
-      if (s.status === 'void') return false;
-      if (status === 'paid') return s.due === 0;
-      if (status === 'partial') return s.paid > 0 && s.due > 0;
-      return s.paid === 0; // 'due'
-    });
-  }, [sales, status]);
+  /**
+   * Toggle voided rows in or out. When the "voided" chip is the active filter,
+   * turning the toggle off would leave the screen querying voids while claiming
+   * to hide them, so the chip is reset to "all" at the same time.
+   */
+  const toggleVoided = () => {
+    const next = !showVoided;
+    setShowVoided(next);
+    if (status === 'voided' && !next) {
+      // Hiding voids while "voided only" is the active chip would contradict
+      // itself, so the chip falls back to "all".
+      setStatus('all');
+      void loadPage({ statuses: ACTIVE_STATUSES, payment: undefined, page: 1 });
+      return;
+    }
+    if (status === 'voided') return; // already querying voids only
+    void loadPage({ statuses: next ? WITH_VOID_STATUSES : ACTIVE_STATUSES, page: 1 });
+  };
+
+  // EVERY filter is now applied in SQL — status, payment state, customer, user,
+  // method, date and free text — so the rows, the pager and the totals below all
+  // describe the same result set. Nothing is filtered again here.
+  const pageRows = sales;
 
   // These sums cover the LOADED PAGE only — the rest of the range was never
   // fetched. Labelled "this page" in the UI so they can't read as range totals;
@@ -181,8 +229,18 @@ export default function Sales() {
             <Button variant="outline" size="sm" onClick={() => nav('/sales/import')}>
               <Upload className="size-4" /> Import
             </Button>
-            <Button variant="outline" size="sm">
-              <Download className="size-4" /> Export
+            {/* Was a button with no handler. Writes the accountant-friendly CSV
+                through the same `backup.export` channel Settings uses, into the
+                configured backup folder. Deliberately labelled "all": it is the
+                whole sales table, not the filtered page. */}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={exportBusy}
+              onClick={() => void exportCsv('sales')}
+              title="Write every sale to a CSV file in your backup folder"
+            >
+              <Download className="size-4" /> Export all
             </Button>
             <Button onClick={() => nav('/sales/new')}>
               <Plus className="size-4" /> New Sale
@@ -281,7 +339,7 @@ export default function Sales() {
           </select>
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-0.5 p-0.5 bg-secondary rounded-md text-xs">
-              {(['all', 'paid', 'partial', 'due', 'voided'] as StatusFilter[]).map((s) => (
+              {(['all', 'paid', 'partial', 'due'] as StatusFilter[]).map((s) => (
                 <button
                   key={s}
                   onClick={() => onStatus(s)}
@@ -296,10 +354,42 @@ export default function Sales() {
                 </button>
               ))}
             </div>
-            <span className="text-[11px] text-muted-foreground">
-              Paid / Partial / Due filter this page
-            </span>
           </div>
+
+          {/* VOIDED — hidden unless asked for. Kept as its own small toggle rather
+              than a chip in the row above, because it answers a different
+              question: those chips ask "how much has been paid", this one asks
+              "should cancelled sales be on screen at all". */}
+          <button
+            onClick={toggleVoided}
+            title={
+              showVoided
+                ? 'Hide cancelled (voided) sales'
+                : 'Show cancelled (voided) sales as well'
+            }
+            className={cn(
+              'h-9 px-3 inline-flex items-center gap-1.5 rounded-md border text-xs font-medium transition',
+              showVoided
+                ? 'border-destructive/50 bg-destructive/10 text-destructive'
+                : 'border-border text-muted-foreground hover:bg-secondary hover:text-foreground',
+            )}
+          >
+            {showVoided ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+            {showVoided ? 'Voided shown' : 'Show voided'}
+          </button>
+          {showVoided && (
+            <button
+              onClick={() => onStatus(status === 'voided' ? 'all' : 'voided')}
+              className={cn(
+                'h-9 px-3 rounded-md border text-xs font-medium transition',
+                status === 'voided'
+                  ? 'border-destructive bg-destructive text-destructive-foreground'
+                  : 'border-border text-muted-foreground hover:bg-secondary',
+              )}
+            >
+              Voided only
+            </button>
+          )}
         </Card>
 
         {/* Table */}
@@ -347,9 +437,12 @@ export default function Sales() {
                         >
                           <Eye className="size-3.5" />
                         </button>
+                        {/* Was a button with no handler at all. Opens the stored
+                            invoice ready to print or save as PDF. */}
                         <button
+                          onClick={() => setPrintFor(s)}
                           className="size-7 grid place-items-center rounded hover:bg-secondary"
-                          title="Print"
+                          title="Print invoice"
                         >
                           <Printer className="size-3.5" />
                         </button>
@@ -403,6 +496,14 @@ export default function Sales() {
 
       <CreateReturnModal open={!!returnFor} onClose={() => setReturnFor(null)} saleId={returnFor} />
       <CreateShipmentModal open={!!shipmentFor} onClose={() => setShipmentFor(null)} saleId={shipmentFor} />
+
+      {/* The list row carries the customer's NAME but not their record, so the
+          modal reads the customer itself before printing. */}
+      <InvoicePrintModal
+        open={!!printFor}
+        onClose={() => setPrintFor(null)}
+        sale={printFor}
+      />
 
       {colsOpen && (
         <ColumnsPanel

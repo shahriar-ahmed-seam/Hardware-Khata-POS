@@ -9,6 +9,11 @@ declare global {
         close: () => Promise<void>;
         isMaximized: () => Promise<boolean>;
         onMaximizeChange: (cb: (max: boolean) => void) => () => void;
+        /**
+         * Schedule a full repaint of the window. Optional so a renderer running
+         * against an older preload does not crash — see electron/main.ts.
+         */
+        repaint?: () => Promise<boolean>;
       };
       theme: {
         set: (mode: 'light' | 'dark' | 'system') => Promise<boolean>;

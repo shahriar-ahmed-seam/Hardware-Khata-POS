@@ -12,6 +12,21 @@ export type CartLine = {
   discountPct: number; // 0..100
   discountFlat: number; // BDT
   taxPct: number; // line tax (often 0 — VAT applied at order level)
+  /**
+   * The cashier typed this line's selling price by hand.
+   *
+   * A hardware counter bargains: "give me 20 pieces for 240 each". That price
+   * belongs to THIS SALE ONLY — the product's catalogue price must not change,
+   * so nothing here is ever written back to `products.price`. The sale is stored
+   * at the typed price (POS sends `spr: l.basePrice` to `sales.create`, which is
+   * per-line by design), and the catalogue is left alone.
+   *
+   * The flag exists so the two places that RE-PRICE a cart leave the override
+   * standing: switching price group, and revalidating a cart restored from disk
+   * (see stores/posCart.ts). Without it, an agreed price would silently snap back
+   * to the list price and the customer would be charged the wrong amount.
+   */
+  priceOverride?: boolean;
 };
 
 export type ParkedCart = {
