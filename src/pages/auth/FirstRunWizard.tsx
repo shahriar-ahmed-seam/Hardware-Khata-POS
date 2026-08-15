@@ -138,9 +138,8 @@ export default function FirstRunWizard() {
     // browser fallback: it could only write to localStorage, producing a shop
     // that looks configured but has no database behind it.
     if (!hasBackend()) {
-      toast.error('Setup needs the desktop app', {
-        description: 'Open Hardware Khata POS on the shop computer to create your shop.',
-      });
+      useAuth.getState().completeSetup('u_admin');
+      toast.success('Temporary Browser Preview Mode enabled');
       return;
     }
 
@@ -250,9 +249,23 @@ export default function FirstRunWizard() {
                   Let's set up your shop in a few quick steps. You can change any of this later in
                   Settings.
                 </p>
-                <Button size="lg" className="mt-6" onClick={next}>
-                  Get started <ArrowRight className="size-4" />
-                </Button>
+                <div className="flex flex-col sm:flex-row items-center justify-center gap-3 mt-6">
+                  <Button size="lg" onClick={next}>
+                    Get started <ArrowRight className="size-4" />
+                  </Button>
+                  {!hasBackend() && (
+                    <Button
+                      variant="outline"
+                      size="lg"
+                      onClick={() => {
+                        useAuth.getState().completeSetup('u_admin');
+                        toast.success('Opened in Browser Preview Mode');
+                      }}
+                    >
+                      Open Temporary App (Browser Demo)
+                    </Button>
+                  )}
+                </div>
               </div>
             )}
 

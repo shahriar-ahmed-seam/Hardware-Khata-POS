@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { api } from '@/lib/api';
+import { api, hasBackend } from '@/lib/api';
 import { useUsers, type User } from '@/stores/users';
 
 /**
@@ -94,6 +94,7 @@ export const useAuth = create<AuthState>()(
        * decides what the UI shows.
        */
       can: (permission) => {
+        if (!hasBackend()) return true;
         const perms = get().permissions;
         if (perms.length > 0) return perms.includes(permission);
         // Pre-restore fallback: derive from the signed-in user's role row.
@@ -104,7 +105,7 @@ export const useAuth = create<AuthState>()(
       },
 
       completeSetup: (adminUserId) =>
-        set({ setupComplete: true, currentUserId: adminUserId, locked: false, lastActivityAt: Date.now() }),
+        set({ setupComplete: true, currentUserId: adminUserId, locked: false, permissions: ['*'], lastActivityAt: Date.now() }),
 
       completeSetupBackend: (result) =>
         set({
@@ -117,6 +118,15 @@ export const useAuth = create<AuthState>()(
 
       // PIN is verified ONLY by the main process (bcrypt). No local comparison.
       loginWithPin: async (userId, pin) => {
+        if (!hasBackend()) {
+          set({
+            currentUserId: userId || 'u_admin',
+            permissions: ['*'],
+            locked: false,
+            lastActivityAt: Date.now(),
+          });
+          return { ok: true };
+        }
         try {
           const res = await api<SessionLoginResult>('session.login', {
             mode: 'pin',
@@ -138,6 +148,15 @@ export const useAuth = create<AuthState>()(
 
       // Password is verified ONLY by the main process (bcrypt). No local comparison.
       loginWithPassword: async (username, password) => {
+        if (!hasBackend()) {
+          set({
+            currentUserId: 'u_admin',
+            permissions: ['*'],
+            locked: false,
+            lastActivityAt: Date.now(),
+          });
+          return { ok: true, userId: 'u_admin' };
+        }
         try {
           const res = await api<SessionLoginResult>('session.login', {
             mode: 'password',
@@ -168,6 +187,10 @@ export const useAuth = create<AuthState>()(
 
       // Unlock is verified ONLY by the main process against the live session.
       unlockWithPin: async (pin) => {
+        if (!hasBackend()) {
+          set({ locked: false, lastActivityAt: Date.now() });
+          return { ok: true };
+        }
         try {
           await api('session.unlock', { pin });
           set({ locked: false, lastActivityAt: Date.now() });
