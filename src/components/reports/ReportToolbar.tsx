@@ -4,7 +4,14 @@ import { Link } from 'react-router-dom';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { useBranches } from '@/stores/branches';
-import { toLocalDateInput, todayLocalDateInput } from '@/lib/datetime';
+import {
+  endOfLocalDay,
+  parseRangeBound,
+  startOfBusinessWeek,
+  startOfLocalDay,
+  toLocalDateInput,
+  todayLocalDateInput,
+} from '@/lib/datetime';
 import { cn } from '@/lib/utils';
 
 /**
@@ -40,31 +47,32 @@ const PRESET_LABELS: Record<DatePreset, string> = {
   custom: 'Custom',
 };
 
+/**
+ * Resolve a preset into concrete local bounds.
+ *
+ * Every case here mirrors `resolveRange()` in `backend/core/dates.ts`, which is
+ * what the report queries themselves are computed against — the shared helpers in
+ * `lib/datetime.ts` are how the two stay in step instead of drifting. The `custom`
+ * branch in particular used to parse a bare `YYYY-MM-DD` with `new Date()`, i.e.
+ * as UTC, which silently dropped the last day of the range; `parseRangeBound`
+ * anchors it to the day the owner actually picked.
+ */
 export function resolveRange(r: DateRange): { from: Date; to: Date } {
   const now = new Date();
-  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
-  const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
   switch (r.preset) {
     case 'today':
-      return { from: startOfDay(now), to: endOfDay(now) };
+      return { from: startOfLocalDay(now), to: endOfLocalDay(now) };
     case 'yesterday': {
       const y = new Date(now);
       y.setDate(y.getDate() - 1);
-      return { from: startOfDay(y), to: endOfDay(y) };
+      return { from: startOfLocalDay(y), to: endOfLocalDay(y) };
     }
-    case 'thisWeek': {
-      // BD week starts Saturday (day 6). Monday-start is also fine; using Sat for local norm.
-      const d = new Date(now);
-      const day = d.getDay(); // 0=Sun..6=Sat
-      const diff = (day + 1) % 7; // days since Saturday
-      const from = new Date(d);
-      from.setDate(d.getDate() - diff);
-      return { from: startOfDay(from), to: endOfDay(now) };
-    }
+    case 'thisWeek':
+      return { from: startOfBusinessWeek(now), to: endOfLocalDay(now) };
     case 'thisMonth':
       return {
         from: new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0),
-        to: endOfDay(now),
+        to: endOfLocalDay(now),
       };
     case 'lastMonth': {
       const from = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
@@ -74,13 +82,17 @@ export function resolveRange(r: DateRange): { from: Date; to: Date } {
     case 'thisYear':
       return {
         from: new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0),
-        to: endOfDay(now),
+        to: endOfLocalDay(now),
       };
-    case 'custom':
-      return {
-        from: r.from ? new Date(r.from) : startOfDay(now),
-        to: r.to ? new Date(r.to) : endOfDay(now),
-      };
+    case 'custom': {
+      let from = r.from ? parseRangeBound(r.from, 'from') : startOfLocalDay(now);
+      let to = r.to ? parseRangeBound(r.to, 'to') : endOfLocalDay(now);
+      // Dates entered the wrong way round: swap rather than return an empty
+      // range, which on screen reads as "the shop sold nothing". Same rule as
+      // the backend.
+      if (from > to) [from, to] = [to, from];
+      return { from, to };
+    }
   }
 }
 

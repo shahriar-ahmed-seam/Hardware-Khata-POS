@@ -221,10 +221,24 @@ CREATE TABLE IF NOT EXISTS product_cost_history (
   cost       REAL NOT NULL,
   at         TEXT NOT NULL,
   user_id    TEXT,
-  -- 'manual'  — typed in Update Price & Stock
-  -- 'initial' — the product's opening cost, captured when it was created
+  -- 'manual'   — typed in Update Price & Stock
+  -- 'initial'  — the product's opening cost, captured when it was created
+  -- 'purchase' — the unit cost on a RECEIVED purchase line
   source     TEXT NOT NULL DEFAULT 'manual',
-  note       TEXT
+  note       TEXT,
+  -- What recorded this price, when it came from a document. Lets a cancelled
+  -- purchase find the prices it put on record (see retracted_at below).
+  ref_type   TEXT,
+  ref_id     TEXT,
+  -- RETRACTED, NOT DELETED. When a purchase is cancelled the goods never arrived
+  -- and the money never moved, so the shop never actually paid that price and it
+  -- must stop counting towards the average. The row stays -- history is
+  -- append-only and deleting it would hide that the price was ever entered --
+  -- but cost / avg_cost are recomputed ignoring retracted rows.
+  -- (No backticks anywhere in this file: SCHEMA_SQL is a String.raw template and
+  -- a backtick in an SQL comment terminates it.)
+  retracted_at TEXT,
+  retract_reason TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_cost_history_product

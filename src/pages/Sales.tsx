@@ -27,6 +27,7 @@ import { useCustomers } from '@/stores/contacts';
 import { useUsers } from '@/stores/users';
 import { useBackup } from '@/stores/backup';
 import { formatBDT, cn } from '@/lib/utils';
+import { endOfLocalDay, startOfBusinessWeek, startOfLocalDay } from '@/lib/datetime';
 import { SkeletonTable } from '@/components/ui/Skeleton';
 import { SaleDetail } from '@/components/sales/SaleDetail';
 import { CreateReturnModal } from '@/components/sales/CreateReturnModal';
@@ -59,15 +60,13 @@ const WITH_VOID_STATUSES: SaleStatus[] = ['final', 'void'];
 function presetToRange(preset: DateFilter): { from?: string; to?: string } {
   if (preset === 'all' || preset === 'custom') return { from: undefined, to: undefined };
   const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-  if (preset === 'week') {
-    // Week starts Monday, matching resolveRange() in the Reports toolbar.
-    const dow = (start.getDay() + 6) % 7;
-    start.setDate(start.getDate() - dow);
-  }
+  // A WEEK STARTS ON SATURDAY, because that is what the backend's resolveRange()
+  // means by "this week" and it is the Bangladeshi working week. This used to
+  // compute a Monday start here, so on a Saturday the Reports page showed the
+  // week's takings while this list showed nothing — two answers to one question.
+  const start = preset === 'week' ? startOfBusinessWeek(now) : startOfLocalDay(now);
   if (preset === 'month') start.setDate(1);
-  return { from: start.toISOString(), to: end.toISOString() };
+  return { from: start.toISOString(), to: endOfLocalDay(now).toISOString() };
 }
 
 export default function Sales() {

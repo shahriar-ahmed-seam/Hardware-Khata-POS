@@ -147,6 +147,10 @@ export const CHANNEL_PERMISSIONS: Record<string, string> = {
   // reveals what hardware is plugged into the counter PC.
   'backup.usbDrives': 'settings.backup',
   'backup.toUsb': 'settings.backup',
+  // Same act, same permission: a verified copy of the whole shop database written
+  // to a folder the owner points at. It exists because removable-drive detection
+  // can be blocked by policy on the shop's PC.
+  'backup.toFolder': 'settings.backup',
 
   // ----- performance flags (old hardware) -----
   // These change how the app renders for EVERYONE on that PC and one of them

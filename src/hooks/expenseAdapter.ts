@@ -4,23 +4,21 @@ import type {
   ExpenseRecord,
   RecurringFrequency,
 } from '@/stores/expenses';
+import { branchNameOf } from '@/lib/branch';
 
 /**
  * Maps backend expenses / expense_categories rows (snake_case) into the
  * frontend ExpenseRecord / ExpenseCategory shapes the Expenses pages consume.
  * Mirrors cashAdapter.ts / purchaseAdapter.ts.
  *
- * Single-branch assumption for now (br_mp <-> 'Mirpur Branch'); a row's
- * branch_id is surfaced as its display name via BRANCH_NAME.
+ * A row's `branch_id` is surfaced as its display name through
+ * `branchNameOf` (src/lib/branch.ts). This used to be a hard-coded
+ * `BRANCH_NAME = { br_mp: 'Mirpur Branch' }`, so an expense read back through
+ * here showed the demo fixture's branch name whatever the shop's branch is
+ * actually called — and the matching `resolveBranchId` collapsed any
+ * unrecognised name to `br_mp`, which on a multi-branch shop filed the expense
+ * against the wrong branch.
  */
-
-/** Single-branch assumption for now: id <-> display name. */
-export const BRANCH_NAME: Record<string, string> = { br_mp: 'Mirpur Branch' };
-
-/** Resolve a branch id from a display name (defaults to the primary branch). */
-export function resolveBranchId(name: string): string {
-  return name.startsWith('br_') ? name : 'br_mp';
-}
 
 /** An expenses row as returned by `expenses.list` (with joined category_name). */
 export interface BackendExpense {
@@ -63,7 +61,7 @@ export function toExpense(row: BackendExpense): ExpenseRecord {
     paymentMethod: row.payment_method as ExpensePaymentMethod,
     reference: row.reference ?? undefined,
     note: row.note ?? undefined,
-    branch: row.branch_id ? (BRANCH_NAME[row.branch_id] ?? row.branch_id) : '',
+    branch: branchNameOf(row.branch_id),
     user: row.user_id ?? '',
     attachmentName: row.attachment_name ?? undefined,
     recurring: row.recurring === 1,

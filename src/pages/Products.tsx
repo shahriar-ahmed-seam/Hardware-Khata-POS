@@ -17,6 +17,8 @@ import {
   MoreHorizontal,
   ChevronDown,
   Tags,
+  Archive,
+  ArchiveRestore,
 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
@@ -43,6 +45,7 @@ import {
   useUpdateProduct,
   useDeleteProduct,
   useArchiveProduct,
+  useUnarchiveProduct,
   useProductUsage,
   type ProductUsage,
 } from '@/hooks/useProducts';
@@ -62,6 +65,7 @@ export default function Products() {
   const updateProduct = useUpdateProduct();
   const deleteProduct = useDeleteProduct();
   const archiveProduct = useArchiveProduct();
+  const unarchiveProduct = useUnarchiveProduct();
   const productUsage = useProductUsage();
   // Removing a product from the catalogue for good is owner-only; archiving is a
   // reversible catalogue edit. The IPC boundary enforces both — see useCan.ts.
@@ -86,6 +90,16 @@ export default function Products() {
   const [stockFilter, setStockFilter] = useState<'all' | 'in' | 'low' | 'out'>('all');
   const [priceMin, setPriceMin] = useState<number | ''>('');
   const [priceMax, setPriceMax] = useState<number | ''>('');
+  /**
+   * ARCHIVED VIEW.
+   *
+   * Archiving was reachable (it is what the Delete flow falls back to for a
+   * product that has been traded) but archived products were then invisible and
+   * had no route back, so a retired product was only recoverable by someone who
+   * knew `products.unarchive` existed. This switches the same table over to the
+   * retired rows, where the only offered action is Restore.
+   */
+  const [showArchived, setShowArchived] = useState(false);
 
   // Paging
   const [page, setPage] = useState(1);
@@ -107,6 +121,7 @@ export default function Products() {
     categoryId: cat,
     brandId: brand,
     stockState: stockFilter === 'all' ? undefined : stockFilter,
+    archivedOnly: showArchived,
   });
 
   const list: Product[] = productsQuery.data?.rows ?? [];
@@ -121,7 +136,7 @@ export default function Products() {
       return;
     }
     setPage(1);
-  }, [debouncedQ, cat, brand, stockFilter, pageSize]);
+  }, [debouncedQ, cat, brand, stockFilter, pageSize, showArchived]);
 
   // UI state
   const [columnsOpen, setColumnsOpen] = useState(false);
@@ -131,6 +146,13 @@ export default function Products() {
   // the full form is 25 fields across seven sections, which is the wrong tool
   // for "cement went up ten taka". See QuickUpdateModal.
   const [quickUpdateId, setQuickUpdateId] = useState<string | null>(null);
+
+  // Switching between the catalogue and the archive drops the selection: the two
+  // lists are disjoint, so carrying ids across would aim a bulk action at rows
+  // that are no longer on screen.
+  useEffect(() => {
+    setSelected(new Set());
+  }, [showArchived]);
 
   /**
    * Server already narrowed by text / category / brand / stock state. The price
@@ -290,6 +312,50 @@ export default function Products() {
     setSelected(new Set());
   };
 
+  /**
+   * Bring retired products back into the catalogue.
+   *
+   * Deliberately confirmed even though it is the harmless direction: restoring
+   * puts the product back in the POS grid, where the next person at the counter
+   * can sell it. `products.unarchive` is gated behind `products.edit`, the same
+   * permission as archiving, so the check here only mirrors what the IPC boundary
+   * will do anyway.
+   */
+  const restoreProducts = async (ids: string[]) => {
+    if (ids.length === 0) return;
+    if (!canArchive) {
+      toast.error('Only a manager or admin can restore a product');
+      return;
+    }
+    const nameOf = (id: string) => list.find((p) => p.id === id)?.name ?? id;
+    const ok = await confirm({
+      title:
+        ids.length === 1
+          ? `Restore "${nameOf(ids[0])}" to the catalogue?`
+          : `Restore ${ids.length} products to the catalogue?`,
+      message:
+        ids.length === 1
+          ? 'It goes back into the product list, the POS and search. Its past invoices are unchanged.'
+          : 'They go back into the product list, the POS and search. Their past invoices are unchanged.',
+      confirmLabel: 'Restore',
+    });
+    if (!ok) return;
+
+    let restored = 0;
+    for (const id of ids) {
+      try {
+        await unarchiveProduct.mutateAsync({ id });
+        restored++;
+      } catch (e) {
+        toast.error(`Could not restore "${nameOf(id)}"`, {
+          description: e instanceof Error ? e.message : undefined,
+        });
+      }
+    }
+    if (restored > 0) toast.success(`${restored} restored`);
+    setSelected(new Set());
+  };
+
   const duplicate = async (id: string) => {
     const src = list.find((p) => p.id === id);
     if (!src) return;
@@ -326,7 +392,11 @@ export default function Products() {
     <div>
       <PageHeader
         title="Products"
-        subtitle={`${formatNumber(totals.products)} products`}
+        subtitle={
+          showArchived
+            ? `${formatNumber(totals.products)} archived products`
+            : `${formatNumber(totals.products)} products`
+        }
         actions={
           <>
             <IconBtn title="Customize columns" onClick={() => setColumnsOpen(true)}>
@@ -356,12 +426,26 @@ export default function Products() {
       <div className="p-6 space-y-4">
         {/* Product count is the real filtered total; the value sums are
             PAGE-SCOPED, since only this page is in memory. */}
+        {showArchived && (
+          <div className="rounded-lg border border-border bg-secondary/40 px-3 py-2.5 text-xs text-muted-foreground flex items-start gap-2">
+            <Archive className="size-4 mt-0.5 shrink-0" />
+            <span>
+              These products are retired: they are out of the product list, out of the POS and out
+              of search. Every past invoice, purchase and report that names them is unchanged.
+              Restore one to bring it back.
+            </span>
+          </div>
+        )}
+
         <div>
           <div className="text-[11px] text-muted-foreground mb-1.5">
             Totals for this page only. Use Reports for full-range figures.
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Stat label="Total Products" value={formatNumber(totals.products)} />
+            <Stat
+              label={showArchived ? 'Archived Products' : 'Total Products'}
+              value={formatNumber(totals.products)}
+            />
             <Stat label="Stock Value (Cost, this page)" value={formatBDT(totals.stockValue)} />
             <Stat
               label="Retail Value (this page)"
@@ -414,6 +498,34 @@ export default function Products() {
                 {s === 'all' ? 'All' : s === 'in' ? 'In' : s === 'low' ? 'Low' : 'Out'}
               </button>
             ))}
+          </div>
+          {/* Catalogue vs archive. A plain toggle rather than a fourth dropdown:
+              it changes WHICH SET of products the whole screen is about, not one
+              more attribute to narrow by. */}
+          <div className="flex items-center gap-0.5 p-0.5 bg-secondary rounded-md text-xs">
+            <button
+              onClick={() => setShowArchived(false)}
+              className={cn(
+                'px-3 py-1 rounded font-medium transition inline-flex items-center gap-1.5',
+                !showArchived
+                  ? 'bg-card text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              Active
+            </button>
+            <button
+              onClick={() => setShowArchived(true)}
+              title="Products retired from the catalogue"
+              className={cn(
+                'px-3 py-1 rounded font-medium transition inline-flex items-center gap-1.5',
+                showArchived
+                  ? 'bg-card text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              <Archive className="size-3.5" /> Archived
+            </button>
           </div>
           <Popover
             width="w-72"
@@ -483,19 +595,34 @@ export default function Products() {
             <Button variant="outline" size="sm">
               Bulk Update
             </Button>
-            <Button
-              variant="destructive"
-              size="sm"
-              disabled={!canDelete && !canArchive}
-              title={
-                canDelete || canArchive
-                  ? undefined
-                  : 'Only an admin can remove products from the catalogue'
-              }
-              onClick={() => removeProducts(Array.from(selected))}
-            >
-              <Trash2 className="size-3.5" /> Delete
-            </Button>
+            {/* In the archive the only sensible bulk action is putting them back.
+                Delete is not offered here: an archived product is archived
+                precisely because a document references it, so a delete would be
+                refused — offering it would be a button that always fails. */}
+            {showArchived ? (
+              <Button
+                size="sm"
+                disabled={!canArchive}
+                title={canArchive ? undefined : 'Only a manager or admin can restore a product'}
+                onClick={() => restoreProducts(Array.from(selected))}
+              >
+                <ArchiveRestore className="size-3.5" /> Restore
+              </Button>
+            ) : (
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={!canDelete && !canArchive}
+                title={
+                  canDelete || canArchive
+                    ? undefined
+                    : 'Only an admin can remove products from the catalogue'
+                }
+                onClick={() => removeProducts(Array.from(selected))}
+              >
+                <Trash2 className="size-3.5" /> Delete
+              </Button>
+            )}
             <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
               Clear
             </Button>
@@ -545,14 +672,24 @@ export default function Products() {
                       ))}
                       <td className="px-2 py-2.5">
                         <RowActions
-                          onQuickUpdate={canEdit ? () => setQuickUpdateId(p.id) : undefined}
+                          // In the archive, Restore replaces "Update price &
+                          // stock" as the primary action: re-pricing something
+                          // that is out of the catalogue is not the job here.
+                          onRestore={
+                            showArchived && canArchive ? () => restoreProducts([p.id]) : undefined
+                          }
+                          onQuickUpdate={
+                            canEdit && !showArchived ? () => setQuickUpdateId(p.id) : undefined
+                          }
                           onEdit={canEdit ? () => setQuickEditId(p.id) : undefined}
                           onView={() => nav(`/products/${p.id}`)}
                           onDuplicate={canCreate ? () => duplicate(p.id) : undefined}
                           // Hidden rather than disabled for a cashier: a row of
                           // greyed-out buttons they can never use is just noise.
                           onDelete={
-                            canDelete || canArchive ? () => removeProducts([p.id]) : undefined
+                            !showArchived && (canDelete || canArchive)
+                              ? () => removeProducts([p.id])
+                              : undefined
                           }
                         />
                       </td>
@@ -561,7 +698,9 @@ export default function Products() {
                   {filtered.length === 0 && (
                     <tr>
                       <td colSpan={columns.length + 2} className="px-4 py-12 text-center text-muted-foreground">
-                        No products match these filters.
+                        {showArchived
+                          ? 'No archived products. Nothing has been retired from the catalogue.'
+                          : 'No products match these filters.'}
                       </td>
                     </tr>
                   )}
@@ -589,16 +728,24 @@ export default function Products() {
                   key={p.id}
                   // Tapping a card opens the small price/stock popup, not the
                   // 25-field form — that is what a tap on a product means here.
-                  onClick={() => setQuickUpdateId(p.id)}
-                  title="Update price & stock"
+                  // In the archive it restores instead: re-pricing a retired
+                  // product is not a thing anyone came here to do.
+                  onClick={() =>
+                    showArchived ? void restoreProducts([p.id]) : setQuickUpdateId(p.id)
+                  }
+                  title={showArchived ? 'Restore to the catalogue' : 'Update price & stock'}
                   className="group text-left rounded-xl border border-border bg-card hover:border-primary hover:shadow-md transition overflow-hidden"
                 >
                   <div className="aspect-[4/3] bg-gradient-to-br from-secondary to-muted grid place-items-center relative">
                     <ProductImage url={p.image} categoryId={p.categoryId} size={64} rounded="lg" />
                     <div className="absolute top-2 right-2">
-                      <Badge variant={oos ? 'destructive' : low ? 'warning' : 'success'}>
-                        {p.stock} {p.unit}
-                      </Badge>
+                      {showArchived ? (
+                        <Badge>Archived</Badge>
+                      ) : (
+                        <Badge variant={oos ? 'destructive' : low ? 'warning' : 'success'}>
+                          {p.stock} {p.unit}
+                        </Badge>
+                      )}
                     </div>
                   </div>
                   <div className="p-2.5">
@@ -625,7 +772,9 @@ export default function Products() {
             })}
             {filtered.length === 0 && (
               <Card className="p-12 text-center text-muted-foreground col-span-2 md:col-span-3 lg:col-span-4 xl:col-span-5">
-                No products match these filters.
+                {showArchived
+                  ? 'No archived products. Nothing has been retired from the catalogue.'
+                  : 'No products match these filters.'}
               </Card>
             )}
           </div>
@@ -821,6 +970,16 @@ function Cell({
     case 'status': {
       const oos = p.stock === 0;
       const low = p.stock > 0 && p.stock <= p.reorderLevel;
+      // Read off the row itself rather than the view flag: a retired product is
+      // retired wherever it is rendered, and In/Low/Out would be misleading for
+      // something that is no longer on sale at all.
+      if (p.archivedAt) {
+        return (
+          <td className="px-2 py-2.5">
+            <Badge>Archived</Badge>
+          </td>
+        );
+      }
       return (
         <td className="px-2 py-2.5">
           {oos ? (
@@ -846,6 +1005,7 @@ function Cell({
  */
 function RowActions({
   onQuickUpdate,
+  onRestore,
   onEdit,
   onView,
   onDuplicate,
@@ -855,6 +1015,8 @@ function RowActions({
   // perform it: a row of permanently greyed-out buttons teaches a cashier to
   // ignore the whole column.
   onQuickUpdate?: () => void;
+  /** Only in the Archived view — puts the product back in the catalogue. */
+  onRestore?: () => void;
   onEdit?: () => void;
   onView: () => void;
   onDuplicate?: () => void;
@@ -862,6 +1024,16 @@ function RowActions({
 }) {
   return (
     <div className="flex items-center justify-end gap-1">
+      {onRestore && (
+        <button
+          onClick={onRestore}
+          className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-border bg-card text-xs font-medium hover:bg-secondary hover:border-primary/50 transition"
+          title="Restore to the catalogue"
+        >
+          <ArchiveRestore className="size-3.5" />
+          <span className="hidden xl:inline">Restore</span>
+        </button>
+      )}
       {onQuickUpdate && (
         <button
           onClick={onQuickUpdate}

@@ -139,6 +139,24 @@ export interface UsbDrive {
 }
 
 /**
+ * The result of looking for removable drives.
+ *
+ * `detection` is the part that matters. "We looked and there is no pendrive" and
+ * "we could not look" are completely different facts, and the old code collapsed
+ * them into one empty array — so a PC where PowerShell is blocked by group policy
+ * would report "No pendrive found" with a stick plugged in. That is a lie, and it
+ * is the worst possible one here: the owner walks away believing there is no way
+ * to get the shop's data off the machine.
+ */
+export interface UsbProbe {
+  drives: UsbDrive[];
+  /** 'ok' = the query ran. 'unavailable' = we could not ask Windows at all. */
+  detection: 'ok' | 'unavailable';
+  /** Why detection was unavailable, in words the owner can act on. */
+  detail?: string;
+}
+
+/**
  * List plugged-in removable drives (pendrives, SD cards, portable HDDs).
  *
  * WHY POWERSHELL
@@ -147,35 +165,65 @@ export interface UsbDrive {
  * parse it. `wmic` would be shorter but Microsoft has been removing it from
  * Windows since 2023, so it cannot be relied on.
  *
- * If the query fails for any reason (PowerShell disabled by policy, unexpected
- * output) we return an empty list rather than guessing. Offering the owner a
- * fixed disk as a "pendrive" would be worse than saying we could not find one:
- * they would think the shop's data is on a stick they can take home, and it
- * would not be.
+ * We never guess. A fixed disk offered as a "pendrive" would be worse than
+ * admitting we could not find one: the owner would think the shop's data is on a
+ * stick they can take home, and it would not be. When the query cannot run,
+ * `detection` says `unavailable` and the UI offers to let them pick the drive
+ * themselves instead (see `backupToChosenFolder`).
  */
-export async function listUsbDrives(): Promise<UsbDrive[]> {
-  if (process.platform !== 'win32') return [];
+export async function probeUsbDrives(): Promise<UsbProbe> {
+  if (process.platform !== 'win32') {
+    return {
+      drives: [],
+      detection: 'unavailable',
+      detail:
+        'Detecting removable drives is only supported on Windows. Choose the drive folder yourself instead.',
+    };
+  }
 
   const script =
     'Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DriveType=2" | ' +
     'Select-Object DeviceID,VolumeName,FreeSpace,Size | ConvertTo-Json -Compress';
 
-  const stdout = await new Promise<string>((resolve) => {
-    execFile(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
-      { timeout: 8000, windowsHide: true },
-      (err, out) => resolve(err ? '' : out),
-    );
-  });
+  const { stdout, failed } = await new Promise<{ stdout: string; failed: string | null }>(
+    (resolve) => {
+      execFile(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+        { timeout: 8000, windowsHide: true },
+        (err, out) =>
+          resolve({
+            stdout: out ?? '',
+            // An exec error means PowerShell did not run (missing, blocked by
+            // policy, timed out). That is NOT "no drives".
+            failed: err ? (err instanceof Error ? err.message : String(err)) : null,
+          }),
+      );
+    },
+  );
 
-  if (!stdout.trim()) return [];
+  if (failed) {
+    return {
+      drives: [],
+      detection: 'unavailable',
+      detail:
+        'Windows would not let the app check which drives are removable (PowerShell may be blocked on this computer). Choose the drive folder yourself instead.',
+    };
+  }
+
+  // A successful run with no output is the honest empty case: no removable drive.
+  if (!stdout.trim()) return { drives: [], detection: 'ok' };
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(stdout);
   } catch {
-    return [];
+    return {
+      drives: [],
+      detection: 'unavailable',
+      detail:
+        'The drive list came back in a form the app could not read. Choose the drive folder yourself instead.',
+    };
   }
   // ConvertTo-Json emits a bare object for a single result and an array for many.
   const raw = (Array.isArray(parsed) ? parsed : [parsed]) as {
@@ -213,7 +261,16 @@ export async function listUsbDrives(): Promise<UsbDrive[]> {
       display: label ? `${id} (${label})` : id,
     });
   }
-  return drives;
+  return { drives, detection: 'ok' };
+}
+
+/**
+ * Just the drives, for callers that only need the list.
+ * Kept so the shape of the internal call sites stays simple; anything that has to
+ * tell the owner WHY the list is empty must use {@link probeUsbDrives}.
+ */
+export async function listUsbDrives(): Promise<UsbDrive[]> {
+  return (await probeUsbDrives()).drives;
 }
 
 /**
@@ -232,6 +289,8 @@ export async function listUsbDrives(): Promise<UsbDrive[]> {
 export async function backupToUsb(drive?: string): Promise<{
   ok: boolean;
   error?: string;
+  /** 'unavailable' when we could not ask Windows which drives are removable. */
+  detection?: 'ok' | 'unavailable';
   /** Set when several drives are plugged in and none was specified. */
   drives?: UsbDrive[];
   name?: string;
@@ -240,12 +299,19 @@ export async function backupToUsb(drive?: string): Promise<{
   bytes?: number;
   driveLabel?: string;
 }> {
-  const drives = await listUsbDrives();
+  const probe = await probeUsbDrives();
+  const drives = probe.drives;
   if (drives.length === 0) {
+    // Say which of the two it is. "No pendrive found" when we were never able to
+    // look is a lie that leaves the owner with no way off the machine.
     return {
       ok: false,
+      detection: probe.detection,
       error:
-        'No pendrive found. Plug one into a USB port, wait for Windows to recognise it, then try again.',
+        probe.detection === 'unavailable'
+          ? (probe.detail ??
+            'The app could not check which drives are removable on this computer.')
+          : 'No pendrive found. Plug one into a USB port, wait for Windows to recognise it, then try again.',
     };
   }
 
@@ -288,6 +354,80 @@ export async function backupToUsb(drive?: string): Promise<{
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     return { ok: false, error: message };
+  }
+}
+
+/**
+ * THE ESCAPE HATCH: write one snapshot into a folder the owner picks.
+ *
+ * Removable-drive detection needs Windows to answer a WMI query through
+ * PowerShell, and on a locked-down PC that can simply be refused — leaving the
+ * Backup to Pendrive button unable to do anything. The owner can always see their
+ * stick in Explorer, so they can always point at it: this opens the native folder
+ * picker and writes a verified snapshot wherever they choose.
+ *
+ * Deliberately identical in effect to the pendrive path and NOT to `runBackup`:
+ * it uses `snapshotTo`, so it does NOT repoint the configured backup folder, does
+ * NOT touch `lastBackupAt`, and does NOT prune anything already in that folder.
+ * Pointing the shop's backup schedule at a stick that is about to be unplugged —
+ * and letting retention delete files off it — is exactly the accident this avoids.
+ */
+export async function backupToChosenFolder(preset?: string): Promise<{
+  ok: boolean;
+  error?: string;
+  cancelled?: boolean;
+  name?: string;
+  path?: string;
+  at?: string;
+  bytes?: number;
+  driveLabel?: string;
+}> {
+  const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null;
+  const options: Electron.OpenDialogOptions = {
+    title: 'Choose where to save this copy',
+    defaultPath: preset || undefined,
+    properties: ['openDirectory', 'createDirectory'],
+    buttonLabel: 'Save copy here',
+  };
+  const result = win
+    ? await dialog.showOpenDialog(win, options)
+    : await dialog.showOpenDialog(options);
+  if (result.canceled || result.filePaths.length === 0) {
+    return { ok: false, cancelled: true };
+  }
+  const chosen = result.filePaths[0];
+
+  // Fail before writing rather than half-way through, same as the pendrive path.
+  const dbBytes = (() => {
+    try {
+      return fs.statSync(dbFilePath()).size;
+    } catch {
+      return 0;
+    }
+  })();
+
+  // The snapshot lands in the same <folder>\HardwareKhataPOS\Backups layout as
+  // every other destination, so the files are recognisable wherever they end up.
+  const folder = path.join(chosen, APP_FOLDER, BACKUP_SUBFOLDER);
+  try {
+    const out = snapshotTo(getDb(), folder);
+    if (out.ok) {
+      setBackupConfig(getDb(), {
+        lastUsbBackupAt: out.at,
+        lastUsbBackupPath: out.path,
+        lastUsbLabel: chosen,
+      });
+    }
+    return { ...out, driveLabel: chosen };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return {
+      ok: false,
+      error:
+        dbBytes > 0 && /ENOSPC/i.test(message)
+          ? `Not enough space in ${chosen}. About ${Math.ceil(dbBytes / (1024 * 1024))} MB is needed.`
+          : message,
+    };
   }
 }
 

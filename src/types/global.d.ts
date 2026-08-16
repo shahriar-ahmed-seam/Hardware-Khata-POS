@@ -1,6 +1,28 @@
 export {};
 
+/**
+ * The two Vite build flags this app uses.
+ *
+ * Declared by hand rather than by adding `vite/client` to tsconfig `types`:
+ * setting `types` at all would stop @types/node being picked up automatically,
+ * and `tsconfig.json` also covers `electron/`, which relies on Node's ambient
+ * globals.
+ *
+ * `DEV` matters because Vite REPLACES it at build time with a literal, so
+ * `if (import.meta.env.DEV) { … }` is removed from the production bundle
+ * entirely — see src/lib/browserMock.ts, which uses that to guarantee the
+ * browser-preview sample data cannot exist in a shipped build.
+ */
 declare global {
+  interface ImportMetaEnv {
+    readonly DEV: boolean;
+    readonly PROD: boolean;
+  }
+
+  interface ImportMeta {
+    readonly env: ImportMetaEnv;
+  }
+
   interface Window {
     api?: {
       window: {

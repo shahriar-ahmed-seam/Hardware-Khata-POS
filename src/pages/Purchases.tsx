@@ -29,6 +29,7 @@ import {
   type PurchaseColumn,
 } from '@/stores/purchasesUI';
 import { formatBDT, cn } from '@/lib/utils';
+import { endOfLocalDay, startOfBusinessWeek, startOfLocalDay } from '@/lib/datetime';
 import { hasBackend } from '@/lib/api';
 import { SkeletonTable } from '@/components/ui/Skeleton';
 import { PurchaseDetail } from '@/components/purchases/PurchaseDetail';
@@ -49,15 +50,12 @@ const LIVE_STATUSES: PurchaseStatus[] = ['received', 'ordered', 'in-transit'];
 function presetToRange(preset: DateFilter): { from?: string; to?: string } {
   if (preset === 'all') return { from: undefined, to: undefined };
   const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-  if (preset === 'week') {
-    // Week starts Monday, matching resolveRange() in the Reports toolbar.
-    const dow = (start.getDay() + 6) % 7;
-    start.setDate(start.getDate() - dow);
-  }
+  // Saturday week start — see the same note in pages/Sales.tsx and
+  // `startOfBusinessWeek` in lib/datetime.ts. This was a Monday start, so it
+  // disagreed with every report on what "this week" covers.
+  const start = preset === 'week' ? startOfBusinessWeek(now) : startOfLocalDay(now);
   if (preset === 'month') start.setDate(1);
-  return { from: start.toISOString(), to: end.toISOString() };
+  return { from: start.toISOString(), to: endOfLocalDay(now).toISOString() };
 }
 
 export default function Purchases() {

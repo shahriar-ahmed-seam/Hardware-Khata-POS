@@ -391,34 +391,51 @@ function CostHistoryPopup({ product, onClose }: { product: Product; onClose: () 
             </div>
           ) : (
             <div className="divide-y divide-border rounded-lg border border-border">
-              {entries.map((e, i) => (
-                <div key={e.id} className="flex items-baseline gap-3 px-3 py-2.5">
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium tabular">{shortDate(e.at)}</div>
-                    <div className="text-2xs text-muted-foreground truncate">
-                      {/* Static phrases only — the Bangla layer matches whole nodes. */}
-                      {i === 0 ? (
-                        <span>Current price</span>
-                      ) : e.source === 'initial' ? (
-                        <span>Opening price</span>
-                      ) : e.source === 'purchase' ? (
-                        <span>From a purchase</span>
-                      ) : (
-                        <span>Changed</span>
-                      )}
-                      {e.userName && <span className="ml-1">· {e.userName}</span>}
-                    </div>
-                    {e.note && (
-                      <div className="text-2xs text-muted-foreground mt-0.5 break-words">
-                        {e.note}
+              {(() => {
+                // "Current price" is the newest entry that still COUNTS. A
+                // retracted one (its purchase was cancelled) is shown for the
+                // record but is not the price the shop pays, so the label must
+                // not sit on it.
+                const currentId = entries.find((e) => !e.retractedAt)?.id;
+                return entries.map((e) => (
+                  <div key={e.id} className="flex items-baseline gap-3 px-3 py-2.5">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium tabular">{shortDate(e.at)}</div>
+                      <div className="text-2xs text-muted-foreground truncate">
+                        {/* Static phrases only — the Bangla layer matches whole nodes. */}
+                        {e.retractedAt ? (
+                          <span>Cancelled — not counted</span>
+                        ) : e.id === currentId ? (
+                          <span>Current price</span>
+                        ) : e.source === 'initial' ? (
+                          <span>Opening price</span>
+                        ) : e.source === 'purchase' ? (
+                          <span>From a purchase</span>
+                        ) : (
+                          <span>Changed</span>
+                        )}
+                        {e.userName && <span className="ml-1">· {e.userName}</span>}
                       </div>
-                    )}
+                      {(e.retractReason ?? e.note) && (
+                        <div className="text-2xs text-muted-foreground mt-0.5 break-words">
+                          {e.retractReason ?? e.note}
+                        </div>
+                      )}
+                    </div>
+                    {/* Struck through rather than hidden: the owner looking at a
+                        surprising average most needs to see that this price WAS
+                        entered once, and that it no longer counts. */}
+                    <div
+                      className={cn(
+                        'shrink-0 text-base font-semibold tabular',
+                        e.retractedAt && 'line-through text-muted-foreground font-normal',
+                      )}
+                    >
+                      {formatBDT(e.cost)}
+                    </div>
                   </div>
-                  <div className="shrink-0 text-base font-semibold tabular">
-                    {formatBDT(e.cost)}
-                  </div>
-                </div>
-              ))}
+                ));
+              })()}
             </div>
           )}
         </div>

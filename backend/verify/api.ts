@@ -194,6 +194,41 @@ function main() {
     const ppaySum = round2(ppay.byMethod.reduce((a, m) => a + m.amount, 0));
     s.money('reports.purchasePayments total = sum(byMethod)', ppay.total, ppaySum);
 
+    // ----- the payment DETAIL rows behind those two reports -----
+    // These channels exist because the report screens built their detail tables by
+    // walking the sales/purchases store, which holds ONE PAGE — so a SQL footer
+    // total sat above rows that added up to less. The invariant that matters is
+    // that each set of rows sums to its own report's total.
+    const spRows = call('reports.sellPaymentRows', { range, limit: 20000 }) as {
+      rows: { id: string; sale_id: string; invoice_no: string; paid_at: string; method: string; amount: number }[];
+      total: number;
+      truncated: boolean;
+    };
+    s.ok('reports.sellPaymentRows returns a rows array', Array.isArray(spRows.rows));
+    s.gt('reports.sellPaymentRows returns rows', spRows.rows.length, 0);
+    s.money(
+      'reports.sellPaymentRows sums to reports.sellPayments total',
+      round2(spRows.rows.reduce((a, r) => a + r.amount, 0)),
+      sp.total,
+    );
+    s.ok(
+      'reports.sellPaymentRows carries the invoice each payment belongs to',
+      spRows.rows.every((r) => !!r.invoice_no && !!r.sale_id),
+    );
+    s.ok('reports.sellPaymentRows amounts are rounded', spRows.rows.every((r) => Math.abs(r.amount - round2(r.amount)) <= 0.0001));
+
+    const ppRows = call('reports.purchasePaymentRows', { range, limit: 20000 }) as {
+      rows: { id: string; purchase_id: string; paid_at: string; method: string; amount: number }[];
+      total: number;
+      truncated: boolean;
+    };
+    s.ok('reports.purchasePaymentRows returns a rows array', Array.isArray(ppRows.rows));
+    s.money(
+      'reports.purchasePaymentRows sums to reports.purchasePayments total',
+      round2(ppRows.rows.reduce((a, r) => a + r.amount, 0)),
+      ppay.total,
+    );
+
     // trending ({ range, metric: 'qty' }): rows of { productId, name, sku, current, previous, deltaPct }
     const tr = call('reports.trending', { range, metric: 'qty' }) as {
       productId: string;

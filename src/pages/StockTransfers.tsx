@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
 import { Pagination } from '@/components/ui/Pagination';
 import { useStock, type StockTransfer, type TransferStatus } from '@/stores/stock';
+import { useBranches } from '@/stores/branches';
 import { confirm } from '@/stores/confirm';
 import { Modal } from '@/components/ui/Modal';
 import { NumberField } from '@/components/ui/NumberField';
@@ -43,14 +44,34 @@ export default function StockTransfers() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
 
-  const currentBranch = 'Mirpur Branch';
+  /**
+   * "Inbound" means "coming to the branch I am standing in", so it needs the
+   * shop's real default branch. This was the literal string 'Mirpur Branch' — the
+   * demo fixture's name — so on any real shop the Inbound tab matched nothing and
+   * silently read as "no deliveries on the way".
+   */
+  const branches = useBranches((s) => s.items);
+  const hydrateBranches = useBranches((s) => s.hydrate);
+  useEffect(() => {
+    void hydrateBranches();
+  }, [hydrateBranches]);
+  const currentBranch = useMemo(
+    () => (branches.find((b) => b.isDefault) ?? branches[0])?.name ?? '',
+    [branches],
+  );
 
   const list = useMemo(() => {
     let arr = transfers;
     if (statusFilter === 'inbound') {
-      arr = arr.filter(
-        (t) => t.toBranch === currentBranch && (t.status === 'pending' || t.status === 'in-transit'),
-      );
+      // With no branch list loaded yet there is no honest answer, so show
+      // nothing rather than every pending transfer regardless of destination.
+      arr = currentBranch
+        ? arr.filter(
+            (t) =>
+              t.toBranch === currentBranch &&
+              (t.status === 'pending' || t.status === 'in-transit'),
+          )
+        : [];
     } else if (statusFilter !== 'all') {
       arr = arr.filter((t) => t.status === statusFilter);
     }
@@ -61,7 +82,7 @@ export default function StockTransfers() {
       );
     }
     return arr.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [transfers, statusFilter, q]);
+  }, [transfers, statusFilter, q, currentBranch]);
 
   // Any filter change resets to page 1 — staying on page 5 of a narrower result
   // set would show an empty table.

@@ -13,7 +13,9 @@ This is the top-level map. Read this first, then dive into the focused docs:
 | `03-WHATS-LEFT.md` | Remaining work, prioritized |
 | `04-AGENT-HANDOFF.md` | How a new agent/dev picks this up and continues |
 | `05-CONTEXT-AND-HISTORY.md` | Full narrative: how we got here, every decision, the working agreement |
+| `06-E2E-AND-SMOKE-TEST.md` | The automated E2E, plus the human-only smoke-test checklist |
 | `07-CONTINUE-HERE.md` | ⭐ Resume point: current state, last session's changes, open gaps, gotchas |
+| `08-FRONTEND-MAP.md` | Which file draws what — start here for any visual change |
 
 Also at the repo root:
 - `TASKS.md` — the running task checklist (frontend tasks 1–15 + backend phases)
@@ -64,25 +66,32 @@ STORE WIRING      ████████████████████ 1
 AUTH + PERMISSIONS████████████████████ 100%  (bcrypt + IPC-boundary enforcement)
 FIRST-RUN WIZARD  ████████████████████ 100%  (writes a real shop, run-once)
 POS CHECKOUT      ████████████████████ 100%  (persists via sales.create)
-FINAL E2E TEST    ████████████████████ 100%  (860 checks: seven suites incl. E2E, paging, backup)
+FINAL E2E TEST    ████████████████████ 100%  (1,078 checks: seven suites incl. E2E, paging, backup)
 LIST PERFORMANCE  ████████████████████ 100%  (N+1 removed; ~74× faster; every list tab paginated)
 BACKUP & CLOUD    ████████████████████ 100%  (verified snapshots + retention + restore + CSV export)
-BANGLA UI         ████████████████████ 100%  (2,105-phrase dictionary + DOM layer, EN/বাং toggle)
+BANGLA UI         ████████████████████ 100%  (2,385-phrase dictionary + DOM layer, EN/বাং toggle)
 LEGIBILITY        ████████████████████ 100%  (bigger type + higher contrast for an elderly user)
-MOCK REMOVAL      ████████████████████ 100%  (src/mocks deleted; no fallback, no fake numbers)
+MOCK REMOVAL      ████████████████████ 100%  (src/mocks deleted; no fake numbers — see the note below)
 RESPONSIVE SHELL  ████████████████████ 100%  (sidebar/titlebar/POS adapt; min window 900×600)
-PACKAGING         ░░░░░░░░░░░░░░░░░░░░░   0%  (installer not built yet — NEXT)
+PACKAGING         ████████████████████ 100%  (NSIS x64 per-user installer + in-app updates)
+KNOWN-GAP CLEARUP ████████████████████ 100%  (every numbered gap in 07-CONTINUE-HERE §4)
+MANUAL SMOKE TEST ░░░░░░░░░░░░░░░░░░░░░   0%  (human-only — docs/06 — the LAST item)
 ```
 
-> **No mock data.** `src/mocks/data.ts` is deleted and there is no `hasBackend()` data
-> fallback anywhere. Domain types live in `src/types/domain.ts`. A figure with no backend
-> source renders `'—'` rather than an invented number. See `03-WHATS-LEFT.md`.
+> **No mock data.** `src/mocks/data.ts` is deleted. Domain types live in
+> `src/types/domain.ts`. A figure with no backend source renders `'—'` rather than an
+> invented number. There is exactly ONE bounded exception: `src/lib/browserMock.ts`
+> supplies catalogue reference data (products, customers, categories, brands, units) so
+> the UI can be opened in a plain browser for visual work. It is gated on
+> `import.meta.env.DEV && !hasBackend()`, so it is dropped from a production build
+> entirely, and it must never grow to cover money. See `03-WHATS-LEFT.md`.
 
 - **Frontend**: all modules built and visually complete.
 - **Backend data layer**: full data layer built and proven in isolation, then grown as
-  each slice was wired — **860 automated verification checks pass** (accounting identities,
-  stock invariants, ledgers, cash, reports, auth, settings, determinism, persistence, paged
-  reads, backup snapshots) across **146 registered channels**.
+  each slice was wired — **1,078 automated verification checks pass** (accounting
+  identities, stock invariants, ledgers, cash, reports, auth, settings, determinism,
+  persistence, paged reads, backup snapshots, cost history) across **152 registered
+  channels**.
 - **Store wiring**: every data-bearing Zustand store (products/stock, purchases, sales,
   contacts, cash, expenses, dashboard, reports, settings, branches, users, backup) reads and
   writes the real SQLite backend through `src/lib/api.ts`. There is no second data source.
@@ -117,7 +126,7 @@ npm install
 # DEV (auto-rebuilds better-sqlite3 for Electron, then launches Vite + Electron)
 npm run dev
 
-# BACKEND VERIFICATION (auto-rebuilds for Node, runs 860 checks across seven suites)
+# BACKEND VERIFICATION (auto-rebuilds for Node, runs 1,078 checks across seven suites)
 npm run backend:verify:all
 
 # ONE SUITE AT A TIME (same rebuild, faster loop)
@@ -156,4 +165,7 @@ the clean install delete `userData/pos.db` (plus `-wal`/`-shm`) and relaunch.
 
 ## Workspace path
 
-`c:\Users\Seam\Desktop\APPS\POS\`
+Wherever you cloned it. It was developed at `c:\Users\Seam\Desktop\APPS\POS\` and the repo is
+`github.com/shahriar-ahmed-seam/Hardware-Khata-POS`; nothing in the code depends on the
+location. The shop's DATABASE is always `%APPDATA%\pos\pos.db`, outside the install folder, so
+installing, upgrading and uninstalling never touch it.

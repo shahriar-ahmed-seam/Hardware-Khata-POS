@@ -33,6 +33,7 @@ import { cn } from '@/lib/utils';
  */
 export function PendriveBackup({ variant = 'inline' }: { variant?: 'inline' | 'tile' }) {
   const backupToUsb = useBackup((s) => s.backupToUsb);
+  const backupToFolder = useBackup((s) => s.backupToFolder);
   const hydrate = useBackup((s) => s.hydrate);
   const lastUsbAt = useBackup((s) => s.config.lastUsbBackupAt);
   const lastUsbLabel = useBackup((s) => s.config.lastUsbLabel);
@@ -40,6 +41,14 @@ export function PendriveBackup({ variant = 'inline' }: { variant?: 'inline' | 't
 
   const [running, setRunning] = useState(false);
   const [choices, setChoices] = useState<UsbDrive[] | null>(null);
+  /**
+   * Set when the app could not ask Windows which drives are removable — usually
+   * PowerShell blocked by policy on the shop's PC. Saying "No pendrive found"
+   * there would be a lie, and it would leave the owner believing there is no way
+   * to get a copy off the machine. So we say what happened and offer the route
+   * that always works: they can see the stick in Explorer, so they can point at it.
+   */
+  const [detectionFailed, setDetectionFailed] = useState<string | null>(null);
 
   // Read the stored config once so the tooltip can report the last pendrive
   // backup truthfully. `backup.status` is an open read; this component only
@@ -50,17 +59,22 @@ export function PendriveBackup({ variant = 'inline' }: { variant?: 'inline' | 't
 
   if (!canBackup) return null;
 
+  const succeeded = (label?: string, unplug = true) => {
+    setChoices(null);
+    setDetectionFailed(null);
+    toast.success(`Backup saved to ${label ?? 'the drive'}`, {
+      description: unplug ? 'You can unplug the pendrive now.' : undefined,
+      duration: 8000,
+    });
+  };
+
   const run = async (drive?: string) => {
     setRunning(true);
     const res = await backupToUsb(drive);
     setRunning(false);
 
     if (res.ok) {
-      setChoices(null);
-      toast.success(`Backup saved to ${res.driveLabel ?? 'the pendrive'}`, {
-        description: 'You can unplug the pendrive now.',
-        duration: 8000,
-      });
+      succeeded(res.driveLabel);
       return;
     }
 
@@ -71,7 +85,30 @@ export function PendriveBackup({ variant = 'inline' }: { variant?: 'inline' | 't
     }
 
     setChoices(null);
+
+    // We could not look. Do not claim there is no pendrive; offer the way round it.
+    if (res.detection === 'unavailable') {
+      setDetectionFailed(
+        res.error ?? 'The app could not check which drives are removable on this computer.',
+      );
+      return;
+    }
+
     toast.error(res.error ?? 'Pendrive backup failed');
+  };
+
+  /** Let the owner point at the drive themselves. Always available as a fallback. */
+  const runManual = async () => {
+    setRunning(true);
+    const res = await backupToFolder();
+    setRunning(false);
+    if (res.ok) {
+      succeeded(res.driveLabel, false);
+      return;
+    }
+    // Closing the picker is not a failure worth a red toast.
+    if (res.cancelled) return;
+    toast.error(res.error ?? 'Could not save the copy');
   };
 
   const title = lastUsbAt
@@ -162,6 +199,39 @@ export function PendriveBackup({ variant = 'inline' }: { variant?: 'inline' | 't
         <div className="border-t border-border px-4 py-3 flex justify-end">
           <Button variant="outline" onClick={() => setChoices(null)}>
             Cancel
+          </Button>
+        </div>
+      </Modal>
+
+      {/* Detection blocked on this PC — say so, and give them the way round it. */}
+      <Modal
+        open={!!detectionFailed}
+        onClose={() => setDetectionFailed(null)}
+        title="Choose the drive yourself"
+        subtitle="This computer would not tell the app which drives are removable."
+        width="max-w-md"
+      >
+        <div className="p-4 space-y-3 text-sm">
+          <p className="text-muted-foreground">{detectionFailed}</p>
+          <p>
+            Your pendrive is still fine to use — pick it in the next window and the copy will be
+            written to it. Look for the drive letter Windows gave it, for example{' '}
+            <span className="font-mono" data-no-i18n>
+              E:
+            </span>
+            .
+          </p>
+          <div className="rounded-md bg-secondary/60 px-3 py-2 text-xs text-muted-foreground">
+            This saves one copy where you choose. It does not change where your scheduled
+            backups go, and it does not delete anything already on the drive.
+          </div>
+        </div>
+        <div className="border-t border-border px-4 py-3 flex justify-end gap-2">
+          <Button variant="outline" onClick={() => setDetectionFailed(null)}>
+            Cancel
+          </Button>
+          <Button disabled={running} onClick={() => void runManual()}>
+            <HardDrive className="size-4" /> Choose folder…
           </Button>
         </div>
       </Modal>

@@ -1,15 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Banknote, Smartphone, CreditCard, Building, Wallet, Search } from 'lucide-react';
 import {
   ReportToolbar,
   DEFAULT_RANGE,
-  isInRange,
   type DateRange,
 } from '@/components/reports/ReportToolbar';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
-import { useSales } from '@/stores/sales';
 import { useReport, useBranchId } from '@/hooks/useReport';
 import { hasBackend } from '@/lib/api';
 import { formatBDT, formatNumber } from '@/lib/utils';
@@ -50,20 +48,30 @@ interface BackendPayments {
   total: number;
 }
 
+/** Shape returned by `reports.sellPaymentRows` — one row per payment. */
+interface BackendPaymentRows {
+  rows: {
+    id: string;
+    sale_id: string;
+    invoice_no: string;
+    paid_at: string;
+    method: string;
+    amount: number;
+    reference: string | null;
+    customer_name: string;
+    user_name: string | null;
+  }[];
+  /** How many payments match, which may exceed the rows returned. */
+  total: number;
+  /** True when the safety cap trimmed the list — said out loud on screen. */
+  truncated: boolean;
+}
+
 export default function SellPaymentPage() {
-  const sales = useSales((s) => s.sales);
-  const hydrateSales = useSales((s) => s.hydrate);
   const [range, setRange] = useState<DateRange>(DEFAULT_RANGE);
   const [branch, setBranch] = useState('');
   const [q, setQ] = useState('');
   const [method, setMethod] = useState('');
-
-  // The detail table below needs individual payment records, which the sales
-  // store carries (it hydrates `sales.list` with nested payments). Hydrate on
-  // mount so the table is populated when this page is the entry point.
-  useEffect(() => {
-    void hydrateSales();
-  }, [hydrateSales]);
 
   // Backend wiring: `reports.sellPayments` returns by-method totals only, so it
   // drives the summary chips + grand total.
@@ -74,30 +82,36 @@ export default function SellPaymentPage() {
     [range, branchId],
   );
 
-  // Per-payment detail rows read from the backend-hydrated sales store; there is
-  // no report channel that returns individual payment records.
-  // BACKEND WORK NEEDED: a `reports.sellPaymentRows` channel (sale_payments
-  // joined to sales, filtered by range + branch) so the detail table does not
-  // depend on the sales store being hydrated.
+  /**
+   * The DETAIL rows come from SQL over the whole range, not from the sales store.
+   *
+   * They used to be built by walking `useSales().sales`, which holds ONE PAGE —
+   * the newest 50 invoices. So this table listed only the payments attached to
+   * those 50, underneath chips and a footer total computed in SQL across the
+   * entire range. The footer stated one figure and the rows added up to a smaller
+   * one, with nothing on screen to explain the difference. `reports.sellPaymentRows`
+   * applies exactly the same filter as `reports.sellPayments`, and the
+   * verification suite asserts that the rows sum to that total.
+   */
+  const { data: beRows, loading: rowsLoading } = useReport<BackendPaymentRows>(
+    'reports.sellPaymentRows',
+    hasBackend() ? { range, branchId } : null,
+    [range, branchId],
+  );
+
+  // Method + free-text narrowing stays client-side, but now over the FULL range's
+  // payments rather than one page of invoices.
   const rows: Row[] = useMemo(() => {
-    const out: Row[] = [];
-    for (const sale of sales) {
-      if (sale.status === 'void' || sale.status === 'draft' || sale.status === 'quotation') continue;
-      if (branch && sale.branch !== branch) continue;
-      for (const p of sale.payments) {
-        if (!isInRange(p.paidAt, range)) continue;
-        out.push({
-          saleId: sale.id,
-          invoiceNo: sale.invoiceNo,
-          date: p.paidAt,
-          customer: sale.customerName,
-          method: p.method,
-          amount: p.amount,
-          reference: p.reference,
-          user: sale.user,
-        });
-      }
-    }
+    const out: Row[] = (beRows?.rows ?? []).map((r) => ({
+      saleId: r.sale_id,
+      invoiceNo: r.invoice_no,
+      date: r.paid_at,
+      customer: r.customer_name,
+      method: r.method,
+      amount: r.amount,
+      reference: r.reference ?? undefined,
+      user: r.user_name ?? '',
+    }));
     let list = out;
     if (method) list = list.filter((r) => r.method === method);
     if (q) {
@@ -106,8 +120,19 @@ export default function SellPaymentPage() {
         `${r.invoiceNo} ${r.customer} ${r.reference ?? ''} ${r.user}`.toLowerCase().includes(t),
       );
     }
-    return list.sort((a, b) => b.date.localeCompare(a.date));
-  }, [sales, range, branch, q, method]);
+    return list;
+  }, [beRows, q, method]);
+
+  /**
+   * The footer total is only the sum of what is ON SCREEN when nothing has been
+   * narrowed client-side. With a method or a search applied it would otherwise
+   * claim a total for rows the user cannot see — the same lie in miniature.
+   */
+  const narrowed = !!method || !!q;
+  const shownTotal = useMemo(
+    () => rows.reduce((a, r) => a + r.amount, 0),
+    [rows],
+  );
 
   // By-method totals come exclusively from the backend (authoritative for the
   // period). Zeroed — never client-recomputed — until the query resolves.
@@ -212,11 +237,18 @@ export default function SellPaymentPage() {
           </div>
           {rows.length === 0 && (
             <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-              {loading
+              {loading || rowsLoading
                 ? 'Loading…'
                 : error
                   ? 'Couldn’t load — backend error. Check connection and retry.'
                   : 'No payments in this range.'}
+            </div>
+          )}
+          {beRows?.truncated && (
+            <div className="px-4 py-2 text-xs text-warning border-b border-border">
+              Showing the {formatNumber(beRows.rows.length)} most recent of{' '}
+              {formatNumber(beRows.total)} payments in this range. Narrow the dates to see the
+              rest.
             </div>
           )}
           {rows.map((r, i) => {
@@ -262,8 +294,12 @@ export default function SellPaymentPage() {
               <div />
               <div />
               <div />
-              <div className="text-right text-muted-foreground">Total</div>
-              <div className="tabular text-right">{formatBDT(summary.total)}</div>
+              <div className="text-right text-muted-foreground">
+                {narrowed ? 'Shown' : 'Total'}
+              </div>
+              <div className="tabular text-right">
+                {formatBDT(narrowed ? shownTotal : summary.total)}
+              </div>
               <div />
             </div>
           )}

@@ -3,13 +3,13 @@ import { persist } from 'zustand/middleware';
 import { api } from '@/lib/api';
 import { toast } from '@/stores/toast';
 import {
-  resolveBranchId,
   toMovement,
   toShift,
   type BackendMovement,
   type BackendShift,
   type BackendShiftTotals,
 } from '@/hooks/cashAdapter';
+import { branchIdOf, requireBranchId } from '@/lib/branch';
 
 export type MovementType =
   | 'sale_cash'
@@ -143,11 +143,12 @@ interface State {
   getCurrentShift: (branch: string) => Shift | undefined;
 }
 
-// Single-branch assumption for now (br_mp <-> 'Mirpur Branch'). Under the
-// backend, getCurrentShift ignores the branch string and returns the one open
-// shift. See cashAdapter.BRANCH_NAME / resolveBranchId.
+// Under the backend, getCurrentShift ignores the branch string and returns the
+// one open shift. Branch ids are resolved from the real branch list — see
+// src/lib/branch.ts. There is deliberately no `DEFAULT_BRANCH = 'br_mp'` constant
+// any more: it was the demo fixture's id, and a cash movement stamped with the
+// wrong branch drops out of every branch-scoped drawer figure.
 const CURRENT_USER = 'u_admin';
-const DEFAULT_BRANCH = 'br_mp';
 
 /**
  * How many recent shifts to hydrate with their derived totals. Each one costs a
@@ -239,12 +240,32 @@ export const useCashRegister = create<State>()(
       },
 
       openShift: ({ openingCash, note, cashier, branch }) => {
+        // Resolve the branch before writing, and refuse rather than guess — a
+        // shift opened against the wrong branch takes the whole day's cash with
+        // it. `requireBranchId` throws, so the toast below is what the cashier
+        // sees instead of a silently mis-filed shift.
+        let branchId: string;
+        try {
+          branchId = requireBranchId(branch);
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : 'No branch is available yet');
+          return {
+            id: 'sh_pending',
+            shiftNo: 0,
+            branch,
+            status: 'open',
+            openedBy: cashier,
+            openedAt: seedNow(),
+            openingCash,
+            openingNote: note,
+          };
+        }
         // Fire the write, then hydrate to pull the real shift. A "shift already
         // open" rejection is swallowed after a hydrate so the UI just shows the
         // existing open shift. The modal ignores the returned (optimistic) shift
         // and the brief gap is covered by `loading`.
         void api('cash.openShift', {
-          branchId: resolveBranchId(branch),
+          branchId,
           userId: CURRENT_USER,
           openingCash,
           note,
@@ -272,9 +293,13 @@ export const useCashRegister = create<State>()(
         // from its own slice, so `type` doubles as the backend reason.
         const backendReason =
           type === 'manual_in' ? 'manual_in' : type === 'manual_out' ? 'manual_out' : type;
+        // The movement belongs to the branch of the shift it is posted to, not to
+        // a hard-coded default. `branchIdOf` resolves the shift's display name
+        // back to its id and falls back to the shop's default branch.
+        const shiftBranch = get().shifts.find((s) => s.id === shiftId)?.branch;
         void api('cash.move', {
           shiftId,
-          branchId: DEFAULT_BRANCH,
+          branchId: branchIdOf(shiftBranch),
           direction,
           reason: backendReason,
           amount,

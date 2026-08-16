@@ -4,6 +4,7 @@ import { SettingsHeader } from '@/components/settings/SettingsHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { useSettings } from '@/stores/settings';
+import { useBranches } from '@/stores/branches';
 import { useTheme } from '@/stores/theme';
 import { useUI } from '@/stores/ui';
 import { toast } from '@/stores/toast';
@@ -39,6 +40,16 @@ function applyFontScale(scale: number) {
 export default function AppearancePage() {
   const a = useSettings((s) => s.appearance);
   const set = useSettings((s) => s.setAppearance);
+  // For the preview card: the shop's real identity, so the sample looks like
+  // this shop rather than the demo fixture's.
+  const business = useSettings((s) => s.business);
+  const branches = useBranches((s) => s.items);
+  const hydrateBranches = useBranches((s) => s.hydrate);
+  useEffect(() => {
+    void hydrateBranches();
+  }, [hydrateBranches]);
+  const previewBranch =
+    (branches.find((b) => b.isDefault) ?? branches[0])?.name ?? business.defaultBranch ?? '';
   const reset = () =>
     set({ themeMode: 'system', accentHue: 243, density: 'comfortable', fontScale: 1 });
 
@@ -209,9 +220,17 @@ export default function AppearancePage() {
               <div className="size-10 rounded-lg bg-primary text-primary-foreground grid place-items-center">
                 <Palette className="size-5" />
               </div>
+              {/* The shop's own name and branch, not sample text. This card is a
+                  preview of the app's chrome, so showing 'Hardware POS' /
+                  'Mirpur Branch' (the demo fixture) made it look like the
+                  appearance settings belonged to some other shop. */}
               <div>
-                <div className="font-semibold text-sm">Hardware POS</div>
-                <div className="text-xs text-muted-foreground">Mirpur Branch</div>
+                <div className="font-semibold text-sm">
+                  {business.name || 'Your shop'}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {previewBranch || 'Your branch'}
+                </div>
               </div>
             </div>
             <div className="grid grid-cols-3 gap-2">

@@ -48,13 +48,29 @@ export interface UsbDrive {
 export interface UsbBackupResult {
   ok: boolean;
   error?: string;
+  /**
+   * 'unavailable' means the app could NOT ask Windows which drives are removable
+   * (PowerShell blocked by policy, for instance) — which is a different fact from
+   * "no pendrive is plugged in". The UI offers the pick-the-folder-yourself route
+   * in that case instead of telling the owner there is no stick.
+   */
+  detection?: 'ok' | 'unavailable';
   /** Present when several drives are connected and the owner must choose. */
   drives?: UsbDrive[];
+  /** True when the owner closed the folder picker without choosing. */
+  cancelled?: boolean;
   name?: string;
   path?: string;
   at?: string;
   bytes?: number;
   driveLabel?: string;
+}
+
+/** What `backup.usbDrives` returns: the list PLUS whether we could look at all. */
+export interface UsbProbe {
+  drives: UsbDrive[];
+  detection: 'ok' | 'unavailable';
+  detail?: string;
 }
 
 export interface SnapshotInfo {
@@ -130,8 +146,19 @@ interface State {
   runNow: () => Promise<boolean>;
   restore: (file?: string) => Promise<void>;
   exportCsv: (kind: ExportKind) => Promise<void>;
-  /** Removable drives currently plugged in. Empty list when none / not Windows. */
-  listUsbDrives: () => Promise<UsbDrive[]>;
+  /**
+   * Removable drives currently plugged in, PLUS whether detection worked at all.
+   * An empty list with `detection: 'unavailable'` means we could not ask Windows —
+   * never report that as "no pendrive found".
+   */
+  listUsbDrives: () => Promise<UsbProbe>;
+  /**
+   * Write one verified snapshot into a folder the owner picks in a native dialog.
+   * The way out when removable-drive detection is blocked on their PC. Like the
+   * pendrive path (and unlike `run`), it does not repoint the configured backup
+   * folder and does not prune anything already in the chosen folder.
+   */
+  backupToFolder: () => Promise<UsbBackupResult>;
   /**
    * Copy a verified snapshot onto a pendrive. Pass `drive` (a root like 'E:\\')
    * to target a specific one; omit it when only one is connected. Returns the
@@ -182,10 +209,24 @@ export const useBackup = create<State>((set, get) => ({
 
   listUsbDrives: async () => {
     try {
-      return await api<UsbDrive[]>('backup.usbDrives', {});
+      return await api<UsbProbe>('backup.usbDrives', {});
     } catch (e: unknown) {
       toast.error(message(e, 'Could not check for a pendrive'));
-      return [];
+      // A failed channel call is also "we could not look", not "there is none".
+      return { drives: [], detection: 'unavailable' as const };
+    }
+  },
+
+  backupToFolder: async () => {
+    set({ busy: true });
+    try {
+      const res = await api<UsbBackupResult>('backup.toFolder', {});
+      if (res.ok) await get().hydrate();
+      return res;
+    } catch (e: unknown) {
+      return { ok: false, error: message(e, 'Could not save the copy') };
+    } finally {
+      set({ busy: false });
     }
   },
 

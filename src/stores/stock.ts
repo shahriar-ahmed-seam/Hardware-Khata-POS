@@ -1,8 +1,7 @@
 import { create } from 'zustand';
 import { api } from '@/lib/api';
 import { toast } from '@/stores/toast';
-import { useBranches } from '@/stores/branches';
-import { resolveBranchId } from '@/hooks/useReport';
+import { branchNameOf, requireBranchId } from '@/lib/branch';
 import {
   toTransfer,
   toAdjustment,
@@ -122,9 +121,7 @@ export function nextAdjustmentRef() {
 const CURRENT_USER = 'u_admin';
 
 /** Build an id→name resolver from the branches store for display mapping. */
-function branchIdToName(id: string): string {
-  return useBranches.getState().items.find((b) => b.id === id)?.name ?? id;
-}
+const branchIdToName = branchNameOf;
 
 export const useStock = create<State>((set, get) => ({
   movements: [],
@@ -154,14 +151,27 @@ export const useStock = create<State>((set, get) => ({
   },
 
   addTransfer: (t) => {
-    const branches = useBranches.getState().items;
     // Branch NAME -> ID before every write: the backend feeds these straight
     // into recordMovement as the branch key; sending a name would land the
     // movement on a non-existent branch.
+    //
+    // This used to call the REPORT-FILTER resolver, whose contract is "'' means
+    // all branches" — so it returns `undefined`, and an unresolvable branch here
+    // wrote a transfer with a null branch id: stock left nowhere and arrived
+    // nowhere. `requireBranchId` throws instead, and we refuse the write.
+    let fromBranch: string;
+    let toBranch: string;
+    try {
+      fromBranch = requireBranchId(t.fromBranch);
+      toBranch = requireBranchId(t.toBranch);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'No branch is available yet');
+      return;
+    }
     void api('transfers.create', {
       date: t.date,
-      fromBranch: resolveBranchId(branches, t.fromBranch),
-      toBranch: resolveBranchId(branches, t.toBranch),
+      fromBranch,
+      toBranch,
       status: t.status,
       notes: t.notes,
       lines: t.lines.map((l) => ({
@@ -200,12 +210,18 @@ export const useStock = create<State>((set, get) => ({
   },
 
   addAdjustment: (a) => {
-    const branches = useBranches.getState().items;
     // Branch NAME -> ID before the write (see addTransfer note). qty is signed
     // and passed through unchanged; the backend records the signed movement.
+    let branchId: string;
+    try {
+      branchId = requireBranchId(a.branch);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'No branch is available yet');
+      return;
+    }
     void api('adjustments.create', {
       date: a.date,
-      branchId: resolveBranchId(branches, a.branch),
+      branchId,
       type: a.type,
       reason: a.reason,
       lines: a.lines.map((l) => ({

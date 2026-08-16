@@ -65,12 +65,20 @@ export function openDatabase(filePath: string, opts: { readonly?: boolean } = {}
  *       business_info / brands logo_url columns. Those were
  *       `URL.createObjectURL()` handles, valid only inside the window that made
  *       them, so they were already unusable. See `clearEphemeralImageUrls`.
+ *  v7 — retractable cost history. Adds `product_cost_history.ref_type`,
+ *       `.ref_id`, `.retracted_at` and `.retract_reason`. A cancelled purchase
+ *       reverses its stock and its cash, but the buying price it recorded stayed
+ *       in the average forever — for a delivery that never arrived. The rows are
+ *       now MARKED rather than deleted (history stays append-only) and the
+ *       `cost`/`avg_cost` cache is recomputed ignoring retracted rows.
+ *       All four columns are additive and nullable, so every existing entry
+ *       stays live. See `addCostRetractionColumns`.
  */
 export function migrate(db: DB): void {
   db.exec(SCHEMA_SQL);
   db.exec(FTS_SQL);
 
-  const CURRENT_VERSION = 6;
+  const CURRENT_VERSION = 7;
   const row = db
     .prepare('SELECT MAX(version) AS v FROM schema_migrations')
     .get() as { v: number | null };
@@ -115,12 +123,55 @@ export function migrate(db: DB): void {
     );
   }
 
-  if (applied < CURRENT_VERSION) {
+  if (applied < 6) {
     clearEphemeralImageUrls(db);
     db.prepare('INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (?, ?)').run(
       6,
       'clear dead blob: image URLs (product photos + shop logo)',
     );
+  }
+
+  if (applied < CURRENT_VERSION) {
+    addCostRetractionColumns(db);
+    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (?, ?)').run(
+      7,
+      'product_cost_history: ref_type/ref_id + retracted_at/retract_reason',
+    );
+  }
+}
+
+/**
+ * v7 — let a cost-history entry be RETRACTED.
+ *
+ * Fresh databases get all four columns from SCHEMA_SQL, so this only does work on
+ * one that already exists. Every column is nullable with no default, so each
+ * existing entry stays exactly as it is and keeps counting towards the average —
+ * the retraction only applies to purchases cancelled from here on. PRAGMA-checked
+ * so a re-run is a clean no-op.
+ *
+ * Nothing is back-filled on purpose: a purchase cancelled BEFORE this existed did
+ * not record which history rows it created (there was no `ref_id`), so guessing
+ * from timestamps could retract a price the owner typed by hand.
+ */
+function addCostRetractionColumns(db: DB): void {
+  const cols = new Set(
+    (db.prepare('PRAGMA table_info(product_cost_history)').all() as { name: string }[]).map(
+      (c) => c.name,
+    ),
+  );
+  const additions: [string, string][] = [
+    ['ref_type', 'ALTER TABLE product_cost_history ADD COLUMN ref_type TEXT'],
+    ['ref_id', 'ALTER TABLE product_cost_history ADD COLUMN ref_id TEXT'],
+    ['retracted_at', 'ALTER TABLE product_cost_history ADD COLUMN retracted_at TEXT'],
+    ['retract_reason', 'ALTER TABLE product_cost_history ADD COLUMN retract_reason TEXT'],
+  ];
+  for (const [col, ddl] of additions) {
+    if (cols.has(col)) continue;
+    try {
+      db.exec(ddl);
+    } catch {
+      // "duplicate column name" — already present; ignore to stay idempotent.
+    }
   }
 }
 

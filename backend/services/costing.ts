@@ -60,6 +60,13 @@ export interface CostHistoryEntry {
   userName: string | null;
   source: CostSource;
   note: string | null;
+  /**
+   * Set when the document that recorded this price was cancelled. The row is kept
+   * for the audit trail but no longer counts towards `cost` or `avg_cost` — see
+   * `retractCostEntries`.
+   */
+  retractedAt: string | null;
+  retractReason: string | null;
 }
 
 export interface CostInfo {
@@ -83,7 +90,9 @@ export interface CostInfo {
 export function computeAvgCost(db: DB, productId: string): number {
   const row = db
     .prepare(
-      'SELECT COUNT(*) AS n, COALESCE(AVG(cost), 0) AS a FROM product_cost_history WHERE product_id = ?',
+      `SELECT COUNT(*) AS n, COALESCE(AVG(cost), 0) AS a
+         FROM product_cost_history
+        WHERE product_id = ? AND retracted_at IS NULL`,
     )
     .get(productId) as { n: number; a: number };
   if (row.n > 0) return round2(row.a);
@@ -101,10 +110,13 @@ export function computeAvgCost(db: DB, productId: string): number {
  * so two entries in the same millisecond still resolve deterministically.
  */
 function syncProductCostCache(db: DB, productId: string): CostInfo {
+  // Retracted entries are skipped here too, so cancelling a purchase rolls the
+  // CURRENT buying price back to whatever was on record before it — the price
+  // from a delivery that never arrived is not the price the shop pays.
   const newest = db
     .prepare(
       `SELECT cost, at FROM product_cost_history
-        WHERE product_id = ?
+        WHERE product_id = ? AND retracted_at IS NULL
         ORDER BY at DESC, rowid DESC
         LIMIT 1`,
     )
@@ -113,7 +125,9 @@ function syncProductCostCache(db: DB, productId: string): CostInfo {
   const avg = computeAvgCost(db, productId);
   const count = (
     db
-      .prepare('SELECT COUNT(*) AS n FROM product_cost_history WHERE product_id = ?')
+      .prepare(
+        'SELECT COUNT(*) AS n FROM product_cost_history WHERE product_id = ? AND retracted_at IS NULL',
+      )
       .get(productId) as { n: number }
   ).n;
 
@@ -144,6 +158,13 @@ export interface SetCostInput {
   userId?: string;
   note?: string;
   source?: CostSource;
+  /**
+   * The document that recorded this price, when there is one ('purchase' + the
+   * purchase id). It is what lets a cancelled purchase find the prices it put on
+   * record and retract them — see `retractCostEntries`.
+   */
+  refType?: string;
+  refId?: string;
   /** Test/seed hook. Defaults to now. */
   at?: string;
 }
@@ -192,8 +213,8 @@ export function setProductCost(db: DB, input: SetCostInput): CostInfo {
     }
 
     db.prepare(
-      `INSERT INTO product_cost_history (id, product_id, cost, at, user_id, source, note)
-       VALUES (@id, @productId, @cost, @at, @userId, @source, @note)`,
+      `INSERT INTO product_cost_history (id, product_id, cost, at, user_id, source, note, ref_type, ref_id)
+       VALUES (@id, @productId, @cost, @at, @userId, @source, @note, @refType, @refId)`,
     ).run({
       id: newId('pch'),
       productId: input.productId,
@@ -202,6 +223,8 @@ export function setProductCost(db: DB, input: SetCostInput): CostInfo {
       userId: input.userId ?? null,
       source: input.source ?? 'manual',
       note: input.note ?? null,
+      refType: input.refType ?? null,
+      refId: input.refId ?? null,
     });
 
     const info = syncProductCostCache(db, input.productId);
@@ -224,11 +247,62 @@ export function setProductCost(db: DB, input: SetCostInput): CostInfo {
   });
 }
 
+/**
+ * RETRACT the prices a document put on record, without deleting them.
+ *
+ * THE DECISION THIS IMPLEMENTS
+ * Cancelling a purchase reverses its stock and its cash: the goods went back off
+ * the shelf and the money came back into the drawer. The buying price it recorded,
+ * though, used to stay in `product_cost_history` forever — and since `avg_cost` is
+ * the mean of those entries, a purchase that was cancelled (or simply keyed by
+ * mistake and cancelled a minute later) permanently moved the shop's "average
+ * buying price", with no way to undo it.
+ *
+ * That is not defensible: if the delivery never arrived, the shop never paid that
+ * price. So the entries are marked retracted and excluded from the recomputed
+ * `cost` / `avg_cost`.
+ *
+ * They are NOT deleted, deliberately. The history table is append-only because it
+ * is the audit record of what the shop believed it was paying and when; removing
+ * rows would hide that the price was ever entered, which is the thing an owner
+ * looking at a suspicious average most needs to see. The history popup shows them
+ * struck through.
+ *
+ * Returns the product ids whose cache was refreshed, so a caller can report it.
+ */
+export function retractCostEntries(
+  db: DB,
+  refType: string,
+  refId: string,
+  reason: string,
+): string[] {
+  return tx(db, () => {
+    const affected = db
+      .prepare(
+        `SELECT DISTINCT product_id FROM product_cost_history
+          WHERE ref_type = ? AND ref_id = ? AND retracted_at IS NULL`,
+      )
+      .all(refType, refId) as { product_id: string }[];
+    if (affected.length === 0) return [];
+
+    db.prepare(
+      `UPDATE product_cost_history
+          SET retracted_at = ?, retract_reason = ?
+        WHERE ref_type = ? AND ref_id = ? AND retracted_at IS NULL`,
+    ).run(new Date().toISOString(), reason, refType, refId);
+
+    // Recompute, never adjust: the cache is rebuilt from what is left standing.
+    for (const a of affected) syncProductCostCache(db, a.product_id);
+    return affected.map((a) => a.product_id);
+  });
+}
+
 /** Newest-first price history for one product, with who recorded each change. */
 export function listCostHistory(db: DB, productId: string, limit = 50): CostHistoryEntry[] {
   const rows = db
     .prepare(
-      `SELECT h.id, h.product_id, h.cost, h.at, h.user_id, h.source, h.note, u.name AS user_name
+      `SELECT h.id, h.product_id, h.cost, h.at, h.user_id, h.source, h.note,
+              h.retracted_at, h.retract_reason, u.name AS user_name
          FROM product_cost_history h
          LEFT JOIN users u ON u.id = h.user_id
         WHERE h.product_id = ?
@@ -243,6 +317,8 @@ export function listCostHistory(db: DB, productId: string, limit = 50): CostHist
     user_id: string | null;
     source: string;
     note: string | null;
+    retracted_at: string | null;
+    retract_reason: string | null;
     user_name: string | null;
   }[];
   return rows.map((r) => ({
@@ -254,6 +330,8 @@ export function listCostHistory(db: DB, productId: string, limit = 50): CostHist
     userName: r.user_name,
     source: (r.source === 'initial' || r.source === 'purchase' ? r.source : 'manual') as CostSource,
     note: r.note,
+    retractedAt: r.retracted_at,
+    retractReason: r.retract_reason,
   }));
 }
 

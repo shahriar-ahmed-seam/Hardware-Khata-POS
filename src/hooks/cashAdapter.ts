@@ -1,4 +1,5 @@
 import type { CashMovement, MovementType, Shift } from '@/stores/cashRegister';
+import { branchNameOf } from '@/lib/branch';
 
 /**
  * Maps backend cash_shifts / cash_movements rows (snake_case) into the frontend
@@ -16,13 +17,14 @@ import type { CashMovement, MovementType, Shift } from '@/stores/cashRegister';
  * lands.
  */
 
-/** Single-branch assumption for now: id <-> display name. */
-export const BRANCH_NAME: Record<string, string> = { br_mp: 'Mirpur Branch' };
-
-/** Resolve a branch id from a display name (defaults to the primary branch). */
-export function resolveBranchId(name: string): string {
-  return name.startsWith('br_') ? name : 'br_mp';
-}
+/**
+ * There used to be a hard-coded `BRANCH_NAME = { br_mp: 'Mirpur Branch' }` and a
+ * `resolveBranchId` that collapsed every unrecognised name to `br_mp` here. The
+ * first printed the demo fixture's branch name on the Cash Register screen and
+ * the Z-report of any shop that is not the fixture; the second could open a shift
+ * against the wrong branch. Both now resolve against the real branch list —
+ * see src/lib/branch.ts.
+ */
 
 /** A cash_shifts row as returned by `shifts.list` (with joined user_name). */
 export interface BackendShift {
@@ -70,7 +72,7 @@ export function toShift(row: BackendShift, totals?: BackendShiftTotals): Shift {
   const shift: Shift = {
     id: row.id,
     shiftNo: row.shift_no,
-    branch: BRANCH_NAME[row.branch_id] ?? row.branch_id,
+    branch: branchNameOf(row.branch_id),
     status: row.status === 'closed' ? 'closed' : 'open',
     openedBy: row.user_name ?? row.user_id,
     openedAt: row.opened_at,

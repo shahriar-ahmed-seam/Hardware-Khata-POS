@@ -1,5 +1,5 @@
 import type { Customer } from '@/types/domain';
-import { computeTotals, unitPrice, type ParkedCart } from './types';
+import { computeTotals, lineSubtotal, unitPrice, type ParkedCart } from './types';
 import { formatBDT } from '@/lib/utils';
 import { useSettings } from '@/stores/settings';
 import { useBranches } from '@/stores/branches';
@@ -169,7 +169,15 @@ export function Receipt({
         <tbody>
           {cart.lines.map((l, i) => {
             const up = unitPrice(l);
-            const sub = up * l.qty - (up * l.qty * (l.discountPct / 100) + l.discountFlat);
+            // `lineSubtotal` rather than the arithmetic repeated inline, so the
+            // printed line agrees with `computeTotals` to the paisa. The inline
+            // version omitted its `max(0, …)` clamp, so a flat discount larger
+            // than the line printed a NEGATIVE subtotal while the total below
+            // counted it as zero.
+            const sub = lineSubtotal(l);
+            // What this line was actually discounted by, in money. Derived from
+            // the same two numbers the total is, so it can never disagree with it.
+            const lineDiscount = up * l.qty - sub;
             return (
               <tr key={i} className="border-b border-black/10 align-top">
                 <td className="py-[1mm] pr-[2mm]">
@@ -180,6 +188,15 @@ export function Receipt({
                   <div className="font-mono tabular text-[8pt]">
                     {l.qty.toFixed(2)} {l.unit} × {up.toFixed(2)}
                   </div>
+                  {/* Settings → Receipt Template → "Line discount". This toggle
+                      existed and did nothing at all before — nothing here read
+                      it. Only printed when the line really was discounted: a
+                      "Discount 0.00" row on every line is noise on a 58mm roll. */}
+                  {receipt.showLineDiscount && lineDiscount > 0.004 && (
+                    <div className="font-mono tabular text-[8pt]">
+                      Discount {l.discountPct > 0 ? `${l.discountPct}% ` : ''}− {lineDiscount.toFixed(2)}
+                    </div>
+                  )}
                 </td>
                 <td className="py-[1mm] text-right font-mono tabular">{sub.toFixed(2)}</td>
               </tr>

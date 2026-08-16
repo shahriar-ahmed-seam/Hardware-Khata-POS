@@ -226,6 +226,13 @@ export function buildApi(): Record<string, ApiHandler> {
     'reports.productPurchase': (db, p) => reports.productPurchase(db, p.range, p.branchId),
     'reports.sellPayments': (db, p) => reports.sellPayments(db, p.range, p.branchId),
     'reports.purchasePayments': (db, p) => reports.purchasePayments(db, p.range, p.branchId),
+    // The per-payment DETAIL rows behind the two payment reports. They exist
+    // because those tables used to be built by walking the sales/purchases
+    // STORE, which holds one page — so the SQL-computed footer total never
+    // matched the rows above it. Filters mirror the two aggregates exactly.
+    'reports.sellPaymentRows': (db, p) => reports.sellPaymentRows(db, p.range, p.branchId, p.limit),
+    'reports.purchasePaymentRows': (db, p) =>
+      reports.purchasePaymentRows(db, p.range, p.branchId, p.limit),
     'reports.tax': (db, p) => reports.taxReport(db, p.range, p.branchId),
     'reports.trending': (db, p) => reports.trending(db, p.range, p.metric ?? 'qty', p.branchId),
     'reports.salesRep': (db, p) => reports.salesRep(db, p.range, p.branchId),

@@ -915,6 +915,100 @@ export function runScenarios(s: Suite) {
       2,
     );
 
+    // ---- THE REPORTED CASE: only the AMOUNT TENDERED was keyed wrongly ----
+    // ৳1,800 taken, ৳1,000 typed. Until the sale form grew a payment editor this
+    // could only be fixed by voiding the invoice the customer is holding and
+    // issuing a new number. The backend always supported it; these checks pin the
+    // behaviour the form now relies on: the drawer must end up holding the
+    // CORRECTED cash, not the sum of both figures.
+    updateSale(db, wrong.id, {
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      customerId: 'cu2',
+      lines: [{ productId: 'p1', qty: 4, spr: 450 }],
+      payments: [{ method: 'Cash', amount: 1800 }],
+      reason: 'amount tendered keyed as 1000',
+    });
+    s.money('correcting only the amount tendered clears the due', customerDue(db, 'cu2'), dueBefore);
+    s.money(
+      'the drawer holds the corrected cash, not both figures',
+      shiftTotals(db, shiftId).expected,
+      drawerBefore + 1800,
+    );
+    s.money(
+      'a payment-only correction moves no stock',
+      stockOnHand(db, 'p1', 'br_mp'),
+      stockBefore - 4,
+    );
+
+    // ---- a split correction: only the CASH half reaches the drawer ----
+    updateSale(db, wrong.id, {
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      customerId: 'cu2',
+      lines: [{ productId: 'p1', qty: 4, spr: 450 }],
+      payments: [
+        { method: 'Cash', amount: 800 },
+        { method: 'bKash', amount: 1000, reference: 'TX77' },
+      ],
+      reason: 'half of it was actually paid by bKash',
+    });
+    s.money('a split correction still clears the due', customerDue(db, 'cu2'), dueBefore);
+    s.money(
+      'only the cash half of a split reaches the drawer',
+      shiftTotals(db, shiftId).expected,
+      drawerBefore + 800,
+    );
+    s.eq(
+      'both payment rows are stored, replacing the previous one',
+      (
+        db.prepare('SELECT COUNT(*) c FROM sale_payments WHERE sale_id = ?').get(wrong.id) as {
+          c: number;
+        }
+      ).c,
+      2,
+    );
+    s.eq(
+      'the payment reference survives the correction',
+      (
+        db
+          .prepare("SELECT reference FROM sale_payments WHERE sale_id = ? AND method = 'bKash'")
+          .get(wrong.id) as { reference: string | null }
+      ).reference ?? '',
+      'TX77',
+    );
+    s.money(
+      'paid on the header is the sum of the corrected payments',
+      (db.prepare('SELECT paid FROM sales WHERE id = ?').get(wrong.id) as { paid: number }).paid,
+      1800,
+    );
+
+    // ---- removing every payment puts the whole invoice back on credit ----
+    updateSale(db, wrong.id, {
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      customerId: 'cu2',
+      lines: [{ productId: 'p1', qty: 4, spr: 450 }],
+      payments: [],
+      reason: 'it was never actually paid',
+    });
+    s.money(
+      'clearing the payments returns the cash to where it came from',
+      shiftTotals(db, shiftId).expected,
+      drawerBefore,
+    );
+    s.money('the full invoice becomes a due', customerDue(db, 'cu2'), round2(dueBefore + 1800));
+
+    // Put it back to fully paid so the void checks below start from a known place.
+    updateSale(db, wrong.id, {
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      customerId: 'cu2',
+      lines: [{ productId: 'p1', qty: 4, spr: 450 }],
+      payments: [{ method: 'Cash', amount: 1800 }],
+      reason: 'confirmed paid in cash',
+    });
+
     // ---- a voided sale can never be edited ----
     voidSale(db, wrong.id, 'u_admin', 'test void');
     let voidEdit = '';

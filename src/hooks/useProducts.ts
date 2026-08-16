@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, hasBackend } from '@/lib/api';
+import { api } from '@/lib/api';
 import type { Product } from '@/types/domain';
-import { BROWSER_MOCK_PRODUCTS } from '@/lib/browserMock';
+import { BROWSER_MOCK_PRODUCTS, browserPreview } from '@/lib/browserMock';
 
 /**
  * Products data hooks (backend-backed).
@@ -39,6 +39,8 @@ interface BackendProduct {
   not_for_sale: number;
   created_at: string;
   updated_at: string;
+  /** Set once the product has been retired from the catalogue (schema v5). */
+  archived_at?: string | null;
   stock: number;
   category_name?: string | null;
   brand_name?: string | null;
@@ -72,6 +74,7 @@ export function toProduct(b: BackendProduct): Product {
     notForSale: b.not_for_sale !== 0,
     createdAt: b.created_at,
     updatedAt: b.updated_at,
+    archivedAt: b.archived_at ?? undefined,
   };
 }
 
@@ -114,11 +117,35 @@ export function useProducts(branchId?: string) {
   return useQuery({
     queryKey: [KEY, branchId ?? 'all'],
     queryFn: async () => {
-      if (!hasBackend()) {
+      // DEV-ONLY browser preview, never a production fallback — see
+      // src/lib/browserMock.ts for why this exception is allowed and how it is
+      // kept out of a shipped build.
+      if (browserPreview()) {
         return BROWSER_MOCK_PRODUCTS;
       }
       const rows = await api<BackendProduct[]>('products.list', { branchId });
       return rows.map(toProduct);
+    },
+  });
+}
+
+/**
+ * ONE product by id, straight from `products.get`.
+ *
+ * The full-page editor used to find its product by scanning `useProducts()`,
+ * which excludes archived rows — so opening a retired product's page handed the
+ * form `undefined` and it silently rendered as "create a new product". Fetching
+ * by id resolves any product that exists, archived or not (which is the whole
+ * point of archiving: past documents still resolve), and it stops the edit screen
+ * pulling the entire catalogue to read one row.
+ */
+export function useProduct(id: string | undefined) {
+  return useQuery({
+    queryKey: [KEY, 'one', id],
+    enabled: !!id,
+    queryFn: async (): Promise<Product | null> => {
+      const row = await api<BackendProduct | null>('products.get', { id });
+      return row ? toProduct(row) : null;
     },
   });
 }
@@ -134,6 +161,15 @@ export interface ProductsPageParams {
   brandId?: string;
   /** Derived from stock vs reorder level, computed server-side. */
   stockState?: 'in' | 'low' | 'out';
+  /**
+   * Show ONLY retired products — the Archived view.
+   *
+   * Archived rows are excluded from every catalogue read by default, which is the
+   * right default but also meant an archived product had nowhere to be seen and
+   * no way back. Passing this through is what makes archiving reversible from the
+   * screen instead of only from the channel.
+   */
+  archivedOnly?: boolean;
 }
 
 export interface ProductsPage {
@@ -168,6 +204,9 @@ export function useProductsPage(params: ProductsPageParams) {
     categoryId: params.categoryId === 'all' ? undefined : params.categoryId,
     brandId: params.brandId === 'all' ? undefined : params.brandId,
     stockState: params.stockState,
+    // Only sent when asked for, so the default request stays byte-identical to
+    // what it was before the Archived view existed.
+    archivedOnly: params.archivedOnly || undefined,
   };
   return useQuery({
     queryKey: [KEY, 'page', payload],
@@ -214,6 +253,13 @@ export interface CostHistoryEntry {
   /** 'purchase' = recorded automatically by a received purchase line. */
   source: 'manual' | 'initial' | 'purchase';
   note: string | null;
+  /**
+   * Set when the document that recorded this price was cancelled. The entry is
+   * kept for the audit trail but no longer counts towards the current or average
+   * buying price — see `retractCostEntries` in backend/services/costing.ts.
+   */
+  retractedAt: string | null;
+  retractReason: string | null;
 }
 
 /**

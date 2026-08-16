@@ -6,7 +6,7 @@ Status legend: 🔴 not started · 🟡 partial · 🟢 done
 
 - **Frontend**: all 15 task-modules built.
 - **Backend data layer**: schema, calculation core, services, synthetic data — proven.
-- **Electron bridge**: bundler-safe schema, `buildApi()` facade (146 channels), DB
+- **Electron bridge**: bundler-safe schema, `buildApi()` facade (152 channels), DB
   lifecycle + generic IPC + preload + renderer `api()` client, native ABI scripts.
 - **All 9 data slices wired** to the real backend (the `hasBackend()` mock fallback they were
   wired with has since been removed — see "Mock data fully removed"):
@@ -25,8 +25,14 @@ Status legend: 🔴 not started · 🟡 partial · 🟢 done
   customers, suppliers, expenses) plus client-side paging on the slow-growing lists.
 - **Backup & Cloud saving**: verified `VACUUM INTO` snapshots into a folder the owner's own
   cloud client syncs, filename-based retention, guarded restore, CSV export — details below.
-- **Verification**: **860 checks** pass across seven suites (`npm run backend:verify:all`):
-  all.ts 309 · api.ts 193 · run.ts 56 · e2e.ts 68 · paging.ts 80 · backup.ts 105 - costing.ts 49.
+- **Packaging + in-app updates**: NSIS x64 per-user installer; the app checks GitHub Releases
+  and updates itself when the owner presses the button (`RELEASE.md`).
+- **Every numbered known gap closed** — archived-products UI, the branch-name resolvers, one
+  definition of a week, the dead receipt toggles, derived figures over a paginated store, a
+  sale's payments being correctable, the pendrive-detection fallback, and the decision on what
+  a cancelled purchase does to the recorded buying price. See `07-CONTINUE-HERE.md` §4.
+- **Verification**: **1,078 checks** pass across seven suites (`npm run backend:verify:all`):
+  all.ts 395 · api.ts 216 · run.ts 105 · e2e.ts 68 · paging.ts 91 · backup.ts 120 · costing.ts 83.
 
 > Per-slice detail (what changed, deferrals) for the wiring + auth + setup work has been
 > consolidated; see `05-CONTEXT-AND-HISTORY.md` for the full blow-by-blow and every deferral.
@@ -312,16 +318,24 @@ became paginated (one 50-row page) the report silently under-counted every shop 
 - Sales figures stay range + branch scoped while counts and dues are lifetime / all-branch, and
   the page says so.
 
-## 🔴 Packaging (final phase)
+## 🟢 Packaging + in-app updates — DONE
 
-- electron-builder config (Windows NSIS installer; app icon from `build/icon.svg` → `.ico`).
-- **Native rebuild at package time**: ensure `better-sqlite3` is rebuilt for the bundled
-  Electron (electron-builder `npmRebuild`/`afterPack`/`beforeBuild`). This is the #1
-  packaging risk. `bcryptjs` is pure JS — no rebuild needed.
-- Splash should wait for DB-ready.
-- Decide packaged seed (`clean` → first-run wizard) and confirm the wizard flow on a fresh
-  `userData/pos.db`.
-- Code signing (optional/future).
+- electron-builder, Windows NSIS, **x64 only** (the earlier `["x64","ia32"]` target would have
+  shipped a broken native module). Icon generated from `build/icon.svg` by `npm run icon`.
+- `better-sqlite3` is rebuilt for the **bundled** Electron at package time — the #1 packaging
+  risk, and it holds. `bcryptjs` is pure JS and needs no rebuild.
+- Packaged seed is `clean`, so a fresh install opens the first-run wizard.
+- **The app updates itself** from GitHub Releases from 0.2.0 onward — never automatically,
+  only when the owner presses Download. Full procedure in `RELEASE.md`.
+- Still open, and both need money rather than code: **code signing** (unsigned installers make
+  SmartScreen warn on a new PC) and a **per-machine install** (currently per-user, which is why
+  it needs no elevation).
+
+## 🔴 The one remaining item: the manual GUI smoke test
+
+`docs/06-E2E-AND-SMOKE-TEST.md`. A script cannot click, and it cannot judge whether a receipt
+reads correctly on a 58mm roll or whether the Bangla layout still fits. Everything a script
+*can* prove is proven — 1,078 checks.
 
 ## ✅ Final rigorous end-to-end test (DONE)
 
@@ -358,8 +372,14 @@ the manual GUI smoke test in `docs/06-E2E-AND-SMOKE-TEST.md`.
 - **Per-user prefs in DB** (column visibility, dashboard layout, shortcuts) — currently
   localStorage / app-wide `settings_kv`.
 - **Barcode/QR real rendering** (Code128/EAN-13 SVG) for labels + receipts.
-- **Multi-branch context**: a real branch switcher feeding `branchId` everywhere (today the
-  app assumes `br_mp` / single branch in writes).
+- **Multi-branch context**: a real branch switcher feeding `branchId` everywhere. The id↔name
+  translation and every branch-name literal are gone (one resolver, `src/lib/branch.ts`), but
+  about fifteen WRITE call sites still pass the literal id `'br_mp'` where they mean "the
+  shop's default branch" — POS, AddSale, AddPurchase, ProductPanel, QuickUpdateModal,
+  NewProductDrawer, StockAlerts, useDashboardData, and the return/shipment/supplier-payment
+  writes in `stores/{sales,purchases,contacts}.ts`. Harmless while the seed always creates
+  `br_mp` as the default branch. `defaultBranchId()` is what they become; do it in one pass
+  with the switcher, not piecemeal.
 - **Offline secure PIN reset code** for the owner-locked-out case.
 
 ## Known gotchas / risks

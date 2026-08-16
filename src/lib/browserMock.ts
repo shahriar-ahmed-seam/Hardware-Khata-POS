@@ -1,5 +1,49 @@
 import type { Product, Customer, Category, Brand } from '@/types/domain';
 import type { UnitRecord } from '@/stores/masterData';
+import { hasBackend } from '@/lib/api';
+
+/**
+ * ============================================================================
+ *  BROWSER-PREVIEW SAMPLE DATA — A BOUNDED, DEV-ONLY EXCEPTION
+ * ============================================================================
+ *
+ * READ THIS BEFORE ADDING ANYTHING HERE.
+ *
+ * Handoff rules 5 and 8 say the app has NO mock data path: `src/mocks/` was
+ * deleted, and a figure with no backend source renders '—' rather than an
+ * invented number. That rule exists because fabricated figures had reached real
+ * screens (dashboard deltas, a guessed COGS, a fake commission split) where the
+ * shopkeeper could not tell them from their own books.
+ *
+ * This file is a deliberate, narrow exception so the UI can be opened in a plain
+ * browser (`vite` with no Electron) for visual work. It is NOT a fallback:
+ *
+ *  1. It is gated on `browserPreview()` below, which requires BOTH that the
+ *     Electron bridge is absent AND `import.meta.env.DEV`. Vite replaces `DEV`
+ *     with `false` when building, so the whole branch — and with it every value
+ *     in this file — is dropped from the production bundle. It cannot reach a
+ *     shipped installer even in principle.
+ *  2. It is limited to CATALOGUE REFERENCE DATA the pickers need in order to
+ *     render at all: products, customers, categories, brands, units.
+ *  3. It must never grow to cover MONEY. No sales, purchases, payments, dues,
+ *     stock movements, KPIs, report rows or totals. Those are the figures rule 5
+ *     is about, and outside Electron the screens that show them must stay empty.
+ *
+ * If you need to see money on screen without a shop, run the app properly with
+ * `POS_SEED=demo npm run dev` — that generates a synthetic year through the REAL
+ * services, so every number is a real DB row that went through the real pipeline.
+ */
+
+/**
+ * True only in a browser dev preview: no Electron bridge, and a dev build.
+ *
+ * The `import.meta.env.DEV` half is what makes this safe rather than merely
+ * unlikely — it is a compile-time constant, so a production build contains no
+ * path to the sample data at all.
+ */
+export function browserPreview(): boolean {
+  return import.meta.env.DEV && !hasBackend();
+}
 
 export const BROWSER_MOCK_CATEGORIES: (Category & { parentId?: string })[] = [
   { id: 'cat_cement', name: 'Cement & Masonry', emoji: '🧱' },

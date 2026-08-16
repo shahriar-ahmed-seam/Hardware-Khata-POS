@@ -176,6 +176,128 @@ export function purchasePayments(db: DB, rangeInput: RangeInput, branchId?: stri
   return { byMethod: byMethod.map((m) => ({ ...m, amount: round2(m.amount) })), total };
 }
 
+/**
+ * INDIVIDUAL payment rows for the Sell Payment report's detail table.
+ *
+ * WHY THIS EXISTS
+ * The report screen listed each payment by walking the SALES STORE, which holds
+ * ONE PAGE (the newest 50 invoices). So the chips and the footer total — computed
+ * in SQL over the whole range by `sellPayments` above — sat on top of a table
+ * showing only the payments that happened to be attached to those 50 invoices.
+ * The footer said one number and the rows added up to a smaller one, with nothing
+ * on screen to say why. Same class of bug as the Paid/Partial/Due chips and the
+ * Customer Group report before them.
+ *
+ * The filter is deliberately IDENTICAL to `sellPayments` (status='final', the
+ * same `paid_at` bounds, the same branch clause), because the whole point is that
+ * `SUM(amount)` over these rows equals that function's `total`. The verification
+ * suite asserts exactly that.
+ *
+ * `limit` is a safety cap, not paging: a year of a busy shop is a few thousand
+ * payments, which is fine to render, but an unbounded query is how a report
+ * freezes the app. When the cap bites, `truncated` says so, so the screen can
+ * tell the owner instead of quietly showing a short list.
+ */
+export function sellPaymentRows(
+  db: DB,
+  rangeInput: RangeInput,
+  branchId?: string,
+  limit = 5000,
+) {
+  const range = resolveRange(rangeInput);
+  const cap = Math.min(Math.max(1, limit), 20000);
+  const rows = db
+    .prepare(
+      `SELECT p.id, p.sale_id, s.invoice_no, p.paid_at, p.method, p.amount, p.reference,
+              COALESCE(c.name, 'Walk-in Customer') AS customer_name,
+              COALESCE(u.name, p.by_user) AS user_name
+         FROM sale_payments p
+         JOIN sales s ON s.id = p.sale_id
+         LEFT JOIN customers c ON c.id = s.customer_id
+         LEFT JOIN users u ON u.id = p.by_user
+        WHERE s.status='final' AND p.paid_at >= @from AND p.paid_at <= @to ${bclause(branchId, 's')}
+        ORDER BY p.paid_at DESC, p.rowid DESC
+        LIMIT @cap`,
+    )
+    .all({ from: range.from, to: range.to, branchId, cap }) as {
+    id: string;
+    sale_id: string;
+    invoice_no: string;
+    paid_at: string;
+    method: string;
+    amount: number;
+    reference: string | null;
+    customer_name: string;
+    user_name: string | null;
+  }[];
+  const counted = (
+    db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM sale_payments p JOIN sales s ON s.id = p.sale_id
+          WHERE s.status='final' AND p.paid_at >= @from AND p.paid_at <= @to ${bclause(branchId, 's')}`,
+      )
+      .get({ from: range.from, to: range.to, branchId }) as { n: number }
+  ).n;
+  return {
+    rows: rows.map((r) => ({ ...r, amount: round2(r.amount) })),
+    total: counted,
+    truncated: counted > rows.length,
+  };
+}
+
+/**
+ * INDIVIDUAL payment rows for the Purchase Payment report's detail table.
+ * The mirror of {@link sellPaymentRows}; the filter matches `purchasePayments`
+ * (status != 'cancelled', same bounds, same branch clause) so the rows sum to its
+ * `total`.
+ */
+export function purchasePaymentRows(
+  db: DB,
+  rangeInput: RangeInput,
+  branchId?: string,
+  limit = 5000,
+) {
+  const range = resolveRange(rangeInput);
+  const cap = Math.min(Math.max(1, limit), 20000);
+  const rows = db
+    .prepare(
+      `SELECT p.id, p.purchase_id, pu.ref_no, p.paid_at, p.method, p.amount, p.reference,
+              COALESCE(sup.name, '—') AS supplier_name,
+              COALESCE(u.name, p.by_user) AS user_name
+         FROM purchase_payments p
+         JOIN purchases pu ON pu.id = p.purchase_id
+         LEFT JOIN suppliers sup ON sup.id = pu.supplier_id
+         LEFT JOIN users u ON u.id = p.by_user
+        WHERE pu.status != 'cancelled' AND p.paid_at >= @from AND p.paid_at <= @to ${bclause(branchId, 'pu')}
+        ORDER BY p.paid_at DESC, p.rowid DESC
+        LIMIT @cap`,
+    )
+    .all({ from: range.from, to: range.to, branchId, cap }) as {
+    id: string;
+    purchase_id: string;
+    ref_no: string | null;
+    paid_at: string;
+    method: string;
+    amount: number;
+    reference: string | null;
+    supplier_name: string;
+    user_name: string | null;
+  }[];
+  const counted = (
+    db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM purchase_payments p JOIN purchases pu ON pu.id = p.purchase_id
+          WHERE pu.status != 'cancelled' AND p.paid_at >= @from AND p.paid_at <= @to ${bclause(branchId, 'pu')}`,
+      )
+      .get({ from: range.from, to: range.to, branchId }) as { n: number }
+  ).n;
+  return {
+    rows: rows.map((r) => ({ ...r, amount: round2(r.amount) })),
+    total: counted,
+    truncated: counted > rows.length,
+  };
+}
+
 // ---------- Tax ----------
 export function taxReport(db: DB, rangeInput: RangeInput, branchId?: string) {
   const range = resolveRange(rangeInput);

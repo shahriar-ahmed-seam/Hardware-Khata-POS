@@ -24,10 +24,21 @@ import { useBranches } from '@/stores/branches';
 import {
   useSales,
   type SaleLine,
+  type SalePayment,
   type SaleRecord,
   type SaleStatus,
   nextInvoiceNo,
 } from '@/stores/sales';
+
+/**
+ * Methods offered when correcting the payments on an invoice.
+ *
+ * `Credit` is NOT here on purpose. It is not money received — it is the unpaid
+ * remainder, and the due is derived as (total − payments). Offering it would let
+ * someone zero an invoice's due without any money moving. POS leaves it out of
+ * the payments it sends for exactly the same reason.
+ */
+const PAYMENT_METHODS: SalePayment['method'][] = ['Cash', 'bKash', 'Nagad', 'Card', 'Bank'];
 import { toast } from '@/stores/toast';
 import { promptText } from '@/stores/prompt';
 import { useCan } from '@/hooks/useCan';
@@ -102,6 +113,22 @@ export default function AddSale() {
     editing?.validUntil ?? localDateInputPlusDays(14),
   );
   const [notes, setNotes] = useState(editing?.notes ?? '');
+  /**
+   * THE PAYMENTS ON A SALE BEING CORRECTED.
+   *
+   * There was no payment editor here at all, so `updateSale` re-applied whatever
+   * was already on the invoice verbatim — and correcting a wrongly-keyed AMOUNT
+   * TENDERED (৳5,000 typed as ৳500, the most common counter mistake) still meant
+   * voiding the invoice and re-creating it under a new number the customer does
+   * not have. The backend has always supported this; only the form was missing.
+   *
+   * `Credit` is deliberately NOT offered as a method: it is not money received,
+   * it is the unpaid remainder, and the due is DERIVED (total − payments). POS
+   * excludes it from the payments it sends for the same reason; listing it here
+   * would let the owner "pay" an invoice with credit and zero its due without any
+   * money moving.
+   */
+  const [payments, setPayments] = useState<SalePayment[]>(() => editing?.payments ?? []);
   const [orderDiscFlat, setOrderDiscFlat] = useState(editing?.orderDiscountFlat ?? 0);
   const [orderDiscPct, setOrderDiscPct] = useState(editing?.orderDiscountPct ?? 0);
   const [taxPct, setTaxPct] = useState(editing?.taxPct ?? 0);
@@ -192,6 +219,38 @@ export default function AddSale() {
   const tax = taxableBase * (taxPct / 100);
   const total = taxableBase + tax + shipping + other;
 
+  /**
+   * Payments worth sending. A zero-amount row is a half-finished edit, not a
+   * payment, and writing it would put a ৳0.00 line on the invoice's history.
+   */
+  const cleanPayments = useMemo(
+    () => payments.filter((p) => p.amount > 0),
+    [payments],
+  );
+  const paidTotal = useMemo(
+    () => cleanPayments.reduce((s, p) => s + p.amount, 0),
+    [cleanPayments],
+  );
+  /** Positive when the payments exceed the corrected total — warned about, not blocked. */
+  const overpaid = paidTotal - total;
+
+  const addPayment = () =>
+    setPayments((ps) => [
+      ...ps,
+      {
+        id: 'pay_' + Date.now(),
+        method: 'Cash',
+        // Defaults to what is still owing, which is what the owner is almost
+        // always entering. Never negative.
+        amount: Math.max(0, Number((total - paidTotal).toFixed(2))),
+        paidAt: fromLocalInput(date),
+      },
+    ]);
+  const patchPayment = (idx: number, patch: Partial<SalePayment>) =>
+    setPayments((ps) => ps.map((p, i) => (i === idx ? { ...p, ...patch } : p)));
+  const removePayment = (idx: number) =>
+    setPayments((ps) => ps.filter((_, i) => i !== idx));
+
   const goToList = (s: SaleStatus) => {
     if (s === 'final') nav('/sales');
     else if (s === 'draft') nav('/sales/drafts');
@@ -230,9 +289,13 @@ export default function AddSale() {
       // On an edit the payments already recorded against the invoice are kept
       // (the backend re-applies them); paid/due are recomputed there and come
       // back on the next hydrate, so these are only the create-path defaults.
-      paid: editing?.paid ?? 0,
-      due: editing ? Math.max(0, total - (editing.paid ?? 0)) : total,
-      payments: editing?.payments ?? [],
+      // On an edit these come from the payment editor below; on a create there
+      // are none yet (a form sale is taken to the counter or left on credit).
+      // The backend recomputes paid/due from the payments it is sent, and the
+      // real values arrive on the next hydrate — these are the local shape only.
+      paid: editing ? paidTotal : 0,
+      due: editing ? Math.max(0, total - paidTotal) : total,
+      payments: editing ? cleanPayments : [],
       audit: editing?.audit ?? [
         { id: 'a_' + Date.now(), at: new Date().toISOString(), by: 'Seam', action: 'created' },
       ],
@@ -600,6 +663,110 @@ export default function AddSale() {
             )}
           </Card>
         </div>
+
+        {/*
+          PAYMENTS — ONLY WHEN CORRECTING A FINALIZED INVOICE.
+
+          A new form sale records no payment here on purpose: it is either taken to
+          the counter (POS takes the money) or left on credit. Drafts and
+          quotations have no payments at all — nothing has been sold yet.
+
+          On a correction this is the difference between fixing a mistyped amount
+          tendered in place and having to void the invoice the customer is holding.
+        */}
+        {editing?.status === 'final' && (
+          <Card className="p-4 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <div className="text-sm font-semibold">Payments received</div>
+                <div className="text-[11px] text-muted-foreground mt-0.5">
+                  Correct an amount that was keyed wrongly, or record a payment that was
+                  missed. Cash changes are posted to the shift that is open now.
+                </div>
+              </div>
+              <Button variant="outline" size="sm" onClick={addPayment}>
+                <Plus className="size-3.5" /> Add payment
+              </Button>
+            </div>
+
+            {payments.length === 0 ? (
+              <div className="rounded-md border border-dashed border-border py-5 text-center text-xs text-muted-foreground">
+                No payment recorded — the whole invoice is on credit.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {payments.map((p, idx) => (
+                  <div
+                    key={p.id}
+                    className="grid grid-cols-1 sm:grid-cols-[8rem_9rem_1fr_11rem_auto] gap-2 items-end rounded-md border border-border p-2"
+                  >
+                    <Field label="Method">
+                      <select
+                        value={p.method}
+                        onChange={(e) =>
+                          patchPayment(idx, { method: e.target.value as SalePayment['method'] })
+                        }
+                        className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                      >
+                        {PAYMENT_METHODS.map((m) => (
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label="Amount ৳">
+                      <NumberField
+                        value={p.amount}
+                        onChangeNumber={(v) => patchPayment(idx, { amount: v })}
+                      />
+                    </Field>
+                    <Field label="Reference">
+                      <Input
+                        value={p.reference ?? ''}
+                        onChange={(e) => patchPayment(idx, { reference: e.target.value })}
+                        placeholder="TxID / cheque no (optional)"
+                      />
+                    </Field>
+                    <Field label="Paid on">
+                      <DateTimeField
+                        value={toLocalInput(p.paidAt)}
+                        onChange={(v) => patchPayment(idx, { paidAt: fromLocalInput(v) })}
+                      />
+                    </Field>
+                    <button
+                      onClick={() => removePayment(idx)}
+                      title="Remove this payment"
+                      className="h-9 w-9 grid place-items-center rounded-md border border-border text-muted-foreground hover:text-destructive hover:border-destructive/50"
+                    >
+                      <Trash2 className="size-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Paid / still owing, from the rows above against the corrected total.
+                Stated before saving, because this is the number the customer will
+                argue about. */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
+              <Row label="Invoice total" value={formatBDT(total)} />
+              <Row label="Paid" value={formatBDT(paidTotal)} />
+              <Row
+                label="Still owing"
+                value={formatBDT(Math.max(0, total - paidTotal))}
+                tone={total - paidTotal > 0.004 ? 'warning' : 'success'}
+              />
+            </div>
+
+            {overpaid > 0.004 && (
+              <div className="rounded-md bg-warning/10 text-warning px-3 py-2 text-xs">
+                These payments are {formatBDT(overpaid)} more than the invoice total. The due
+                will be recorded as zero — the extra is change given, not credit.
+              </div>
+            )}
+          </Card>
+        )}
       </div>
 
       {/* Add a customer without abandoning this sale. Saves to the real backend
@@ -681,12 +848,20 @@ function Row({
 }: {
   label: string;
   value: string;
-  tone?: 'success';
+  tone?: 'success' | 'warning';
 }) {
   return (
     <div className="flex items-center justify-between text-sm">
       <span className="text-muted-foreground">{label}</span>
-      <span className={cn('font-mono tabular', tone === 'success' && 'text-success')}>{value}</span>
+      <span
+        className={cn(
+          'font-mono tabular',
+          tone === 'success' && 'text-success',
+          tone === 'warning' && 'text-warning',
+        )}
+      >
+        {value}
+      </span>
     </div>
   );
 }

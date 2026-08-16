@@ -22,8 +22,8 @@ import { buildApi } from '../api.ts';
 import { Suite } from './assert.ts';
 import { computeAvgCost, listCostHistory, setProductCost } from '../services/costing.ts';
 import { createProduct } from '../services/catalog.ts';
-import { createPurchase } from '../services/purchases.ts';
-import { weightedAvgCost, recordMovement } from '../services/stock.ts';
+import { cancelPurchase, createPurchase } from '../services/purchases.ts';
+import { weightedAvgCost, recordMovement, stockOnHand } from '../services/stock.ts';
 import { round2 } from '../core/money.ts';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -60,10 +60,22 @@ export function runCosting(s: Suite) {
       version: number;
     }[]
   ).map((r) => r.version);
-  s.eq('every migration up to the head is recorded', versions.join(','), '1,2,3,4,5,6');
+  s.eq('every migration up to the head is recorded', versions.join(','), '1,2,3,4,5,6,7');
   s.ok('cost-history migration (v4) is recorded', versions.includes(4));
   s.ok('products.archived_at exists (v5)', cols.has('archived_at'));
   s.ok('blob-image cleanup migration (v6) is recorded', versions.includes(6));
+  // v7 — a cost entry can be retracted (a cancelled purchase's price stops
+  // counting towards the average) and knows which document recorded it.
+  const historyCols = new Set(
+    (db.prepare('PRAGMA table_info(product_cost_history)').all() as { name: string }[]).map(
+      (c) => c.name,
+    ),
+  );
+  s.ok('product_cost_history.retracted_at exists (v7)', historyCols.has('retracted_at'));
+  s.ok('product_cost_history.retract_reason exists (v7)', historyCols.has('retract_reason'));
+  s.ok('product_cost_history.ref_type exists (v7)', historyCols.has('ref_type'));
+  s.ok('product_cost_history.ref_id exists (v7)', historyCols.has('ref_id'));
+  s.ok('cost-retraction migration (v7) is recorded', versions.includes(7));
 
   // --------------------------------------------------- a brand-new product
   s.section('costing-new-product');
@@ -321,6 +333,114 @@ export function runCosting(s: Suite) {
     computeAvgCost(db, buyId),
     avgBeforeOrdered,
   );
+
+  // ------------------------------- CANCELLING a purchase retracts its price
+  // The deliberate decision (v7): a cancellation already reverses the stock and
+  // the cash, and the buying price has to come back too — if the delivery never
+  // arrived, the shop never paid that price. Leaving it in meant a purchase keyed
+  // at the wrong price and cancelled a minute later moved the average for good.
+  // The row is RETRACTED, never deleted: the history is the audit record of what
+  // was entered, and hiding that it was ever entered is the opposite of useful.
+  s.section('costing-cancelled-purchase-retracts');
+  {
+    const cancelId = createProduct(db, {
+      sku: 'COST-CANCEL',
+      name: 'Cancelled Delivery Widget',
+      cost: 100,
+      price: 150,
+      unit: 'pc',
+    }).id;
+    s.money('starts at its opening buying price', costOf(db, cancelId), 100);
+    s.money('average starts there too', computeAvgCost(db, cancelId), 100);
+
+    // A real delivery at 120 — this one stays.
+    createPurchase(db, {
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      supplierId: 'sp1',
+      lines: [{ productId: cancelId, qty: 10, unitCostBeforeDisc: 120 }],
+    });
+    s.money('a received purchase moves the average', computeAvgCost(db, cancelId), 110);
+
+    // Now the fat-fingered one: 1200 instead of 120, then cancelled.
+    const oops = createPurchase(db, {
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      supplierId: 'sp1',
+      lines: [{ productId: cancelId, qty: 10, unitCostBeforeDisc: 1200 }],
+    });
+    s.money('the mistake skews the average while it stands', computeAvgCost(db, cancelId), round2((100 + 120 + 1200) / 3));
+    s.money('and it becomes the current buying price', costOf(db, cancelId), 1200);
+    const stockBefore = stockOnHand(db, cancelId, 'br_mp');
+
+    cancelPurchase(db, oops.id, 'u_admin', 'wrong price keyed');
+
+    s.money(
+      'cancelling puts the AVERAGE back to what the shop really paid',
+      computeAvgCost(db, cancelId),
+      110,
+    );
+    s.money(
+      'cancelling puts the CURRENT buying price back as well',
+      costOf(db, cancelId),
+      120,
+    );
+    s.money('the stock is reversed as before', stockOnHand(db, cancelId, 'br_mp'), stockBefore - 10);
+
+    // The row is still there, marked — deleting it would hide the mistake.
+    const hist = listCostHistory(db, cancelId);
+    const retracted = hist.filter((h) => h.retractedAt !== null);
+    s.eq('the retracted entry is KEPT, not deleted', retracted.length, 1);
+    s.money('the kept entry still shows the price that was entered', retracted[0].cost, 1200);
+    s.ok(
+      'the retraction records why',
+      (retracted[0].retractReason ?? '').includes('cancelled'),
+    );
+    s.eq(
+      'the entries that still count are the ones that really happened',
+      hist.filter((h) => h.retractedAt === null).length,
+      2,
+    );
+    s.money(
+      'the cache agrees with the non-retracted history',
+      costOf(db, cancelId),
+      hist.filter((h) => h.retractedAt === null)[0].cost,
+    );
+
+    // Cancelling twice must not double-retract or throw.
+    cancelPurchase(db, oops.id, 'u_admin', 'again');
+    s.money('cancelling again changes nothing', computeAvgCost(db, cancelId), 110);
+    s.eq(
+      'cancelling again does not mark anything else',
+      listCostHistory(db, cancelId).filter((h) => h.retractedAt !== null).length,
+      1,
+    );
+
+    // A product whose ONLY price came from a cancelled purchase must not report 0.
+    const onlyId = createProduct(db, {
+      sku: 'COST-ONLY-CANCELLED',
+      name: 'Only Ever Cancelled',
+      cost: 0,
+      price: 90,
+      unit: 'pc',
+    }).id;
+    const onlyPur = createPurchase(db, {
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      supplierId: 'sp1',
+      lines: [{ productId: onlyId, qty: 4, unitCostBeforeDisc: 55 }],
+    });
+    s.money('its only price is the purchase price', costOf(db, onlyId), 55);
+    cancelPurchase(db, onlyPur.id, 'u_admin', 'never delivered');
+    // Nothing is left standing, so the average falls back to products.cost —
+    // which the cache leaves alone when there is no live entry. The point is that
+    // it is not a confident 0 next to a real one.
+    s.money(
+      'with nothing left on record the average follows the stored cost',
+      computeAvgCost(db, onlyId),
+      costOf(db, onlyId),
+    );
+  }
 
   // ------------------------------------------- the read paths expose it
   s.section('costing-read-paths');

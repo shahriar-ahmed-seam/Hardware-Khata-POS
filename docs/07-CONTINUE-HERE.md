@@ -1,8 +1,10 @@
 # Continue Here — Session Handoff
 
 > **New session? Read this file first, then `04-AGENT-HANDOFF.md` for the rules.**
-> This captures the state as of the end of the packaging/PDF session so work can
-> resume without re-discovering anything.
+> The most recent work is **§3d** (the gap-clearing session); §3, §3b and §3c are
+> earlier sessions, newest first. §4 is the gap list — every numbered gap in it is
+> now closed, and §4a records the one judgement call that needed deciding rather
+> than just fixing.
 
 ---
 
@@ -13,14 +15,22 @@
 > Editing the frontend? `docs/08-FRONTEND-MAP.md` says which file draws what.
 
 ```bash
-npm install                        # if node_modules is missing
-npm run backend:verify:all         # must print 999 checks across SEVEN suites
+npm install                        # if node_modules is missing — READ THE NPM NOTE BELOW
+npm run backend:verify:all         # must print 1,078 checks across SEVEN suites
 npx tsc --noEmit -p tsconfig.json  # frontend typecheck — clean
 npx tsc --noEmit -p tsconfig.backend.json
 npm run build                      # renderer + main + preload
-npm run i18n:check                 # 32 checks, 2,351 Bangla phrases
+npm run i18n:check                 # 32 checks, 2,385 Bangla phrases
 npm run rebuild:electron           # LEAVE IT ON THE ELECTRON ABI (see §6)
 ```
+
+> **npm 11 blocks install scripts.** On npm ≥ 11.17 a plain `npm install` finishes
+> "successfully" but skips every postinstall, so `better-sqlite3` has no compiled
+> binary, `electron` has no `electron.exe` and `esbuild` has no platform binary —
+> nothing runs. `package.json` therefore carries an `allowScripts` block for those
+> three (all direct dependencies). If a fresh clone still reports
+> `npm warn allow-scripts`, run `npm approve-scripts --allow-scripts-pending` and
+> then `npm install` again.
 
 > `npm run lint` does NOT work — eslint is not in devDependencies. `tsc` is the
 > only static gate. Don't chase the failure; either install eslint deliberately
@@ -30,14 +40,14 @@ Expected per-suite counts:
 
 | Suite | Checks | Covers |
 |-------|-------:|--------|
-| `all.ts` | 385 | scenarios + determinism + file-DB smoke + identities |
-| `api.ts` | 209 | the `buildApi()` facade — **150 channels** |
-| `run.ts` | 65 | identities on a 365-day dataset + **custom date ranges** |
+| `all.ts` | 395 | scenarios + determinism + file-DB smoke + identities, incl. **correcting an invoice's payments** |
+| `api.ts` | 216 | the `buildApi()` facade — **152 channels** |
+| `run.ts` | 105 | identities on a 365-day dataset, custom date ranges, **Saturday week start**, **payment detail rows == report total** |
 | `e2e.ts` | 68 | one full shop day |
-| `paging.ts` | 91 | paginated list reads + **Paid/Partial/Due filtering** |
-| `backup.ts` | 120 | backup, cloud, CSV export, invoice PDFs, **pendrive copies** |
-| `costing.ts` | 61 | purchase-price history, **purchases feeding it**, migration head |
-| **total** | **999** | |
+| `paging.ts` | 91 | paginated list reads + Paid/Partial/Due filtering |
+| `backup.ts` | 120 | backup, cloud, CSV export, invoice PDFs, pendrive copies |
+| `costing.ts` | 83 | purchase-price history, purchases feeding it, **a cancelled purchase retracting its price**, migration head (**v7**) |
+| **total** | **1,078** | |
 
 Single suites: `backend:verify`, `backend:scenarios`, `backend:e2e`,
 `backend:paging`, `backend:backup`, `backend:costing`.
@@ -46,21 +56,58 @@ Single suites: `backend:verify`, `backend:scenarios`, `backend:e2e`,
 
 ## 2. Where the product is right now
 
-Shippable and installed. `release/HardwareKhataPOS-Setup-0.1.0.exe` (82 MB, x64,
-NSIS, per-user) is built and **installed on the owner's PC** at
-`C:\Users\Seam\AppData\Local\Programs\Hardware Khata POS\`.
+Shipping, installed, and self-updating. The last published release is **0.6.0**
+(NSIS, x64, per-user, ~82 MB) and the app updates itself from GitHub Releases —
+bump `package.json` and `npm run release:win`, see `RELEASE.md`.
 
-The owner's live database is at `%APPDATA%\pos\pos.db` — **schema v4** — with one
-active account: `u_admin`, name **Seam**, username `owner`, PIN set, no password.
+0.6.0 is the gap-clearing session's work (§3d), committed and tagged `v0.6.0` on
+`main`.
+
+The owner's live database is at `%APPDATA%\pos\pos.db`. The schema HEAD is now
+**v7**; migrations are additive and run on launch, so their database upgrades in
+place. One active account: `u_admin`, name **Seam**, username `owner`, PIN set, no
+password.
 Their backup folder is already `C:\Users\Seam\OneDrive\HardwareKhataPOS\Backups`,
 so snapshots *and* invoice PDFs cloud-sync via OneDrive.
 
-⚠️ **165 files are uncommitted on `main`.** Nothing from this session has been
-committed. Ask the owner before committing — do not commit unprompted.
+The working tree is clean at `v0.6.0`. **Do not commit unprompted** — ask the owner
+first, as always.
 
 ---
 
-## 3. What landed this session (and why, where it matters)
+## 3d. What landed in the gap-clearing session (the most recent work)
+
+Every numbered gap in §4 closed. The suite went **999 → 1,078** checks, the channel
+count 150 → 152, and the schema to **v7**. Each gap looked small on the surface and
+most had a real bug underneath; §4 has the details. The short version:
+
+- Archived products got a screen (**Active / Archived** on the Products page, with
+  Restore) — and `ProductEdit` stopped rendering an archived product as a blank
+  "new product" form, which is what it did before.
+- **One** branch resolver (`src/lib/branch.ts`) replaced five, two of which held the
+  demo fixture's `'Mirpur Branch'`. Two write paths that could stamp a row with the
+  wrong branch id — or a null one — now refuse rather than guess.
+- **One** definition of a week (Saturday), and the renderer's custom-range parser
+  stopped reading a bare `YYYY-MM-DD` as UTC.
+- `showLineDiscount` implemented; `showLineTax` removed because it could not be made
+  honest. The receipt's line subtotal now uses the shared `lineSubtotal()`, which
+  restored a missing `max(0, …)` clamp.
+- The two payment reports aggregate their detail rows in SQL
+  (`reports.sellPaymentRows` / `reports.purchasePaymentRows`) instead of over one page
+  of a store, so the footer total and the rows above it finally agree.
+- A finalized invoice's **payments** can be corrected in place.
+- Pendrive backup distinguishes "no drive" from "could not look", and offers
+  `backup.toFolder` when Windows will not answer.
+- A cancelled purchase **retracts** the buying price it recorded — see §4a.
+- The browser-preview sample data is now a documented, dev-only, money-free
+  exception that Vite drops from production builds.
+- `package.json` gained an `allowScripts` block: npm 11 blocks install scripts, and
+  without it `better-sqlite3`, `electron` and `esbuild` install with no binaries at
+  all, so nothing runs (see §1).
+
+---
+
+## 3. What landed in the packaging/PDF session (older)
 
 **Packaging.** Two competing electron-builder configs existed (`electron-builder.json`
 silently won over the `build` block in package.json) — the package.json block is
@@ -324,60 +371,98 @@ artefacts). Only `HardwareKhataPOS-Setup-0.3.0.exe` and `latest.yml` remain —
 
 ## 4. Known gaps — pick up here
 
-**Closed this session:** gap 1 (re-print an old invoice — `InvoicePrintModal`),
-gap 3 (purchases feed the cost history), and gap 4 in part (the Paid/Partial/Due
-chips were exactly that class of bug: a derived figure read off a paginated store;
-they aggregate in SQL now). Gap 4 still stands for the **reports**.
+### Closed in the gap-clearing session (all of §4's "real, worth doing" list)
 
-**Real, worth doing:**
+Every numbered gap that stood here is done. What each turned out to be:
 
--1. **`'Mirpur Branch'` is still hard-coded in the branch ADAPTERS.**
-   `hooks/cashAdapter.ts` and `hooks/expenseAdapter.ts` both export
-   `BRANCH_NAME = { br_mp: 'Mirpur Branch' }`, used to turn a row's `branch_id`
-   into a display name. The screens that render it were fixed, but a row read back
-   through those adapters still shows the demo name. `resolveBranchId` depends on
-   the same map, so making it dynamic touches the expense/cash write paths —
-   worth doing **deliberately, with checks**, not as a drive-by.
-   Related: `pages/StockTransfers.tsx` has `const currentBranch = 'Mirpur Branch'`,
-   and `AppearancePage`'s preview card shows it as sample text.
+- **Archived products had no screen** (gap 0). `Products.tsx` has an
+  **Active / Archived** toggle, a Restore row action and a bulk Restore; the
+  status column reads `p.archivedAt` so a retired product is labelled wherever it
+  renders. A real bug came out of it: `ProductEdit` found its product by scanning
+  `useProducts()`, which **excludes archived rows**, so opening an archived
+  product's page silently rendered the blank "new product" form. It fetches by id
+  through the new `useProduct(id)` hook now, and shows a Restore banner.
+- **`'Mirpur Branch'` hard-coded in the adapters** (gap -1). There were **five**
+  copies of the id↔name translation, two of them the demo fixture's literal.
+  `src/lib/branch.ts` is now the only one. Two write-path bugs fell out: the stock
+  store resolved branches with the REPORT-FILTER resolver, whose contract returns
+  `undefined` for "all branches", so an unresolvable branch wrote a transfer with a
+  **null branch id** (stock leaving nowhere and arriving nowhere); and `cash.move`
+  stamped every movement with `br_mp` instead of the branch of the shift it was
+  posted to. Both refuse now rather than guess. `StockTransfers`' Inbound tab was
+  filtering on the literal, so on a real shop it always read "nothing on the way".
+- **"This week" meant two things** (gap 4b). The backend starts the week on
+  Saturday; the Sales and Purchases presets computed a Monday start, so on a
+  Saturday Reports showed the week's takings and the Sales list showed nothing.
+  One definition lives in `lib/datetime.ts` (`startOfBusinessWeek`) and
+  `ReportToolbar` was rebuilt on it — which also fixed its `custom` branch parsing
+  a bare `YYYY-MM-DD` as **UTC**, the same bug the backend had already fixed.
+- **Two dead receipt toggles** (gap 2). `showLineDiscount` is **implemented**
+  (prints what each line was discounted by, derived from the same two numbers the
+  total is). `showLineTax` was **removed**: VAT is applied at ORDER level and
+  neither `computeTotals` nor `computeSaleTotals` reads a line's `taxPct`, so a
+  per-line tax figure would be a number in no total the customer pays. On the way,
+  the receipt's inline line-subtotal arithmetic was replaced with `lineSubtotal()` —
+  the copy here omitted its `max(0, …)` clamp, so a flat discount larger than the
+  line printed a **negative** subtotal while the footer counted it as zero.
+- **Derived figures over one page** (gap 4). The remaining offenders were the two
+  payment reports: their detail tables were built by walking the sales/purchases
+  store (one page = the newest 50 documents) underneath a footer total computed in
+  SQL over the whole range, so the footer and the rows disagreed with nothing on
+  screen to explain it. New `reports.sellPaymentRows` / `reports.purchasePaymentRows`
+  use the **identical filter** to the aggregates, and the suite asserts the rows
+  sum to the headline total. Audited the rest: the Expenses / Products / Sales /
+  Purchases KPI strips are explicitly labelled "(this page)", and
+  `ReceivePaymentModal` already read the unpaged list.
+- **A sale's PAYMENTS could not be corrected** (gap 1b). `AddSale` now has a
+  payment editor, shown only when editing a finalized invoice, so a mistyped
+  *amount tendered* is fixed in place instead of voiding the number the customer is
+  holding. `Credit` is excluded from the methods on purpose — it is the unpaid
+  remainder, not money received.
+- **A cancelled purchase's buying price** (gap 3) — the decision is written up in
+  §4a below. It is **retracted** now, not left in the average.
+- **Pendrive detection had no fallback** (gap 6). "There is no pendrive" and "we
+  could not look" were the same empty array, so a PC with PowerShell blocked
+  reported *No pendrive found* with a stick plugged in. `probeUsbDrives()` reports
+  which it is, and the new `backup.toFolder` channel lets the owner point at the
+  drive themselves.
 
-0. **No screen lists ARCHIVED products.** The backend is complete —
-   `products.archive` / `products.unarchive` / `products.usage`, and
-   `listProducts({ archivedOnly: true })` — and all of it is covered by checks,
-   but the Products page has no "Archived" filter or Restore button yet. So an
-   archived product is currently only recoverable by someone who knows the
-   channel exists. **This is the first thing to finish**; archiving is offered to
-   the owner today.
-1b. **Editing a sale cannot change its PAYMENTS.** `AddSale` has no payment
-   editor, so `updateSale` re-applies the payments already on the invoice
-   verbatim. Correcting a wrongly-keyed *amount tendered* still needs Void +
-   re-create. The backend supports it — the form does not.
-2. **Two dead receipt toggles.** `showLineDiscount` and `showLineTax` exist in
-   settings and in `ReceiptTemplatePage` but **nothing in `Receipt.tsx` reads
-   them** — same class as the QR toggle already removed. Either implement or
-   remove; a switch that does nothing is a defect.
-3. **Cancelling a purchase leaves its buying price on record.**
-   `product_cost_history` is append-only by design, so `cancelPurchase` reverses
-   the stock and the cash but does NOT retract the price the purchase recorded —
-   it stays in the average. Arguably right (the shop really was quoted that price)
-   and arguably not. Decide deliberately; do not "fix" it by deleting history rows.
-4. **Reports reading paginated stores.** `CustomerGroupPage` was silently capped
-   at 50 customers because it merged figures from a store that became paginated.
-   That is a *class* of bug: audit any report/derived figure that reads a
-   paginated store's `items`. Aggregate in SQL instead. (The sales/purchases
-   payment chips were the same bug and are now SQL — the reports are not audited.)
-4b. **`resolveRange`'s week starts SATURDAY** (`core/dates.ts`, correct for
-   Bangladesh) but the Sales and Purchases list presets compute a **Monday** start
-   client-side. So "This week" means two different things depending on the screen.
-   Pick one — the backend's — and delete the client-side arithmetic.
-5. **Manual GUI smoke test** — `docs/06-E2E-AND-SMOKE-TEST.md`, human-only.
+### 4a. The decision on a cancelled purchase's buying price
 
-6. **Pendrive detection is Windows-only and shells out to PowerShell.** Node
-   cannot tell a removable drive from a fixed one. If PowerShell is disabled by
-   policy on the owner's PC, `listUsbDrives()` returns an empty list and the
-   button reports "No pendrive found" — which would be a lie. Not yet seen on
-   their machine; worth a fallback (or a "choose the folder yourself" escape
-   hatch) if it ever happens.
+Cancelling a purchase already reversed its stock and its cash. The price it had
+recorded stayed in `product_cost_history` for ever — and `avg_cost` is the mean of
+those entries — so a purchase keyed at the wrong price and cancelled a minute later
+moved the shop's average buying price permanently, with no way to undo it.
+
+**Decided: if the delivery never arrived, the shop never paid that price**, so the
+entry must stop counting. It is **retracted, never deleted** (schema **v7**:
+`product_cost_history.ref_type/ref_id/retracted_at/retract_reason`). The row stays,
+because the history is the audit record of what was entered and when — an owner
+staring at a surprising average most needs to see that the price *was* entered
+once and no longer counts. `cost` and `avg_cost` are recomputed ignoring retracted
+rows, so cancelling also rolls the CURRENT buying price back. The history popup
+shows them struck through, labelled "Cancelled — not counted".
+
+Nothing is back-filled: purchases cancelled before v7 never recorded which history
+rows they created, and guessing from timestamps could retract a price the owner
+typed by hand.
+
+### Still open
+
+5. **Manual GUI smoke test** — `docs/06-E2E-AND-SMOKE-TEST.md`, human-only. This
+   is now the only unticked item in the definition of done.
+
+7. **Single-branch writes still assume `br_mp`.** This is NOT the gap -1 that was
+   just closed (that was the branch *name* and the resolvers). About fifteen call
+   sites still pass the literal id `'br_mp'` where they mean "the shop's default
+   branch": `POS.tsx`, `AddSale`, `AddPurchase`, `ProductPanel`, `QuickUpdateModal`,
+   `NewProductDrawer`, `StockAlerts`, `useDashboardData`, and the sell-return /
+   purchase-return / shipment / supplier-payment writes in `stores/{sales,purchases,contacts}.ts`.
+   It is harmless today — the seed always creates `br_mp` as the default branch —
+   and it is the **deliberately deferred** "multi-branch context needs a real branch
+   switcher" item in `03-WHATS-LEFT.md`. `defaultBranchId()` in `src/lib/branch.ts`
+   is the helper to switch them to when that work is picked up; doing it piecemeal
+   would leave a confusing half-state.
 
 **Deliberately deferred (ask before doing):**
 
@@ -404,6 +489,14 @@ they aggregate in SQL now). Gap 4 still stands for the **reports**.
    `electron/permissions.ts`). Putting it in services breaks the Node harness.
 5. **No mock data, ever.** `src/mocks/` is deleted. No backend source → render
    `'—'` and exclude from totals. Never invent or estimate a number.
+   **The one bounded exception** is `src/lib/browserMock.ts`, which lets the UI be
+   opened in a plain browser for visual work. It is gated on `browserPreview()`
+   = `import.meta.env.DEV && !hasBackend()`, so Vite drops it from a production
+   build entirely (verified by grepping `dist/` for its sample names), and it is
+   limited to catalogue reference data — products, customers, categories, brands,
+   units. **It must never grow to cover money**: no sales, payments, dues, stock
+   movements, KPIs or report rows. To see money without a real shop, use
+   `POS_SEED=demo npm run dev`, which generates a year through the real services.
 6. **Add a check for every new invariant.** A failing check is a real bug.
 7. **The two averages are different figures and must stay separate:**
    `avg_cost` (simple mean of buying prices, owner-facing) vs `weightedAvgCost()`
@@ -436,10 +529,30 @@ they aggregate in SQL now). Gap 4 still stands for the **reports**.
    customer, and the catalogue moving is not a reason to charge them differently.
 15. **A control with no handler is a defect, not a placeholder.** Wire it or delete
    it — including `Link`s to routes that do not exist in `App.tsx`.
+16. **A setting that cannot be implemented honestly must be REMOVED, not faked.**
+   `showLineTax` was deleted rather than wired up, because the only figure it could
+   have printed is not part of any total the customer pays. A toggle is a promise
+   about what the app does with the money.
+17. **There is ONE branch resolver: `src/lib/branch.ts`.** `branchNameOf` for
+   display, `requireBranchId` on a write path (it throws rather than guess — a row
+   stamped with the wrong or a null branch id drops out of every branch-scoped
+   figure for ever). Never add another map, and never fall back to a literal id.
+   `resolveBranchId` in `hooks/useReport.ts` is a *different contract* for report
+   filters, where `''` means "all branches" and `undefined` is the right answer.
+18. **A date range has ONE definition, and it is the backend's.** The week starts
+   **Saturday**. The renderer's half lives in `src/lib/datetime.ts`, mirroring
+   `backend/core/dates.ts`; never re-derive a preset inline in a screen. And never
+   parse a bare `YYYY-MM-DD` with `new Date()` — that is UTC, and it has silently
+   dropped the last day of a range twice now.
+19. **A cost-history entry is retracted, never deleted** (`retractCostEntries`).
+   Cancelling the document that recorded a price stops it counting towards
+   `cost`/`avg_cost`; the row stays, because it is the audit record of what was
+   entered. Same principle as voiding rather than deleting a sale.
 
 **Bangla:** append-only `Object.assign(BN, {…})` blocks in `src/lib/bn/dict.ts`.
 Never reorder or delete. Duplicate keys across blocks **must agree** —
-`i18n:check` parses the source and fails otherwise (it has caught this twice).
+`i18n:check` parses the source and fails otherwise (it has now caught this three
+times, most recently a second `'Restore failed'` that disagreed with the first).
 New copy must be a **complete static phrase in its own text node**; the layer
 matches whole nodes, so a value interpolated mid-sentence can never be translated.
 

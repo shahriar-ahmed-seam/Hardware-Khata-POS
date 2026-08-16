@@ -1,30 +1,16 @@
 import { create } from 'zustand';
 import { api } from '@/lib/api';
 import { toast } from '@/stores/toast';
-import { useBranches } from '@/stores/branches';
 import { toPurchaseRecord, type BackendPurchase } from '@/hooks/purchaseAdapter';
+import { requireBranchId } from '@/lib/branch';
 
 /**
  * Purchases store. Backend-only: the list is loaded through `hydrate` and every
  * write persists via the IPC api, then rehydrates.
  */
 
-/**
- * Resolve a branch value (id like `br_mp` OR display name like "Mirpur Branch")
- * into a real backend branch id via the branches store; falls back to the
- * default/first branch only when truly unresolvable. Prevents the old
- * "any name → br_mp" collapse that would mis-post a non-default-branch purchase.
- */
-function resolveBranchToId(branch: string | undefined): string {
-  if (branch && branch.startsWith('br_')) return branch;
-  const items = useBranches.getState().items;
-  if (branch) {
-    const match = items.find((b) => b.name === branch);
-    if (match) return match.id;
-  }
-  const def = items.find((b) => b.isDefault) ?? items[0];
-  return def?.id ?? 'br_mp';
-}
+/** Branch id / display name → backend branch id. See `src/lib/branch.ts`. */
+const resolveBranchToId = requireBranchId;
 
 export type PurchaseStatus = 'received' | 'ordered' | 'in-transit' | 'cancelled';
 

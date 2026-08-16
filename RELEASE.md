@@ -1,7 +1,7 @@
 # Hardware Khata POS — Releasing & Updating
 
-**Current version: 0.5.0** · Windows x64 · NSIS installer, per-user (no admin needed)
-Installer: `release/HardwareKhataPOS-Setup-0.5.0.exe` (~82 MB)
+**Current version: 0.6.0** · Windows x64 · NSIS installer, per-user (no admin needed)
+Installer: `release/HardwareKhataPOS-Setup-0.6.0.exe` (~82 MB)
 
 ---
 
@@ -42,10 +42,10 @@ shop PC: opens the app ─────────┘
 
 ```powershell
 # 1. bump the version (this is what clients compare against)
-#    package.json → "version": "0.5.0"
+#    package.json → "version": "0.6.1"   ← must be HIGHER than the published one
 
 # 2. prove it still works
-npm run backend:verify:all          # 999 checks, seven suites
+npm run backend:verify:all          # 1,078 checks, seven suites
 npx tsc --noEmit -p tsconfig.json
 npm run i18n:check
 npm run rebuild:electron            # leave the native module on the Electron ABI
@@ -72,7 +72,9 @@ always be run by hand — it upgrades in place and never touches the database.
 `%APPDATA%\pos\pos.db` — **outside** the install folder, so installing,
 upgrading and uninstalling never touch it.
 
-- Schema is at **v6**; migrations run automatically on launch and are additive.
+- Schema is at **v7**; migrations run automatically on launch and are additive.
+  v7 adds four nullable columns to `product_cost_history` so a cancelled purchase
+  can retract the buying price it recorded. Nothing existing is rewritten.
   **0.4.0 adds no migration at all**, so upgrading to it cannot touch your data.
 - Backups: Settings → Backup & Cloud writes verified `VACUUM INTO` snapshots
   (`pos-backup-YYYYMMDD-HHMMSS.sqlite3`) and keeps the newest N (default 14).
@@ -82,7 +84,79 @@ upgrading and uninstalling never touch it.
 
 ---
 
-## 2a. What's in 0.5.0
+## 2a. What's in 0.6.0
+
+> **Upgrade in place — do NOT reinstall.** Settings → Updates → Download, then Restart
+> and install. There IS a small schema change this time (v7) but it only ADDS four
+> empty columns to the buying-price history, so every product, customer, sale,
+> purchase, balance and photo stays exactly as it is.
+
+**You can now see and undo an archived product.** Archiving has been offered since
+0.2.0 — it is what the app does instead of deleting a product you have already sold —
+but there was no screen that listed archived products and no button to bring one back.
+The Products page now has an **Active / Archived** switch, and each archived row has a
+**Restore**. Worse than the missing button: opening an archived product from a link
+showed a blank "new product" form, because the page looked for it in a list that
+excludes archived items. Fixed.
+
+**A wrongly typed payment amount can be corrected without cancelling the invoice.**
+This was the last thing that still forced a Void: if ৳5,000 was keyed as ৳500, editing
+the sale could correct the items but not the money. Editing a finalized invoice now
+shows its payments, so you can fix the amount, add a payment that was missed, change
+the method, or clear them all. It shows **Invoice total / Paid / Still owing** before
+you save, warns if the payments come to more than the invoice, and the invoice keeps
+its number — the customer's copy stays valid. Admin only, and a reason is still
+required.
+
+**"This week" meant two different things depending on the screen.** The reports counted
+the week from Saturday; the Sales and Purchases lists counted it from Monday. So on a
+Saturday the reports showed the week's takings and the Sales list showed nothing at
+all, with no hint that they were answering different questions. Everything uses the
+Saturday-to-today week now. A custom date range typed by hand also no longer loses its
+last day.
+
+**The Sell Payment and Purchase Payment reports were contradicting themselves.** The
+total at the bottom counted every payment in the date range, but the rows above it only
+listed payments belonging to the newest 50 invoices. On a shop with history the two
+never matched, and nothing on screen said why. Both now list every payment in the
+range. If you filter by method or search, the bottom line says **Shown** and adds up
+only what you can see.
+
+**Cancelling a purchase now also undoes the price it recorded.** Cancelling already put
+the stock back and returned the cash, but the buying price stayed in the average for
+ever — so a purchase entered at ৳1,200 instead of ৳120 and cancelled a minute later
+moved your average buying price permanently, with no way to fix it. If the goods never
+arrived, you never paid that price, so it stops counting. The entry is not deleted: it
+still appears in the price history, crossed out and marked *Cancelled — not counted*,
+because you should be able to see that the price was once entered.
+
+**Backup to Pendrive stops lying when it cannot see your drives.** On some computers
+Windows refuses to tell the app which drives are removable. It used to report *No
+pendrive found* — with a pendrive plugged in. It now says what actually happened and
+offers **Choose folder…**, so you point at the drive yourself and the copy is written
+the same way. It still does not change where your scheduled backups go, and it still
+deletes nothing already on the drive.
+
+**Receipts.** The **Line discount** switch in Settings → Receipt Template had no
+effect; it works now, printing what each item was discounted by. The **Line tax**
+switch was removed rather than wired up: VAT is charged on the whole bill, not per
+item, so any per-item tax figure would have been a number that is in no total the
+customer pays. Also fixed a case where an item discounted by a flat amount larger than
+the item's value printed a negative subtotal while the bill total counted it as zero.
+
+**Wrong branch names, and one that could file things in the wrong place.** The demo
+shop's *"Mirpur Branch"* was still hard-coded in the code that turns a branch into a
+name, so cash shifts and expenses read back with that name whatever your branch is
+called, and the Stock Transfers "Inbound" tab matched nothing on a real shop. Behind
+that were two ways a record could be filed against the wrong branch — or no branch at
+all, which would drop it out of every branch total from then on. The app now refuses
+and tells you, instead of guessing.
+
+Under the hood: verification went from 999 to **1,078 automated checks**, all green.
+
+---
+
+## 2b. What's in 0.5.0
 
 > **Upgrade in place — no reinstall.** No schema change again, so
 > `%APPDATA%\pos\pos.db` is untouched.
@@ -126,7 +200,7 @@ Also removed a fake "Advance Balance ৳ 0.00" tile from the supplier payment di
 
 ---
 
-## 2b. What's in 0.4.0
+## 2c. What's in 0.4.0
 
 > **Upgrading is enough — do NOT reinstall.** There is **no schema change** in
 > this release, so `%APPDATA%\pos\pos.db` is untouched: every product, customer,
@@ -200,7 +274,7 @@ honest option), and +47 Bangla phrases (2,353 total).
 
 ---
 
-## 2c. What's in 0.3.0
+## 2d. What's in 0.3.0
 
 **Product photos and the shop logo no longer disappear.** They were being saved
 as `URL.createObjectURL(file)` — a `blob:` handle into the *current window's*
@@ -272,19 +346,19 @@ the internet.
 
 ## 4. Verification
 
-999 checks across seven suites, all green:
+1,078 checks across seven suites, all green:
 
 | Suite | Checks |
 |---|---:|
-| `all.ts` | 385 |
-| `api.ts` | 209 (150 channels) |
-| `run.ts` | 65 |
+| `all.ts` | 395 |
+| `api.ts` | 216 (152 channels) |
+| `run.ts` | 105 |
 | `e2e.ts` | 68 |
 | `paging.ts` | 91 |
 | `backup.ts` | 120 |
-| `costing.ts` | 61 |
+| `costing.ts` | 83 |
 
-Plus `npm run i18n:check` — 32 checks, 2,364 Bangla phrases.
+Plus `npm run i18n:check` — 32 checks, 2,385 Bangla phrases.
 `npm run lint` does **not** work (eslint is not installed); `tsc` is the gate.
 
 ---

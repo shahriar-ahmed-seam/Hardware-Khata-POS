@@ -143,8 +143,11 @@ export default function ReceiptTemplatePage() {
             <ToggleRow label="Served by (cashier name)" checked={r.showCashier} onChange={(v) => set({ showCashier: v })} />
             <ToggleRow label="Customer phone" checked={r.showCustomerPhone} onChange={(v) => set({ showCustomerPhone: v })} />
             <ToggleRow label="Customer address" checked={r.showCustomerAddress} onChange={(v) => set({ showCustomerAddress: v })} />
+            {/* "Line tax" was here and is gone: it never had any effect, and it
+                could not be given one honestly — VAT is applied at order level,
+                so a per-line tax figure would not be part of any total the
+                customer pays. See ReceiptTemplate in stores/settings.ts. */}
             <ToggleRow label="Line discount" checked={r.showLineDiscount} onChange={(v) => set({ showLineDiscount: v })} />
-            <ToggleRow label="Line tax" checked={r.showLineTax} onChange={(v) => set({ showLineTax: v })} />
             <ToggleRow label="Payment reference / TxID" checked={r.showPaymentRef} onChange={(v) => set({ showPaymentRef: v })} />
             <ToggleRow label="Barcode of invoice no" checked={r.showBarcode} onChange={(v) => set({ showBarcode: v })} />
             <ToggleRow label="Amount in words" checked={r.showAmountInWords} onChange={(v) => set({ showAmountInWords: v })} />

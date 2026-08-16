@@ -55,11 +55,16 @@ verify/
   e2e.ts          one full shop day through buildApi() from a clean first-run DB
   paging.ts       paged list reads == unpaged truth, clamping, filters, partitions
   backup.ts       snapshot/verify/retention/export behaviour on real files
-api.ts            buildApi(): flat { channel -> handler(db, payload) } — 146 channels
+api.ts            buildApi(): flat { channel -> handler(db, payload) } — 152 channels
 README.md         architecture deep-dive
 ```
 
-## Database schema (v1)
+## Database schema (head: v7)
+
+> Migrations live in `db/connection.ts` and are all **additive and idempotent** —
+> v2 price-group columns, v3 shipments, v4 cost history, v5 `products.archived_at`,
+> v6 clearing dead `blob:` image URLs, v7 the cost-history retraction columns.
+> No migration has ever rewritten existing shop data.
 
 ~30 tables. Highlights (full DDL in `db/schema.ts`):
 
@@ -103,8 +108,11 @@ and the seeder agree:
   routes cash payments to the open shift, writes audit + activity + FTS. Drafts/quotations
   touch nothing. `deleteSale` only removes drafts/quotations (final → use void).
 - **Void**: reverses stock, reverses cash collected in cash, flips status, audits.
-- **Purchase (received)**: increases stock, routes cash out to shift. `cancelPurchase`
-  reverses stock-in + cash (idempotent); `deletePurchase` guards received purchases.
+- **Purchase (received)**: increases stock, routes cash out to shift, and records each line's
+  unit cost through `setProductCost` (never a raw `UPDATE`). `cancelPurchase` reverses
+  stock-in + cash (idempotent) **and retracts the buying prices the purchase recorded** —
+  marked, not deleted, so `cost`/`avg_cost` recompute without them while the audit row
+  survives. `deletePurchase` guards received purchases.
 - **Sell return**: restores stock; Cash→drawer out, StoreCredit→customer credit,
   CreditAdjust→reduces due via ledger. Inherits customer from the source sale.
 - **Purchase return**: reduces stock; CashRefund→drawer in, CreditAdjust→reduces payable.
@@ -118,7 +126,7 @@ and the seeder agree:
 
 ## API facade (`backend/api.ts`)
 
-`buildApi()` returns `{ channel: (db, payload) => result }`. **146 channels** grouped:
+`buildApi()` returns `{ channel: (db, payload) => result }`. **152 channels** grouped:
 reads (`*.list`, `*.get`, `*.listPage`, `search.global`), writes (`sales.create`,
 `purchases.create`, `*.void`, `cash.openShift`, catalog/contacts/settings CRUD, ...),
 aggregations (`dashboard.*`, `reports.*`), backup (`backup.status/run/configure/export/
@@ -265,39 +273,47 @@ Symptom of wrong ABI: `ERR_DLOPEN_FAILED`. Fix: run the matching rebuild script.
 
 ## Verification — what's proven
 
-Run `npm run backend:verify:all` → **seven suites, 860 checks** (grew from 122 as slices were
-wired):
+Run `npm run backend:verify:all` → **seven suites, 1,078 checks** (grew from 122 as slices
+were wired):
 
 | Suite | Checks | What it covers |
 |-------|-------:|----------------|
-| `all.ts` | 309 | scenarios + determinism + file-DB smoke + identities |
-| `api.ts` | 193 | the `buildApi()` facade |
-| `run.ts` | 56 | identities on a 365-day dataset |
+| `all.ts` | 395 | scenarios + determinism + file-DB smoke + identities |
+| `api.ts` | 216 | the `buildApi()` facade |
+| `run.ts` | 105 | identities on a 365-day dataset, date ranges, payment detail rows |
 | `e2e.ts` | 68 | one full shop day |
-| `paging.ts` | 80 | paginated list reads |
-| `backup.ts` | 105 |
-| `costing.ts` | 49 | backup & cloud saving |
+| `paging.ts` | 91 | paginated list reads |
+| `backup.ts` | 120 | backup, cloud, CSV export, invoice PDFs, pendrive copies |
+| `costing.ts` | 83 | purchase-price history, incl. retraction on a cancelled purchase |
 
 - **68 E2E** (e2e.ts) — a full shop day through the `buildApi()` facade from a clean
   first-run DB, reconciling every cross-module number (see `docs/06-E2E-AND-SMOKE-TEST.md`).
-- **56 identities** (run.ts) on a 365-day dataset: per-sale total/due/subtotal/profit/cogs;
+- **identities** (run.ts) on a 365-day dataset: per-sale total/due/subtotal/profit/cogs;
   per-purchase due + stock-in; stock never negative; ledger formulas; cash reconciliation;
-  ref uniqueness; dashboard==raw; report consistency; FK integrity; FTS coverage.
+  ref uniqueness; dashboard==raw; report consistency; FK integrity; FTS coverage. Plus two
+  range rules that used to differ between screens: a custom range is INCLUSIVE and on the
+  local clock, and **a week starts on Saturday** — asserted for all seven weekdays, because
+  the Sales and Purchases lists once computed a Monday start client-side.
 - **scenarios** (scenarios.ts): exact expected values for WAC, COGS, payments, returns,
-  transfers, adjustments, cash drawer, drafts, void, catalog CRUD, purchase cancel/delete,
-  sale delete, contacts CRUD + supplier-pay, expense void/delete/edit drawer reversal,
-  settings CRUD, auth (hash/verify/legacy-upgrade), setup (run-once).
-- **193 API checks** (api.ts) across **146 registered channels**: the buildApi() facade
+  transfers, adjustments, cash drawer, drafts, void, catalog CRUD + archive/restore, purchase
+  cancel/delete, sale delete, **correcting a finalized invoice including its payments**,
+  contacts CRUD + supplier-pay, expense void/delete/edit drawer reversal, settings CRUD,
+  auth (hash/verify/legacy-upgrade), setup (run-once).
+- **216 API checks** (api.ts) across **152 registered channels**: the buildApi() facade
   end-to-end incl. write-then-read, per slice (api-catalog/purchases/sales/contacts/cash/
   expenses/dashboard-extra/reports-extra/settings/auth/setup/stockops/warranties/
   price-groups/shipments).
-- **80 paging checks** (paging.ts) across all six server-paged channels: paged derived values
+- **91 paging checks** (paging.ts) across all six server-paged channels: paged derived values
   equal the unpaged ones product-by-product and customer-by-customer (stock from movements,
   customer/supplier dues), the three product stock states partition the catalogue, paged
   expenses exclude voided rows, and every channel clamps `pageSize` to 200 and `page` to ≥1.
-- **105 backup checks** (backup.ts) — snapshot, integrity verification, the delete-on-failed-
+- **120 backup checks** (backup.ts) — snapshot, integrity verification, the delete-on-failed-
   verify rule, filename-based retention, and CSV export, on real files.
-- **+ combined** (all.ts, 309 checks): scenarios + identities + determinism (same
+- **83 costing checks** (costing.ts) — the history table is the source of truth and the three
+  product columns are a cache that cannot drift from it; a received purchase moves both the
+  current and the average buying price; an ordered purchase moves neither; and **cancelling a
+  purchase retracts the price it recorded** without deleting the row (schema v7).
+- **+ combined** (all.ts, 395 checks): scenarios + identities + determinism (same
   seed→same data) + persistent-file smoke.
 
 Single suites: `npm run backend:verify` (identities), `backend:scenarios`, `backend:e2e`,

@@ -3140,3 +3140,59 @@ Object.assign(BN, {
   // ('Full due' is already translated in an earlier block.)
   Half: 'অর্ধেক',
 });
+
+// ---------------------------------------------------------------------------
+// APPEND-ONLY BLOCK — the archived-products view and its Restore route, the
+// payment editor on a corrected invoice, the "Shown" footer on the two payment
+// reports, a retracted buying price, and the pick-the-drive-yourself fallback
+// when Windows will not say which drives are removable.
+//
+// 'Active', 'Restore', 'Paid' and 'Total' are deliberately NOT here: they are
+// already translated in earlier blocks, and a second entry that disagreed would
+// silently win. `npm run i18n:check` fails on exactly that.
+// ---------------------------------------------------------------------------
+Object.assign(BN, {
+  // --- archived products
+  Archived: 'আর্কাইভ করা',
+  'Archived Products': 'আর্কাইভ করা পণ্য',
+  'Restore to the catalogue': 'তালিকায় ফিরিয়ে আনুন',
+  'Restore to catalogue': 'তালিকায় ফিরিয়ে আনুন',
+  'This product is archived': 'এই পণ্যটি আর্কাইভ করা আছে',
+  'It is out of the product list, the POS and search. Past invoices are unchanged.':
+    'এটি পণ্য তালিকা, বিক্রয় স্ক্রিন ও সার্চ থেকে সরানো আছে। পুরোনো ইনভয়েস অপরিবর্তিত।',
+  'Product restored': 'পণ্য ফিরিয়ে আনা হয়েছে',
+  // ('Restore failed' is already translated in an earlier block — i18n:check
+  // caught a second entry here that disagreed with it, which is exactly the
+  // mistake that check exists to stop.)
+  'No archived products. Nothing has been retired from the catalogue.':
+    'কোনো আর্কাইভ করা পণ্য নেই। তালিকা থেকে কিছুই সরানো হয়নি।',
+  'These products are retired: they are out of the product list, out of the POS and out of search. Every past invoice, purchase and report that names them is unchanged. Restore one to bring it back.':
+    'এই পণ্যগুলো সরিয়ে রাখা হয়েছে: এগুলো পণ্য তালিকা, বিক্রয় স্ক্রিন ও সার্চে নেই। এগুলোর নাম থাকা প্রতিটি পুরোনো ইনভয়েস, ক্রয় ও রিপোর্ট অপরিবর্তিত আছে। ফিরিয়ে আনতে রিস্টোর করুন।',
+
+  // --- a buying price whose purchase was cancelled
+  'Cancelled — not counted': 'বাতিল — হিসাবে ধরা হয়নি',
+
+  // --- payments on a corrected invoice
+  'Payments received': 'গৃহীত পরিশোধ',
+  'Add payment': 'পরিশোধ যোগ করুন',
+  'No payment recorded — the whole invoice is on credit.':
+    'কোনো পরিশোধ নথিভুক্ত নেই — পুরো ইনভয়েসটি বাকিতে।',
+  'Invoice total': 'ইনভয়েসের মোট',
+  'Still owing': 'এখনও বাকি',
+  'Remove this payment': 'এই পরিশোধ সরান',
+
+  // --- payment reports: the footer sums the rows on screen once a filter narrows them
+  Shown: 'প্রদর্শিত',
+
+  // --- pendrive backup when Windows will not report removable drives
+  'Choose the drive yourself': 'ড্রাইভ নিজে বেছে নিন',
+  'This computer would not tell the app which drives are removable.':
+    'এই কম্পিউটার অ্যাপকে জানায়নি কোন ড্রাইভগুলো খুলে নেওয়া যায়।',
+  'This saves one copy where you choose. It does not change where your scheduled backups go, and it does not delete anything already on the drive.':
+    'আপনি যেখানে বলবেন সেখানে একটি কপি সংরক্ষণ হবে। এতে নিয়মিত ব্যাকআপের জায়গা বদলাবে না, এবং ড্রাইভে আগে থাকা কিছুই মুছে যাবে না।',
+  'Choose folder…': 'ফোল্ডার বাছুন…',
+
+  // --- appearance preview, when the shop has not named itself yet
+  'Your shop': 'আপনার দোকান',
+  'Your branch': 'আপনার শাখা',
+});

@@ -1,26 +1,17 @@
 import { create } from 'zustand';
 import { api } from '@/lib/api';
 import { toast } from '@/stores/toast';
-import { useBranches } from '@/stores/branches';
 import { toSaleRecord, toSellReturnRecord, toShipment, type BackendSale } from '@/hooks/saleAdapter';
+import { requireBranchId } from '@/lib/branch';
 
 /**
- * Resolve a branch value (which may be an id like `br_mp` OR a display name like
- * "Mirpur Branch") into a real backend branch id. Looks the name up in the
- * branches store; falls back to the default/first branch only when truly
- * unresolvable. This prevents the old "any name → br_mp" collapse that would
- * silently mis-post a non-default-branch sale to the default branch.
+ * Resolve a branch value (an id like `br_mp` OR a display name) into a real
+ * backend branch id. One shared implementation now lives in `src/lib/branch.ts`;
+ * this used to be a private copy here, in `stores/purchases.ts`, and in two
+ * adapters, and the copies did not agree — the adapter ones collapsed every
+ * unrecognised name to `br_mp`.
  */
-function resolveBranchToId(branch: string | undefined): string {
-  if (branch && branch.startsWith('br_')) return branch; // already an id
-  const items = useBranches.getState().items;
-  if (branch) {
-    const match = items.find((b) => b.name === branch);
-    if (match) return match.id;
-  }
-  const def = items.find((b) => b.isDefault) ?? items[0];
-  return def?.id ?? 'br_mp';
-}
+const resolveBranchToId = requireBranchId;
 
 /**
  * Sale lifecycle status:

@@ -46,6 +46,13 @@ export type Product = {
   // Audit
   createdAt?: string;
   updatedAt?: string;
+  /**
+   * When the product was retired from the catalogue, or undefined while it is
+   * active. NOT the same fact as `notForSale` ("we stock it but never sell it") —
+   * an archived product is gone from the catalogue, the POS and search, while
+   * every past document that names it still resolves.
+   */
+  archivedAt?: string;
 };
 
 export type Customer = {

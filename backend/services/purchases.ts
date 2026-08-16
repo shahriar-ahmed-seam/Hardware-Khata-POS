@@ -7,7 +7,7 @@ import { recordMovement } from './stock.ts';
 import { postCashToOpenShift } from './cash.ts';
 import { logActivity } from './activity.ts';
 import { nextRef } from './sequences.ts';
-import { setProductCost } from './costing.ts';
+import { retractCostEntries, setProductCost } from './costing.ts';
 
 export type PurchaseStatus = 'received' | 'ordered' | 'in-transit' | 'cancelled';
 
@@ -225,6 +225,10 @@ export function createPurchase(db: DB, input: CreatePurchaseInput) {
           userId: input.userId,
           source: 'purchase',
           note: `Purchase ${refNo}`,
+          // Tagged with the purchase so cancelling it can retract exactly the
+          // prices it recorded — see `retractCostEntries` in services/costing.ts.
+          refType: 'purchase',
+          refId: id,
           at: date,
         });
 
@@ -359,6 +363,24 @@ export function cancelPurchase(db: DB, purchaseId: string, userId: string, reaso
         });
       }
     }
+
+    /**
+     * The buying prices this purchase put on record are retracted too.
+     *
+     * This used to be left alone, and it was the one part of a cancellation that
+     * did not actually come back: the stock went off the shelf again and the cash
+     * returned to the drawer, but the price stayed in `product_cost_history` — and
+     * `avg_cost` is the mean of those entries. So a purchase keyed at the wrong
+     * price and cancelled a minute later moved the shop's average buying price
+     * permanently, with no way to undo it.
+     *
+     * If the delivery never arrived, the shop never paid that price. The rows are
+     * MARKED, not deleted (the table is the audit record of what was entered and
+     * when), and `cost` / `avg_cost` are recomputed from what is left standing.
+     * Runs for 'ordered' cancellations too — harmless, since an ordered purchase
+     * recorded no prices, so there is nothing to find.
+     */
+    retractCostEntries(db, 'purchase', purchaseId, `Purchase ${pur.ref_no as string} cancelled`);
 
     db.prepare(
       `UPDATE purchases SET status = 'cancelled', cancelled_at = ?, updated_at = ? WHERE id = ?`,

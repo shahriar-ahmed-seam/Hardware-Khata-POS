@@ -119,8 +119,20 @@ export interface ReceiptTemplate {
   showCashier: boolean;
   showCustomerPhone: boolean;
   showCustomerAddress: boolean;
+  /** Prints what each line was discounted by, under its qty × rate detail. */
   showLineDiscount: boolean;
-  showLineTax: boolean;
+  /**
+   * `showLineTax` USED TO BE HERE AND HAS BEEN REMOVED. It was a switch that did
+   * nothing, and it could not be implemented honestly: VAT in this app is applied
+   * at ORDER level. `CartLine.taxPct` is carried on a line but neither
+   * `computeTotals` (renderer) nor `computeSaleTotals` (backend) uses it, so a
+   * per-line tax amount printed on a receipt would be a number that is in no
+   * total the customer is paying — an invented figure on a document they keep.
+   *
+   * If per-line VAT is ever wanted it is a change to the money core first (line
+   * tax into `computeSaleLine` + `computeSaleTotals`, with checks), and only then
+   * a receipt toggle.
+   */
   showPaymentRef: boolean;
   /** The small date (left) + branch (right) strip along the very top. */
   showDateAndBranch: boolean;
@@ -139,7 +151,6 @@ const DEFAULT_RECEIPT: ReceiptTemplate = {
   showCustomerPhone: true,
   showCustomerAddress: true,
   showLineDiscount: true,
-  showLineTax: false,
   showPaymentRef: true,
   showDateAndBranch: true,
   showBarcode: true,

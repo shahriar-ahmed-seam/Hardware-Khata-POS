@@ -1,11 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, hasBackend } from '@/lib/api';
+import { api } from '@/lib/api';
 import type { Category, Brand } from '@/types/domain';
 import type { UnitRecord, UnitType } from '@/stores/masterData';
 import {
   BROWSER_MOCK_CATEGORIES,
   BROWSER_MOCK_BRANDS,
   BROWSER_MOCK_UNITS,
+  browserPreview,
 } from '@/lib/browserMock';
 
 /** Categories + brands hooks (backend-backed), adapted to the UI's flat types. */
@@ -32,7 +33,8 @@ export function useCategories() {
   return useQuery({
     queryKey: ['categories'],
     queryFn: async () => {
-      if (!hasBackend()) {
+      // DEV-ONLY browser preview — see src/lib/browserMock.ts.
+      if (browserPreview()) {
         return BROWSER_MOCK_CATEGORIES;
       }
       const rows = await api<BackendCategory[]>('categories.list');
@@ -52,7 +54,7 @@ export function useBrands() {
   return useQuery({
     queryKey: ['brands'],
     queryFn: async () => {
-      if (!hasBackend()) {
+      if (browserPreview()) {
         return BROWSER_MOCK_BRANDS;
       }
       const rows = await api<BackendBrand[]>('brands.list');
@@ -65,7 +67,7 @@ export function useUnits() {
   return useQuery({
     queryKey: ['units'],
     queryFn: async () => {
-      if (!hasBackend()) {
+      if (browserPreview()) {
         return BROWSER_MOCK_UNITS;
       }
       const rows = await api<BackendUnit[]>('units.list');

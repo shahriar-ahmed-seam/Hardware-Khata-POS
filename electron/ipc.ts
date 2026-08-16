@@ -6,10 +6,11 @@ import {
   applyFolder,
   applyPdfFolder,
   backupFolderOptions,
+  backupToChosenFolder,
   backupToUsb,
   chooseBackupFolder,
-  listUsbDrives,
   onShiftClosed,
+  probeUsbDrives,
   restoreFromSnapshot,
   revealBackupFolder,
 } from './backup.ts';
@@ -47,6 +48,8 @@ const ELECTRON_BACKUP_CHANNELS = new Set([
   // (WMI via PowerShell), so it cannot live in buildApi() either.
   'backup.usbDrives',
   'backup.toUsb',
+  // The escape hatch when Windows will not tell us which drives are removable.
+  'backup.toFolder',
 ]);
 
 /**
@@ -409,12 +412,19 @@ async function handleElectronBackup(channel: string, payload: unknown) {
         return { ok: true, data: await restoreFromSnapshot({ file }) };
       }
 
+      // Returns { drives, detection, detail }: "there is no pendrive" and "we
+      // could not look" are different answers and the screen says which.
       case 'backup.usbDrives':
-        return { ok: true, data: await listUsbDrives() };
+        return { ok: true, data: await probeUsbDrives() };
 
       case 'backup.toUsb': {
         const drive = (payload as { drive?: string } | undefined)?.drive;
         return { ok: true, data: await backupToUsb(drive) };
+      }
+
+      case 'backup.toFolder': {
+        const preset = (payload as { folder?: string } | undefined)?.folder;
+        return { ok: true, data: await backupToChosenFolder(preset) };
       }
 
       default:

@@ -1,15 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Banknote, Smartphone, CreditCard, Building, FileText, Search } from 'lucide-react';
 import {
   ReportToolbar,
   DEFAULT_RANGE,
-  isInRange,
   type DateRange,
 } from '@/components/reports/ReportToolbar';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
-import { usePurchases } from '@/stores/purchases';
 import { useReport, useBranchId } from '@/hooks/useReport';
 import { hasBackend } from '@/lib/api';
 import { formatBDT, formatNumber } from '@/lib/utils';
@@ -50,20 +48,28 @@ interface BackendPayments {
   total: number;
 }
 
+/** Shape returned by `reports.purchasePaymentRows` — one row per payment. */
+interface BackendPaymentRows {
+  rows: {
+    id: string;
+    purchase_id: string;
+    ref_no: string | null;
+    paid_at: string;
+    method: string;
+    amount: number;
+    reference: string | null;
+    supplier_name: string;
+    user_name: string | null;
+  }[];
+  total: number;
+  truncated: boolean;
+}
+
 export default function PurchasePaymentPage() {
-  const purchases = usePurchases((s) => s.purchases);
-  const hydratePurchases = usePurchases((s) => s.hydrate);
   const [range, setRange] = useState<DateRange>(DEFAULT_RANGE);
   const [branch, setBranch] = useState('');
   const [q, setQ] = useState('');
   const [method, setMethod] = useState('');
-
-  // The detail table below needs individual payment records, which the purchases
-  // store carries (it hydrates `purchases.list` with nested payments). Hydrate on
-  // mount so the table is populated when this page is the entry point.
-  useEffect(() => {
-    void hydratePurchases();
-  }, [hydratePurchases]);
 
   // Backend wiring: `reports.purchasePayments` returns by-method totals only, so
   // it drives the summary chips + grand total.
@@ -74,30 +80,32 @@ export default function PurchasePaymentPage() {
     [range, branchId],
   );
 
-  // Per-payment detail rows read from the backend-hydrated purchases store; there
-  // is no report channel that returns individual payment records.
-  // BACKEND WORK NEEDED: a `reports.purchasePaymentRows` channel
-  // (purchase_payments joined to purchases, filtered by range + branch) so the
-  // detail table does not depend on the purchases store being hydrated.
+  /**
+   * The DETAIL rows come from SQL over the whole range, not from the purchases
+   * store — which holds ONE PAGE. See the same note in SellPaymentPage: the
+   * footer total was computed across the full range while the rows above it came
+   * from the newest 50 bills, so the two disagreed with no explanation.
+   * `reports.purchasePaymentRows` uses the identical filter to
+   * `reports.purchasePayments`, and the verification suite asserts the rows sum
+   * to that total.
+   */
+  const { data: beRows, loading: rowsLoading } = useReport<BackendPaymentRows>(
+    'reports.purchasePaymentRows',
+    hasBackend() ? { range, branchId } : null,
+    [range, branchId],
+  );
+
   const rows: Row[] = useMemo(() => {
-    const out: Row[] = [];
-    for (const purchase of purchases) {
-      if (purchase.status === 'cancelled') continue;
-      if (branch && purchase.branch !== branch) continue;
-      for (const p of purchase.payments) {
-        if (!isInRange(p.paidAt, range)) continue;
-        out.push({
-          purchaseId: purchase.id,
-          refNo: purchase.refNo,
-          date: p.paidAt,
-          supplier: purchase.supplierName,
-          method: p.method,
-          amount: p.amount,
-          reference: p.reference,
-          user: purchase.user,
-        });
-      }
-    }
+    const out: Row[] = (beRows?.rows ?? []).map((r) => ({
+      purchaseId: r.purchase_id,
+      refNo: r.ref_no ?? '—',
+      date: r.paid_at,
+      supplier: r.supplier_name,
+      method: r.method,
+      amount: r.amount,
+      reference: r.reference ?? undefined,
+      user: r.user_name ?? '',
+    }));
     let list = out;
     if (method) list = list.filter((r) => r.method === method);
     if (q) {
@@ -106,8 +114,14 @@ export default function PurchasePaymentPage() {
         `${r.refNo} ${r.supplier} ${r.reference ?? ''} ${r.user}`.toLowerCase().includes(t),
       );
     }
-    return list.sort((a, b) => b.date.localeCompare(a.date));
-  }, [purchases, range, branch, q, method]);
+    return list;
+  }, [beRows, q, method]);
+
+  // With a method or a search applied the footer sums what is on screen, and says
+  // "Shown" instead of "Total" — claiming the range total over a filtered list
+  // would be the same class of lie this page was just fixed for.
+  const narrowed = !!method || !!q;
+  const shownTotal = useMemo(() => rows.reduce((a, r) => a + r.amount, 0), [rows]);
 
   // By-method totals come exclusively from the backend (authoritative for the
   // period). Zeroed — never client-recomputed — until the query resolves.
@@ -208,11 +222,18 @@ export default function PurchasePaymentPage() {
           </div>
           {rows.length === 0 && (
             <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-              {loading
+              {loading || rowsLoading
                 ? 'Loading…'
                 : error
                   ? 'Couldn’t load — backend error. Check connection and retry.'
                   : 'No payments in this range.'}
+            </div>
+          )}
+          {beRows?.truncated && (
+            <div className="px-4 py-2 text-xs text-warning border-b border-border">
+              Showing the {formatNumber(beRows.rows.length)} most recent of{' '}
+              {formatNumber(beRows.total)} payments in this range. Narrow the dates to see the
+              rest.
             </div>
           )}
           {rows.map((r, i) => {
@@ -256,8 +277,12 @@ export default function PurchasePaymentPage() {
               <div />
               <div />
               <div />
-              <div className="text-right text-muted-foreground">Total</div>
-              <div className="tabular text-right">{formatBDT(summary.total)}</div>
+              <div className="text-right text-muted-foreground">
+                {narrowed ? 'Shown' : 'Total'}
+              </div>
+              <div className="tabular text-right">
+                {formatBDT(narrowed ? shownTotal : summary.total)}
+              </div>
               <div />
             </div>
           )}

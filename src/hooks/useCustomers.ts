@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
-import { api, hasBackend } from '@/lib/api';
+import { api } from '@/lib/api';
 import { toCustomer, type BackendCustomer } from '@/hooks/contactAdapter';
 import type { Customer } from '@/types/domain';
-import { BROWSER_MOCK_CUSTOMERS } from '@/lib/browserMock';
+import { BROWSER_MOCK_CUSTOMERS, browserPreview } from '@/lib/browserMock';
 
 /**
  * Customers data hook (backend-backed) for the POS hero screen.
@@ -19,7 +19,8 @@ export function useCustomersQuery() {
   return useQuery({
     queryKey: [CUSTOMERS_KEY],
     queryFn: async (): Promise<Customer[]> => {
-      if (!hasBackend()) {
+      // DEV-ONLY browser preview — see src/lib/browserMock.ts.
+      if (browserPreview()) {
         return BROWSER_MOCK_CUSTOMERS;
       }
       const rows = await api<BackendCustomer[]>('customers.list', {});

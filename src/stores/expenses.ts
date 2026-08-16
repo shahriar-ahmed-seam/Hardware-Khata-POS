@@ -3,12 +3,12 @@ import { persist } from 'zustand/middleware';
 import { api } from '@/lib/api';
 import { toast } from '@/stores/toast';
 import {
-  resolveBranchId,
   toCategory,
   toExpense,
   type BackendExpense,
   type BackendExpenseCategory,
 } from '@/hooks/expenseAdapter';
+import { requireBranchId } from '@/lib/branch';
 import { useCashRegister } from '@/stores/cashRegister';
 
 export type ExpensePaymentMethod = 'Cash' | 'bKash' | 'Nagad' | 'Card' | 'Bank' | 'Cheque';
@@ -45,7 +45,9 @@ export interface ExpenseRecord {
   createdAt?: string;
 }
 
-// Single-branch assumption for now (br_mp <-> 'Mirpur Branch'). See expenseAdapter.
+// The branch an expense is filed against is resolved from the real branch list
+// (src/lib/branch.ts), not assumed. `requireBranchId` throws rather than guess,
+// and the store's .catch below turns that into a toast.
 const CURRENT_USER = 'u_admin';
 
 let counter = 100;
@@ -214,6 +216,18 @@ export const useExpenses = create<State>()(
       },
 
       addExpense: (data) => {
+        // Resolve the branch BEFORE the write, and refuse rather than guess.
+        // This used to collapse any unrecognised branch name to `br_mp`, so on a
+        // shop with more than one branch an expense could be filed against the
+        // wrong one — and a wrong branch_id silently drops the row out of every
+        // branch-scoped figure from then on.
+        let branchId: string | undefined;
+        try {
+          branchId = requireBranchId(data.branch);
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : 'No branch is available yet');
+        }
+        if (branchId) {
         void api('expenses.create', {
           date: data.date,
           categoryId: data.categoryId || undefined,
@@ -221,7 +235,7 @@ export const useExpenses = create<State>()(
           paymentMethod: data.paymentMethod,
           reference: data.reference,
           note: data.note,
-          branchId: resolveBranchId(data.branch),
+          branchId,
           userId: CURRENT_USER,
           attachmentName: data.attachmentName,
           recurring: data.recurring,
@@ -237,6 +251,7 @@ export const useExpenses = create<State>()(
           void get().hydrate();
           if (data.paymentMethod === 'Cash') void useCashRegister.getState().hydrate();
         });
+        }
         // Optimistic shape only — NOT pushed to state; the row arrives via hydrate().
         return {
           id: 'e_pending',

@@ -19,7 +19,15 @@ import {
 } from '../core/calc.ts';
 import { amountInWords, intToWords } from '../core/words.ts';
 import { getStats, paymentMethodBreakdown } from '../services/dashboard.ts';
-import { profitLoss, productSell, taxReport, sellPayments } from '../services/reports.ts';
+import {
+  profitLoss,
+  productSell,
+  taxReport,
+  sellPayments,
+  sellPaymentRows,
+  purchasePayments,
+  purchasePaymentRows,
+} from '../services/reports.ts';
 import { resolveRange } from '../core/dates.ts';
 import { createSale, voidSale } from '../services/sales.ts';
 
@@ -356,6 +364,38 @@ function main() {
     // An explicit datetime is respected as given.
     const exact = resolveRange({ preset: 'custom', from: '2026-02-02T08:30:00.000Z', to: '2026-02-02T09:30:00.000Z' });
     s.eq('an explicit datetime bound is passed through', exact.from, '2026-02-02T08:30:00.000Z');
+
+    // ---- A WEEK STARTS ON SATURDAY, ON EVERY DAY OF THE WEEK ----
+    // This is the Bangladeshi working week and it is what every report, dashboard
+    // figure and paged list query is computed against. The Sales and Purchases
+    // list screens used to compute a MONDAY start client-side, so on a Saturday
+    // Reports showed the week's takings and the Sales list showed nothing —
+    // one question with two answers. Asserted for all seven weekdays so the rule
+    // cannot be quietly changed on one branch of a switch.
+    for (let offset = 0; offset < 7; offset++) {
+      // 2026-08-15 is a Saturday; walk forward through a whole week.
+      const day = new Date(2026, 7, 15 + offset, 13, 45, 0, 0);
+      const week = resolveRange({ preset: 'thisWeek' }, day);
+      const weekFrom = new Date(week.from);
+      s.eq(
+        `thisWeek starts on a Saturday (from ${day.toDateString()})`,
+        weekFrom.getDay(),
+        6,
+      );
+      s.eq(
+        `thisWeek starts at local midnight (from ${day.toDateString()})`,
+        weekFrom.getHours(),
+        0,
+      );
+      s.ok(
+        `thisWeek covers the day it was asked about (${day.toDateString()})`,
+        week.from <= day.toISOString() && day.toISOString() <= week.to,
+      );
+      s.ok(
+        `thisWeek spans at most 7 days (${day.toDateString()})`,
+        new Date(week.to).getTime() - weekFrom.getTime() < 7 * 86_400_000,
+      );
+    }
   }
 
   s.section('dashboard');
@@ -426,6 +466,59 @@ function main() {
       resolved.to,
     ).s;
     s.money('sell payments report == raw payments', sp.total, round2(rawPay));
+
+    // ---- THE DETAIL ROWS MUST ADD UP TO THE HEADLINE TOTAL ----
+    // The two payment reports print a footer total from the aggregate above and a
+    // table of individual payments beneath it. Those rows used to come from the
+    // sales/purchases STORE, which holds one page, so the footer and the rows
+    // disagreed on any shop with history. These channels exist to make them the
+    // same query, and this is the assertion that keeps them the same query.
+    const spRows = sellPaymentRows(db, yearRange, undefined, 20000);
+    s.money(
+      'sell payment ROWS sum to the report total',
+      round2(spRows.rows.reduce((a, r) => a + r.amount, 0)),
+      sp.total,
+    );
+    s.eq(
+      'sell payment rows are all returned when under the cap',
+      spRows.rows.length,
+      spRows.total,
+    );
+    s.ok('sell payment rows are not flagged truncated under the cap', !spRows.truncated);
+    s.gt('sell payment rows returned something to check', spRows.rows.length, 0);
+    s.ok(
+      'sell payment rows are newest-first',
+      spRows.rows.every((r, i) => i === 0 || spRows.rows[i - 1].paid_at >= r.paid_at),
+    );
+    // The cap must trim rather than lie: `total` still reports the true count.
+    const spCapped = sellPaymentRows(db, yearRange, undefined, 5);
+    s.eq('a capped read returns exactly the cap', spCapped.rows.length, 5);
+    s.eq('a capped read still reports the TRUE match count', spCapped.total, spRows.total);
+    s.ok('a capped read says it was truncated', spCapped.truncated);
+
+    const pp = purchasePayments(db, yearRange);
+    const ppRows = purchasePaymentRows(db, yearRange, undefined, 20000);
+    s.money(
+      'purchase payment ROWS sum to the report total',
+      round2(ppRows.rows.reduce((a, r) => a + r.amount, 0)),
+      pp.total,
+    );
+    s.eq(
+      'purchase payment rows are all returned when under the cap',
+      ppRows.rows.length,
+      ppRows.total,
+    );
+    s.gt('purchase payment rows returned something to check', ppRows.rows.length, 0);
+
+    // Branch scoping must narrow both halves the same way, or the footer and the
+    // rows would disagree again the moment a branch filter is used.
+    const branchAgg = sellPayments(db, yearRange, 'br_mp');
+    const branchRows = sellPaymentRows(db, yearRange, 'br_mp', 20000);
+    s.money(
+      'branch-scoped sell payment rows sum to the branch-scoped total',
+      round2(branchRows.rows.reduce((a, r) => a + r.amount, 0)),
+      branchAgg.total,
+    );
 
     // profit/loss net profit components
     const pl = profitLoss(db, yearRange);

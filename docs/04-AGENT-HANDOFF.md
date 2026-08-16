@@ -20,7 +20,7 @@ without breaking what works. For the full story of how the project got here, rea
 
 ```bash
 npm install
-npm run backend:verify:all   # must print 860 checks passed, seven suites (rebuilds for Node ABI)
+npm run backend:verify:all   # must print 1,078 checks passed, seven suites (rebuilds for Node ABI)
 npx tsc --noEmit -p tsconfig.json   # frontend typecheck — must be clean
 npm run build                # renderer + main + preload must build clean
 npm run rebuild:electron     # leave better-sqlite3 on the Electron ABI for `npm run dev`
@@ -30,13 +30,14 @@ npm run rebuild:electron     # leave better-sqlite3 on the Electron ABI for `npm
 
 | Suite | Checks |
 |-------|-------:|
-| `all.ts` (scenarios + determinism + file-DB smoke + identities) | 309 |
-| `api.ts` (buildApi facade, 146 channels) | 193 |
-| `run.ts` (365-day identities) | 56 |
+| `all.ts` (scenarios + determinism + file-DB smoke + identities) | 395 |
+| `api.ts` (buildApi facade, 152 channels) | 216 |
+| `run.ts` (365-day identities + date ranges + payment detail rows) | 105 |
 | `e2e.ts` (full shop day) | 68 |
-| `paging.ts` (paginated list reads) | 80 |
-| `backup.ts` (backup & cloud saving) | 68 |
-| **total** | **860** |
+| `paging.ts` (paginated list reads) | 91 |
+| `backup.ts` (backup & cloud saving) | 120 |
+| `costing.ts` (purchase-price history + retraction) | 83 |
+| **total** | **1,078** |
 
 If these pass, the foundation is intact. If `backend:verify:all` fails, **stop and
 diagnose** — a failing identity check is a real correctness bug, not a flaky test.
@@ -59,12 +60,20 @@ diagnose** — a failing identity check is a real correctness bug, not a flaky t
    `electron/permissions.ts`). NEVER put it in `backend/services/*` or `buildApi()` — that
    would break the Node verify harness (which calls handlers directly). Any new WRITE
    channel gets an entry in `electron/permissions.ts`.
-8. **NEVER reintroduce mock/sample data.** This rule used to say the opposite (keep a
-   `hasBackend()` mock fallback for browser dev). The owner has since required a clean
-   product, so `src/mocks/data.ts` is deleted and every fallback is gone. Domain types live in
+8. **NEVER reintroduce mock/sample data in a shipped build.** This rule used to say the
+   opposite (keep a `hasBackend()` mock fallback for browser dev). The owner has since
+   required a clean product, so `src/mocks/data.ts` is deleted. Domain types live in
    `src/types/domain.ts`. If a figure has no backend source, render `'—'` and exclude it from
-   totals — do NOT invent, estimate, or approximate a number. `hasBackend()` may ONLY be used
-   as the "skip this query outside Electron" gate on `useReport`.
+   totals — do NOT invent, estimate, or approximate a number.
+   **The single bounded exception** is `src/lib/browserMock.ts`, which lets the UI be opened in
+   a plain browser for visual work. It is gated on `browserPreview()` =
+   `import.meta.env.DEV && !hasBackend()`, which Vite folds to `false` in a production build,
+   so the sample values are not in the shipped bundle at all (verified by grepping `dist/`).
+   It covers CATALOGUE REFERENCE DATA only — products, customers, categories, brands, units —
+   and **must never grow to cover money**: no sales, payments, dues, stock movements, KPIs or
+   report rows. To see money without a real shop, use `POS_SEED=demo npm run dev`.
+   Outside that, `hasBackend()` may ONLY be used as the "skip this query outside Electron"
+   gate on `useReport`.
 9. **Bangla is a dictionary, not a component edit.** Add a line to `src/lib/bn/dict.ts`; the
    DOM layer in `src/lib/bn/translate.ts` picks it up. Never translate by editing JSX strings,
    and never widen the lookup beyond exact matches — that is what keeps shop data safe. Run
@@ -82,14 +91,33 @@ diagnose** — a failing identity check is a real correctness bug, not a flaky t
 12. **The backup settings blob has exactly ONE writer** — the backend service. Do not mirror it
     into the renderer settings store again; two writers on the same `settings_kv` key is how an
     appearance save wiped the backup folder path.
+13. **One branch resolver, one date-range definition.** `src/lib/branch.ts` and
+    `src/lib/datetime.ts` are the only places those live in the renderer, and both mirror the
+    backend. There used to be five copies of the branch map (two of them the demo fixture's
+    literal name) and two different answers to "what is this week". See rules 17–18 in
+    `07-CONTINUE-HERE.md` §5 for the specifics.
+14. **A derived figure is aggregated in SQL, never over one page of a paginated store**, and a
+    setting that cannot be implemented honestly is removed rather than faked. Both have real
+    scars: the Customer Group report silently capped at 50 customers, and the payment reports
+    showed a range total above rows from the newest 50 documents.
 
-## 4. The current job: packaging (see 03 for the full step list)
+> Rules 15–19 (and the reasoning behind each) are in `07-CONTINUE-HERE.md` §5. That file is the
+> living list; this one is the orientation.
 
-POS checkout is wired and mock-free, and Backup & Cloud saving has shipped. What's left is the
-Windows installer — with `better-sqlite3` rebuilt for the **bundled** Electron at package time,
-which is the #1 packaging risk — plus the manual GUI smoke test in
-`docs/06-E2E-AND-SMOKE-TEST.md`. The POS hero screen remains the owner's priority surface, so
-coordinate before changing it.
+## 4. The current job
+
+The product ships: the installer is built, the app updates itself from GitHub Releases
+(`RELEASE.md`), and every numbered known gap in `07-CONTINUE-HERE.md` §4 is closed. What is
+left is the **manual GUI smoke test** in `docs/06-E2E-AND-SMOKE-TEST.md`, which only a human
+can do, and whatever the owner reports from the shop floor.
+
+Two things to be careful about when picking work up:
+
+- **The POS hero screen** is the owner's priority surface — coordinate before changing it.
+- **`br_mp` is still hard-coded as the branch id in about fifteen write call sites.** That is
+  the deferred multi-branch item, not an oversight; `defaultBranchId()` in `src/lib/branch.ts`
+  is what to switch them to when a real branch switcher is built. Doing it piecemeal leaves a
+  confusing half-state.
 
 ## 5. How the two processes talk
 
@@ -152,12 +180,13 @@ and `toast.error` + rehydrate. Reads are open; writes require a session + permis
 npm run dev                  # Electron app (auto-rebuilds for Electron ABI)
 npm run build                # production bundles
 npm run backend:typecheck    # tsc on backend only
-npm run backend:verify       # 56 identity checks (rebuilds Node ABI)
+npm run backend:verify       # 105 identity + date-range + payment-row checks (rebuilds Node ABI)
 npm run backend:scenarios    # scenario tests
 npm run backend:e2e          # 68 full-shop-day checks
-npm run backend:paging       # 80 paged-list-read checks
-npm run backend:backup       # 105 backup, cloud & invoice-PDF checks
-npm run backend:verify:all   # everything — seven suites, 860 checks
+npm run backend:paging       # 91 paged-list-read checks
+npm run backend:backup       # 120 backup, cloud & invoice-PDF checks
+npm run backend:costing      # 83 purchase-price history checks
+npm run backend:verify:all   # everything — seven suites, 1,078 checks
 npm run i18n:check           # 32 Bangla dictionary assertions
 npm run i18n:extract         # list untranslated source strings
 npm run rebuild:electron     # switch better-sqlite3 → Electron ABI (run last each session)
@@ -181,12 +210,18 @@ npm run rebuild:node         # switch better-sqlite3 → Node ABI
 
 ## 11. Definition of done for the whole project
 
-1. ✅ Every data module reads/writes the real SQLite backend. No mock data path exists.
+1. ✅ Every data module reads/writes the real SQLite backend. No mock data path in a shipped
+   build (one dev-only browser-preview exception — see rule 8 above).
 2. ✅ Auth + permissions enforced at the IPC layer.
 3. ✅ First-run wizard creates a real shop; demo seed available for evaluation.
 4. ✅ POS checkout writes real sales (the last data surface — done).
-5. 🔴 Final end-to-end test pass: every screen verified against real data + edge cases.
-6. 🔴 Windows installer built with native deps rebuilt for the bundled Electron.
+5. ✅ Automated end-to-end pass: 1,078 checks over seven suites.
+6. ✅ Windows installer (NSIS, x64, per-user) with native deps rebuilt for the bundled
+   Electron, plus in-app updates from GitHub Releases (`RELEASE.md`).
 7. ✅ Backup & Cloud saving: verified snapshots into a folder the owner's cloud client syncs,
-   retention, restore, CSV export (`npm run backend:backup`).
-8. 🟡 (Later/optional) hosted multi-device sync, SMS gateway, thermal printing, multi-branch.
+   retention, restore, CSV export, pendrive copies (`npm run backend:backup`).
+8. ✅ Every numbered known gap in `07-CONTINUE-HERE.md` §4 closed.
+9. 🔴 **Manual GUI smoke test** (`docs/06-E2E-AND-SMOKE-TEST.md`) — human-only, and the only
+   remaining item.
+10. 🟡 (Later/optional) hosted multi-device sync, SMS gateway, thermal printing, real
+   multi-branch writes, code signing.
