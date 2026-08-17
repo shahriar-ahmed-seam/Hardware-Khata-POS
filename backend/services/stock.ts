@@ -21,9 +21,87 @@ export interface MovementInput {
   note?: string;
   userId?: string;
   at?: string;
+  /**
+   * Let this movement take stock below zero. For internal corrections only — no
+   * user-facing path sets it. See `assertNotNegative`.
+   */
+  allowNegative?: boolean;
+}
+
+/**
+ * Raised when a movement would take stock below zero. Carries the numbers so the
+ * caller can name the product and the shortfall instead of a bare failure.
+ */
+export class InsufficientStockError extends Error {
+  readonly productId: string;
+  readonly branchId: string;
+  readonly available: number;
+  readonly requested: number;
+
+  constructor(args: {
+    productId: string;
+    productName: string;
+    branchId: string;
+    available: number;
+    requested: number;
+    unit: string;
+  }) {
+    super(
+      `Not enough stock for "${args.productName}". ` +
+        `${args.available} ${args.unit} in stock, ${args.requested} ${args.unit} needed. ` +
+        `Receive a purchase or correct the stock count first.`,
+    );
+    this.name = 'InsufficientStockError';
+    this.productId = args.productId;
+    this.branchId = args.branchId;
+    this.available = args.available;
+    this.requested = args.requested;
+  }
+}
+
+/**
+ * THE NEGATIVE-STOCK GUARD.
+ *
+ * Stock is `SUM(qty)` of the movements, so "don't allow negative stock" can only
+ * be enforced where the movements are written — here. Putting it in `createSale`
+ * would leave transfers, purchase returns and adjustments free to drive a product
+ * negative, and there was no check anywhere: a sale of 10 bags with 4 in stock
+ * simply recorded -10 and the product went to -6.
+ *
+ * Only OUTWARD movements are checked (`qty < 0`). Inward ones cannot take stock
+ * below zero, which means every reversal — voiding a sale, cancelling a purchase,
+ * the `sale_edit` leg of a correction — is unaffected by design.
+ *
+ * `allowNegative` exists for the one case where refusing would be worse than
+ * allowing: an internal correction that must complete to keep the books
+ * consistent. It is opt-in per call and no user-facing path passes it.
+ */
+function assertNotNegative(db: DB, m: MovementInput): void {
+  if (m.qty >= 0) return;
+  if (m.allowNegative) return;
+
+  const onHand = stockOnHand(db, m.productId, m.branchId);
+  // Tolerate a hair of float noise (0.9999… vs 1) so a legitimate exact-stock
+  // sale is never refused over the last bit of a REAL.
+  if (onHand + m.qty >= -0.0001) return;
+
+  const prod = db.prepare('SELECT name, unit FROM products WHERE id = ?').get(m.productId) as
+    | { name: string; unit: string }
+    | undefined;
+  throw new InsufficientStockError({
+    productId: m.productId,
+    productName: prod?.name ?? m.productId,
+    branchId: m.branchId,
+    available: onHand,
+    requested: Math.abs(m.qty),
+    unit: m.unit ?? prod?.unit ?? 'pc',
+  });
 }
 
 export function recordMovement(db: DB, m: MovementInput): string {
+  // Refuse BEFORE writing. Callers run inside a transaction, so a throw here
+  // rolls back the whole sale/transfer rather than leaving it half-applied.
+  assertNotNegative(db, m);
   const id = newId('mov');
   db.prepare(
     `INSERT INTO stock_movements

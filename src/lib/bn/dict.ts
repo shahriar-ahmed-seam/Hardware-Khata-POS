@@ -3235,3 +3235,19 @@ Object.assign(BN, {
   'Margin on sales': 'বিক্রয়ের উপর লাভ',
   'Typical markup (per item)': 'সাধারণ লাভ (প্রতি পণ্যে)',
 });
+
+// ---------------------------------------------------------------------------
+// APPEND-ONLY BLOCK — the payment box on a NEW sale (it only existed when
+// editing one before), and the loading/empty states of the receive-payment
+// window. Messages that name a product or an amount are assembled at render
+// time and so cannot be dictionary entries.
+// ---------------------------------------------------------------------------
+Object.assign(BN, {
+  'Paid in full': 'পুরো পরিশোধিত',
+  'Loading the customer…': 'কাস্টমারের তথ্য আসছে…',
+  'No customer selected.': 'কোনো কাস্টমার বাছা হয়নি।',
+  // ('Receive payment' is already translated in an earlier block — i18n:check
+  // caught a second entry here that disagreed with it.)
+  'Leave it empty if the whole bill goes on their khata. Cash is posted to the shift that is open now.':
+    'পুরো বিলটি খাতায় উঠলে খালি রাখুন। নগদ টাকা এখন খোলা শিফটে জমা হবে।',
+});

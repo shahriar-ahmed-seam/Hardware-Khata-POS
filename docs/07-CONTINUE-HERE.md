@@ -16,11 +16,11 @@
 
 ```bash
 npm install                        # if node_modules is missing — READ THE NPM NOTE BELOW
-npm run backend:verify:all         # must print 1,108 checks across EIGHT suites
+npm run backend:verify:all         # must print 1,126 checks across EIGHT suites
 npx tsc --noEmit -p tsconfig.json  # frontend typecheck — clean
 npx tsc --noEmit -p tsconfig.backend.json
 npm run build                      # renderer + main + preload
-npm run i18n:check                 # 32 checks, 2,405 Bangla phrases
+npm run i18n:check                 # 32 checks, 2,409 Bangla phrases
 npm run rebuild:electron           # LEAVE IT ON THE ELECTRON ABI (see §6)
 ```
 
@@ -40,7 +40,7 @@ Expected per-suite counts:
 
 | Suite | Checks | Covers |
 |-------|-------:|--------|
-| `all.ts` | 395 | scenarios + determinism + file-DB smoke + identities, incl. **correcting an invoice's payments** |
+| `all.ts` | 413 | scenarios + determinism + file-DB smoke + identities, incl. correcting an invoice's payments and **stock never going negative** |
 | `api.ts` | 216 | the `buildApi()` facade — **152 channels** |
 | `run.ts` | 105 | identities on a 365-day dataset, custom date ranges, **Saturday week start**, **payment detail rows == report total** |
 | `e2e.ts` | 68 | one full shop day |
@@ -48,7 +48,7 @@ Expected per-suite counts:
 | `backup.ts` | 120 | backup, cloud, CSV export, invoice PDFs, pendrive copies |
 | `costing.ts` | 93 | purchase-price history, purchases feeding it, a cancelled purchase retracting its price, **a product born on a purchase not being priced twice**, migration head (**v7**) |
 | `mirror.ts` | 20 | **the renderer's money math vs `core/calc.ts`** — 800 randomised baskets and bills, must agree to the paisa |
-| **total** | **1,108** | |
+| **total** | **1,126** | |
 
 > `mirror.ts` is the only suite that touches `src/`. It imports `src/lib/money.ts`
 > (which deliberately has NO imports of its own) and drives it against
@@ -147,7 +147,7 @@ Now blocked in both places a sale can be created. See rule 22.
 `SettlementBadge`; six places had their own copy of that ladder.
 
 **NOT verified:** the new payment screen has not been clicked through by a human.
-Typecheck, 1,108 checks and a production build pass, but the feel of that screen
+Typecheck, 1,126 checks and a production build pass, but the feel of that screen
 matters as much as its arithmetic.
 
 ---
@@ -645,6 +645,24 @@ typed by hand.
    Customer Dues screen and in no receivables total — it is off the books and
    uncollectable. Enforced in `PaymentModal` and in `AddSale.save`. If a third way
    to create a sale is ever added, it needs the same guard.
+23. **STOCK CAN NEVER GO NEGATIVE**, and the rule lives in `recordMovement` —
+   the single place stock changes. Putting it in `createSale` would leave
+   transfers, purchase returns and adjustments free to drive a product negative,
+   which is how it went unguarded for so long: `run.ts` asserted "stock is never
+   negative" over the seeded year, and that passed only because the GENERATOR was
+   careful. Only OUTWARD movements are checked, so every reversal (void, cancel,
+   the `sale_edit` leg) still works at zero stock — refusing to reverse a sale
+   would trap the shop with books it cannot correct. Selling EXACTLY the last unit
+   must stay allowed; there is a check for that boundary. `allowNegative` exists
+   for internal corrections and no user-facing path sets it.
+24. **EVERY HOOK RUNS BEFORE ANY EARLY RETURN.** Two crashes shipped from this:
+   `ReceivePaymentModal` had a `useMemo` below `if (!customer) return null`, and
+   POS had `useBelow('lg')` below `if (!active)`. Both guards depend on values
+   that arrive LATER (an async fetch, a store initialised in an effect), so the
+   hook count changed between renders and React threw #310 — a blank screen with a
+   minified error. There is no eslint in this project, so nothing catches it
+   automatically: put the guard in the RETURNED MARKUP, or hoist every hook above
+   it. When touching a component with an early return, check what is below it.
 
 **Bangla:** append-only `Object.assign(BN, {…})` blocks in `src/lib/bn/dict.ts`.
 Never reorder or delete. Duplicate keys across blocks **must agree** —

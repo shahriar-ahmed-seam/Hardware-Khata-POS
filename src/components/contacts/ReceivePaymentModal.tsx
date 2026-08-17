@@ -112,14 +112,30 @@ export function ReceivePaymentModal({ open, onClose, customerId }: Props) {
     }
   }, [open, customer]);
 
-  if (!customer) return null;
-
   const pickedTotal = Object.values(picked).reduce((s, v) => s + v, 0);
   const effectiveAmount = mode === 'auto' ? amount : pickedTotal;
 
-  // Preview the auto allocation
+  /**
+   * Preview of the auto allocation, oldest invoice first.
+   *
+   * THIS HOOK MUST STAY ABOVE THE `!customer` EARLY RETURN.
+   *
+   * It used to sit below it, which crashed the app with React error #310
+   * ("rendered fewer hooks than expected") every time this modal was opened from
+   * the Customer Dues page. The reason it only broke there: on the Customers page
+   * the row is already in the paged contacts store, so `customer` is non-null on
+   * the very first render and the early return never fires. Customer Dues does not
+   * load that store, so the first render bailed out early — skipping this
+   * `useMemo` — and then the async `customers.get` above resolved, `customer`
+   * became non-null, the render continued past the return, and the hook count
+   * changed between two renders of the same component. React cannot match hooks up
+   * across that and throws.
+   *
+   * Every hook in this component therefore runs unconditionally, and the
+   * "nothing to show" case is handled in the RETURNED MARKUP instead.
+   */
   const allocation = useMemo(() => {
-    if (mode !== 'auto') return [];
+    if (mode !== 'auto' || !customer) return [];
     let remaining = amount;
     const out: { saleId: string; invoiceNo: string; apply: number }[] = [];
     for (const inv of dueInvoices) {
@@ -129,10 +145,10 @@ export function ReceivePaymentModal({ open, onClose, customerId }: Props) {
       remaining -= apply;
     }
     return out;
-  }, [mode, amount, dueInvoices]);
+  }, [mode, amount, dueInvoices, customer]);
 
   const submit = () => {
-    if (effectiveAmount <= 0) return;
+    if (!customer || effectiveAmount <= 0) return;
     receivePayment(customer.id, effectiveAmount, method, reference || undefined);
     if (mode === 'auto') {
       allocation.forEach((a) => {
@@ -159,6 +175,21 @@ export function ReceivePaymentModal({ open, onClose, customerId }: Props) {
   };
 
   const needsRef = METHODS.find((m) => m.id === method)?.needsRef;
+
+  /**
+   * The customer is still being fetched (or could not be found). Rendered as a
+   * MODAL STATE rather than `return null`, so that the hook list above runs on
+   * every render — see the note on `allocation`.
+   */
+  if (!customer) {
+    return (
+      <Modal open={open} onClose={onClose} width="max-w-md" title="Receive payment">
+        <div className="p-8 text-center text-sm text-muted-foreground">
+          {customerId ? 'Loading the customer…' : 'No customer selected.'}
+        </div>
+      </Modal>
+    );
+  }
 
   return (
     <Modal

@@ -273,12 +273,12 @@ Symptom of wrong ABI: `ERR_DLOPEN_FAILED`. Fix: run the matching rebuild script.
 
 ## Verification — what's proven
 
-Run `npm run backend:verify:all` → **eight suites, 1,108 checks** (grew from 122 as slices
+Run `npm run backend:verify:all` → **eight suites, 1,126 checks** (grew from 122 as slices
 were wired):
 
 | Suite | Checks | What it covers |
 |-------|-------:|----------------|
-| `all.ts` | 395 | scenarios + determinism + file-DB smoke + identities |
+| `all.ts` | 413 | scenarios + determinism + file-DB smoke + identities |
 | `api.ts` | 216 | the `buildApi()` facade |
 | `run.ts` | 105 | identities on a 365-day dataset, date ranges, payment detail rows |
 | `e2e.ts` | 68 | one full shop day |
@@ -314,7 +314,7 @@ were wired):
   product columns are a cache that cannot drift from it; a received purchase moves both the
   current and the average buying price; an ordered purchase moves neither; and **cancelling a
   purchase retracts the price it recorded** without deleting the row (schema v7).
-- **+ combined** (all.ts, 395 checks): scenarios + identities + determinism (same
+- **+ combined** (all.ts, 413 checks): scenarios + identities + determinism (same
   seed→same data) + persistent-file smoke.
 
 Single suites: `npm run backend:verify` (identities), `backend:scenarios`, `backend:e2e`,

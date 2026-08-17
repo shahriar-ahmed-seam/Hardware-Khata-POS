@@ -312,12 +312,48 @@ export default function POS() {
     ? computeTotals(active)
     : { subtotal: 0, totalLineDiscount: 0, orderDiscount: 0, tax: 0, shipping: 0, other: 0, total: 0 };
 
+  /**
+   * Refuse a cart that asks for more than is on the shelf.
+   *
+   * The backend enforces this in `recordMovement`, so the sale would be rejected
+   * anyway — but only AFTER the cashier has counted the money and pressed confirm.
+   * Checked before the payment screen opens so the shortfall is dealt with while
+   * the customer is still standing there, and named so it is actionable.
+   *
+   * Returns true when the cart is sellable.
+   */
+  const cartFitsStock = (): boolean => {
+    if (!active) return false;
+    const short = active.lines
+      .map((l) => {
+        const p = products.find((x) => x.id === l.productId);
+        return { name: l.name, qty: l.qty, have: p?.stock, unit: p?.unit ?? '' };
+      })
+      // Unknown product → leave it to the backend rather than block on a gap in
+      // the loaded catalogue.
+      .filter((x) => x.have !== undefined && x.qty > (x.have as number) + 0.0001);
+    if (short.length === 0) return true;
+    const first = short[0];
+    toast.error(
+      short.length === 1 ? `Not enough stock for ${first.name}` : `Not enough stock for ${short.length} items`,
+      {
+        description:
+          short.length === 1
+            ? `${first.have} ${first.unit} in stock, ${first.qty} in the cart. Reduce the quantity, or receive a purchase first.`
+            : short.map((x) => `${x.name}: ${x.have} in stock, ${x.qty} in the cart`).join(' · '),
+        duration: 8000,
+      },
+    );
+    return false;
+  };
+
   const openPay = (method: PaymentMethod = 'Cash') => {
     if (!active || active.lines.length === 0) return;
     if (!canCreateSale) {
       toast.error("You don't have permission to create sales");
       return;
     }
+    if (!cartFitsStock()) return;
     setPaymentStartMode('single');
     setPaymentStartMethod(method);
     setPaymentOpen(true);
@@ -328,6 +364,7 @@ export default function POS() {
       toast.error("You don't have permission to create sales");
       return;
     }
+    if (!cartFitsStock()) return;
     setPaymentStartMode('split');
     setPaymentOpen(true);
   };
@@ -554,6 +591,21 @@ export default function POS() {
 
   const customerForActive = customers.find((c) => c.id === active?.customerId);
 
+  /**
+   * A side-by-side split needs real width. Below `lg` the two panels stack and
+   * scroll vertically instead (product picker first so scanning still works),
+   * which keeps the checkout usable on a 1366-wide or resized window.
+   *
+   * DECLARED ABOVE THE `!active` GUARD BELOW, and it must stay there. `useBelow`
+   * is a hook chain (useState + useEffect), and `active` starts out undefined:
+   * the cart store persists `carts: []` / `activeId: ''`, and `ensureInitialized`
+   * only runs in an effect — so on a first-ever run the first render bails out at
+   * the guard, then the effect creates Cart 1 and the second render would have
+   * called two more hooks than the first. React cannot match those up and throws
+   * error #310. Same bug as the one fixed in ReceivePaymentModal.
+   */
+  const stacked = useBelow('lg');
+
   // `ensureInitialized` runs in an effect, so the very first render (and a
   // corrupted store) can legitimately have no active cart. Bail out with a
   // placeholder rather than letting the panels dereference undefined.
@@ -606,10 +658,7 @@ export default function POS() {
   const splitRatio = isCartLeft ? cartRatio : 1 - cartRatio;
   const handleSplit = (r: number) => setCartRatio(isCartLeft ? r : 1 - r);
 
-  // A side-by-side split needs real width. Below `lg` the two panels stack and
-  // scroll vertically instead (product picker first so scanning still works),
-  // which keeps the checkout usable on a 1366-wide or resized window.
-  const stacked = useBelow('lg');
+  // `stacked` is declared ABOVE the `!active` guard — see the note there.
 
   return (
     // `h-full`, not `h-[calc(100vh-3rem)]`: that hardcoded the titlebar at 3rem,

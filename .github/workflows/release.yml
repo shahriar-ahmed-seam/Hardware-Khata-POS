@@ -1,0 +1,126 @@
+# =============================================================================
+#  RELEASE ON A TAG — the whole build and upload happens on GitHub, not your PC
+# =============================================================================
+#
+# WHY THIS EXISTS
+# Releasing used to mean ~8 minutes of the owner's own machine and bandwidth:
+# compiling better-sqlite3 from source for Electron's ABI (there is no prebuilt
+# binary for it), downloading a 97 MB Electron, building the NSIS installer, then
+# uploading 82 MB over a Bangladeshi home connection. Now pushing a tag does all
+# of it on GitHub's runner, and the local cost is the ~2 seconds of `git push`.
+#
+# HOW TO RELEASE
+#   1. bump "version" in package.json
+#   2. commit
+#   3. git tag -a v0.7.1 -m "..." && git push origin main --follow-tags
+# The workflow builds, verifies, and publishes the release. Watch it under the
+# Actions tab. Nothing is published if the checks fail.
+#
+# NO TOKEN TO MANAGE. It uses the automatic GITHUB_TOKEN, scoped to this repo and
+# expiring with the run, so no personal access token is stored anywhere.
+#
+# The local `npm run release:win` still works and is unchanged — keep it for when
+# you want to test an installer without publishing (`npm run build:win`).
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # Lets you re-run a build from the Actions tab without moving a tag.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build (e.g. v0.7.1)'
+        required: true
+
+permissions:
+  contents: write # required to create the release and upload the installer
+
+jobs:
+  release:
+    # Windows, because the product is a Windows installer and better-sqlite3 has
+    # to be compiled against the Electron ABI on the target platform.
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # `npm ci` is the reproducible install. The allowScripts block in
+      # package.json is what lets better-sqlite3 / electron / esbuild run their
+      # install scripts under npm 11 — without it they install with no binaries
+      # and nothing works. See the note in README.
+      - name: Install dependencies
+        run: npm ci
+
+      # Cache Electron and the electron-builder tooling between runs. This is the
+      # bulk of the wall time on a cold runner (a ~97 MB Electron download plus the
+      # winCodeSign bundle), and it is identical from release to release.
+      - name: Cache electron-builder downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\AppData\Local\electron\Cache
+            ~\AppData\Local\electron-builder\Cache
+          key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-
+
+      # ---- Nothing ships that has not been verified ----
+      # The verification suites rebuild the native module for NODE's ABI, so they
+      # must run BEFORE the packaging step rebuilds it for Electron's.
+      - name: Typecheck (renderer + backend)
+        run: |
+          npx tsc --noEmit -p tsconfig.json
+          npx tsc --noEmit -p tsconfig.backend.json
+
+      - name: Bangla dictionary checks
+        run: npm run i18n:check
+
+      - name: Backend verification (all suites)
+        run: npm run backend:verify:all
+
+      - name: Confirm the tag matches package.json
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.inputs.tag || github.ref_name }}"
+          $ver = (Get-Content package.json | ConvertFrom-Json).version
+          if ($tag -ne "v$ver") {
+            Write-Host "::error::Tag $tag does not match package.json version $ver."
+            Write-Host "The updater compares against package.json, so a mismatch would publish a release clients never see."
+            exit 1
+          }
+          Write-Host "Tag $tag matches package.json $ver."
+
+      # Builds the renderer + main + preload, then packages and publishes.
+      # electron-builder rebuilds better-sqlite3 for the bundled Electron itself
+      # (npmRebuild is on in electron-builder.json).
+      - name: Build and publish the installer
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run release:win
+
+      # Keep the installer on the run itself, so a published release that turns out
+      # to be wrong can be replaced without rebuilding.
+      - name: Keep the installer as a run artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installer
+          path: |
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
+          if-no-files-found: warn
+          retention-days: 30

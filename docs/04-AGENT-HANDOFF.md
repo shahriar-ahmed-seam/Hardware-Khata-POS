@@ -20,7 +20,7 @@ without breaking what works. For the full story of how the project got here, rea
 
 ```bash
 npm install
-npm run backend:verify:all   # must print 1,108 checks passed, eight suites (rebuilds for Node ABI)
+npm run backend:verify:all   # must print 1,126 checks passed, eight suites (rebuilds for Node ABI)
 npx tsc --noEmit -p tsconfig.json   # frontend typecheck — must be clean
 npm run build                # renderer + main + preload must build clean
 npm run rebuild:electron     # leave better-sqlite3 on the Electron ABI for `npm run dev`
@@ -30,7 +30,7 @@ npm run rebuild:electron     # leave better-sqlite3 on the Electron ABI for `npm
 
 | Suite | Checks |
 |-------|-------:|
-| `all.ts` (scenarios + determinism + file-DB smoke + identities) | 395 |
+| `all.ts` (scenarios + determinism + file-DB smoke + identities) | 413 |
 | `api.ts` (buildApi facade, 152 channels) | 216 |
 | `run.ts` (365-day identities + date ranges + payment detail rows) | 105 |
 | `e2e.ts` (full shop day) | 68 |
@@ -38,7 +38,7 @@ npm run rebuild:electron     # leave better-sqlite3 on the Electron ABI for `npm
 | `backup.ts` (backup & cloud saving) | 120 |
 | `costing.ts` (purchase-price history + retraction) | 93 |
 | `mirror.ts` (renderer money math vs the calculation core) | 20 |
-| **total** | **1,108** |
+| **total** | **1,126** |
 
 If these pass, the foundation is intact. If `backend:verify:all` fails, **stop and
 diagnose** — a failing identity check is a real correctness bug, not a flaky test.
@@ -188,7 +188,7 @@ npm run backend:paging       # 91 paged-list-read checks
 npm run backend:backup       # 120 backup, cloud & invoice-PDF checks
 npm run backend:costing      # 93 purchase-price history checks
 npm run backend:mirror       # 20 renderer-vs-core money checks (no rebuild needed)
-npm run backend:verify:all   # everything — eight suites, 1,108 checks
+npm run backend:verify:all   # everything — eight suites, 1,126 checks
 npm run i18n:check           # 32 Bangla dictionary assertions
 npm run i18n:extract         # list untranslated source strings
 npm run rebuild:electron     # switch better-sqlite3 → Electron ABI (run last each session)
@@ -217,7 +217,7 @@ npm run rebuild:node         # switch better-sqlite3 → Node ABI
 2. ✅ Auth + permissions enforced at the IPC layer.
 3. ✅ First-run wizard creates a real shop; demo seed available for evaluation.
 4. ✅ POS checkout writes real sales (the last data surface — done).
-5. ✅ Automated end-to-end pass: 1,108 checks over eight suites.
+5. ✅ Automated end-to-end pass: 1,126 checks over eight suites.
 6. ✅ Windows installer (NSIS, x64, per-user) with native deps rebuilt for the bundled
    Electron, plus in-app updates from GitHub Releases (`RELEASE.md`).
 7. ✅ Backup & Cloud saving: verified snapshots into a folder the owner's cloud client syncs,

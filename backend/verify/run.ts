@@ -9,7 +9,7 @@ import { openDatabase, migrate, type DB } from '../db/connection.ts';
 import { simulate } from '../seed/simulate.ts';
 import { Suite } from './assert.ts';
 import { EPSILON, round2 } from '../core/money.ts';
-import { stockOnHand, stockLevels, weightedAvgCost } from '../services/stock.ts';
+import { recordMovement, stockOnHand, stockLevels, weightedAvgCost } from '../services/stock.ts';
 import { customerDue, supplierDue } from '../services/ledger.ts';
 import {
   computeSaleLine,
@@ -570,6 +570,22 @@ function main() {
   // ============================================================
   s.section('void');
   {
+    // This runs AFTER the 365-day simulation, which may have sold p1 down to
+    // almost nothing — and stock can no longer go negative (assertNotNegative in
+    // services/stock.ts). Top it up first so the test is about VOID BEHAVIOUR and
+    // not about whether the simulated year happened to leave 3 on the shelf.
+    // Safe here: every accounting identity above has already been asserted, and
+    // this is the last section before the report.
+    recordMovement(db, {
+      productId: 'p1',
+      branchId: 'br_mp',
+      reason: 'recount',
+      qty: 10,
+      unitCost: row<{ cost: number }>(db, 'SELECT cost FROM products WHERE id = ?', 'p1').cost,
+      note: 'verify fixture: ensure stock for the void test',
+      userId: 'u_admin',
+    });
+
     // create + void a sale, ensure stock returns and status flips
     const pidBefore = stockOnHand(db, 'p1', 'br_mp');
     const sale = createSale(db, {

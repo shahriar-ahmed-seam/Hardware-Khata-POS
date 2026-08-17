@@ -915,7 +915,153 @@ export function runScenarios(s: Suite) {
       2,
     );
 
-    // ---- THE REPORTED CASE: only the AMOUNT TENDERED was keyed wrongly ----
+    // ---- STOCK CAN NEVER GO NEGATIVE ----
+  // Reported by the owner: a sale could be saved for more than was on the shelf
+  // and the product went to a negative quantity. There was NO check anywhere —
+  // `run.ts` asserted "stock is never negative" over the seeded dataset, which
+  // happened to hold because the generator was careful, so nothing enforced it.
+  // The guard lives in `recordMovement` (the single place stock changes), so it
+  // covers sales, transfers, purchase returns and adjustments alike.
+  s.section('scenario-no-negative-stock');
+  {
+    const db = fresh();
+    const pid = createProduct(db, {
+      sku: 'NEG-GUARD',
+      name: 'Guarded Widget',
+      cost: 100,
+      price: 150,
+      unit: 'pc',
+      openingStock: 4,
+      branchId: 'br_mp',
+      userId: 'u_admin',
+    }).id;
+    s.money('starts with the opening stock', stockOnHand(db, pid, 'br_mp'), 4);
+
+    // Selling MORE than is on the shelf is refused.
+    let blocked = '';
+    try {
+      createSale(db, {
+        branchId: 'br_mp',
+        userId: 'u_admin',
+        lines: [{ productId: pid, qty: 10, spr: 150 }],
+        payments: [{ method: 'Cash', amount: 1500 }],
+      });
+    } catch (e) {
+      blocked = e instanceof Error ? e.message : String(e);
+    }
+    s.ok('a sale for more than the stock is refused', blocked.includes('Not enough stock'));
+    s.ok('the message names the product', blocked.includes('Guarded Widget'));
+    s.ok('the message says what IS available', blocked.includes('4'));
+    // The refusal must be ATOMIC — no stock moved, no invoice, no cash.
+    s.money('the refused sale moved no stock', stockOnHand(db, pid, 'br_mp'), 4);
+    s.eq(
+      'the refused sale left no invoice behind',
+      (db.prepare('SELECT COUNT(*) c FROM sales').get() as { c: number }).c,
+      0,
+    );
+    s.eq(
+      'and no payment row',
+      (db.prepare('SELECT COUNT(*) c FROM sale_payments').get() as { c: number }).c,
+      0,
+    );
+
+    // Selling EXACTLY the stock on hand is allowed — the boundary must not be
+    // off by one, or a shop could never sell its last unit.
+    createSale(db, {
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      lines: [{ productId: pid, qty: 4, spr: 150 }],
+      payments: [{ method: 'Cash', amount: 600 }],
+    });
+    s.money('selling exactly the stock on hand is allowed', stockOnHand(db, pid, 'br_mp'), 0);
+
+    // And at zero, one more unit is refused.
+    let atZero = '';
+    try {
+      createSale(db, {
+        branchId: 'br_mp',
+        userId: 'u_admin',
+        lines: [{ productId: pid, qty: 1, spr: 150 }],
+        payments: [{ method: 'Cash', amount: 150 }],
+      });
+    } catch (e) {
+      atZero = e instanceof Error ? e.message : String(e);
+    }
+    s.ok('selling from zero stock is refused', atZero.includes('Not enough stock'));
+    s.money('stock is still zero, not -1', stockOnHand(db, pid, 'br_mp'), 0);
+
+    // A branch with no stock cannot sell, even if ANOTHER branch has plenty.
+    recordMovement(db, {
+      productId: pid,
+      branchId: 'br_ut',
+      reason: 'opening_stock',
+      qty: 50,
+      unitCost: 100,
+      userId: 'u_admin',
+    });
+    let wrongBranch = '';
+    try {
+      createSale(db, {
+        branchId: 'br_mp',
+        userId: 'u_admin',
+        lines: [{ productId: pid, qty: 1, spr: 150 }],
+        payments: [{ method: 'Cash', amount: 150 }],
+      });
+    } catch (e) {
+      wrongBranch = e instanceof Error ? e.message : String(e);
+    }
+    s.ok('stock at another branch does not make this one sellable', wrongBranch.includes('Not enough stock'));
+
+    // A transfer out of a branch that hasn't got it is refused too — the guard is
+    // in recordMovement, so it is not a sales-only rule.
+    let transferBlocked = false;
+    try {
+      createTransfer(db, {
+        date: new Date().toISOString(),
+        fromBranch: 'br_mp',
+        toBranch: 'br_ut',
+        status: 'received',
+        lines: [{ productId: pid, qty: 5 }],
+        createdBy: 'u_admin',
+      });
+    } catch {
+      transferBlocked = true;
+    }
+    s.ok('a transfer out of empty stock is refused', transferBlocked);
+    s.money('the refused transfer moved nothing at the source', stockOnHand(db, pid, 'br_mp'), 0);
+    s.money('and nothing at the destination', stockOnHand(db, pid, 'br_ut'), 50);
+
+    // An adjustment cannot drive it negative either.
+    let adjBlocked = false;
+    try {
+      createAdjustment(db, {
+        date: new Date().toISOString(),
+        branchId: 'br_mp',
+        type: 'damage',
+        reason: 'more damage than we own',
+        lines: [{ productId: pid, qty: -3 }],
+        createdBy: 'u_admin',
+      });
+    } catch {
+      adjBlocked = true;
+    }
+    s.ok('an adjustment below zero is refused', adjBlocked);
+    s.money('stock unchanged by the refused adjustment', stockOnHand(db, pid, 'br_mp'), 0);
+
+    // A VOID must still work at zero stock: it is inward, and refusing to reverse
+    // a sale would trap the shop with books it cannot correct.
+    const voidable = createSale(db, {
+      branchId: 'br_ut',
+      userId: 'u_admin',
+      lines: [{ productId: pid, qty: 50, spr: 150 }],
+      payments: [{ method: 'Cash', amount: 7500 }],
+    });
+    s.money('sold the lot at the other branch', stockOnHand(db, pid, 'br_ut'), 0);
+    voidSale(db, voidable.id, 'u_admin', 'changed their mind');
+    s.money('voiding at zero stock still returns the goods', stockOnHand(db, pid, 'br_ut'), 50);
+  }
+
+  // ---- THE REPORTED CASE: only the AMOUNT TENDERED was keyed wrongly ----
     // ৳1,800 taken, ৳1,000 typed. Until the sale form grew a payment editor this
     // could only be fixed by voiding the invoice the customer is holding and
     // issuing a new number. The backend always supported it; these checks pin the
@@ -1574,7 +1720,20 @@ export function runScenarios(s: Suite) {
     const defId = db.prepare('SELECT id FROM branches WHERE is_default = 1').get() as { id: string };
     s.eq('the new branch is the default', defId.id, br.id);
 
-    // delete-guard: a branch with a sale cannot be deleted
+    // delete-guard: a branch with a sale cannot be deleted.
+    // The new branch needs stock before it can sell — negative stock is refused
+    // now (see assertNotNegative in services/stock.ts), and a brand-new branch has
+    // nothing on its shelves. This scenario only needs the branch to HAVE history,
+    // so one opening movement is the honest way to set it up.
+    recordMovement(db, {
+      productId: 'p1',
+      branchId: br.id,
+      reason: 'opening_stock',
+      qty: 5,
+      unitCost: 400,
+      refType: 'opening',
+      userId: 'u_admin',
+    });
     createSale(db, {
       branchId: br.id,
       userId: 'u_rana',

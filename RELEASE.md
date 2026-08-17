@@ -1,7 +1,11 @@
 # Hardware Khata POS — Releasing & Updating
 
-**Current version: 0.7.0** · Windows x64 · NSIS installer, per-user (no admin needed)
-Installer: `release/HardwareKhataPOS-Setup-0.7.0.exe` (~82 MB)
+**Current version: 0.7.1** · Windows x64 · NSIS installer, per-user (no admin needed)
+Installer: `release/HardwareKhataPOS-Setup-0.7.1.exe` (~82 MB)
+
+> **Releases are built by GitHub now, not on your PC.** Bump the version, commit,
+> then push a tag — `.github/workflows/release.yml` runs the checks, builds the
+> installer and publishes it. See §1a.
 
 ---
 
@@ -84,7 +88,73 @@ upgrading and uninstalling never touch it.
 
 ---
 
-## 2a. What's in 0.7.0
+## 1a. Publishing a release (the fast way)
+
+```bash
+# 1. bump the version — the updater compares against this
+#    package.json → "version": "0.7.2"
+# 2. commit it
+# 3. tag and push:
+git tag -a v0.7.2 -m "what changed"
+git push origin main --follow-tags
+```
+
+That's it — about two seconds of your time. GitHub then runs
+`.github/workflows/release.yml`: it typechecks, runs all 1,126 verification checks
+and the Bangla checks, refuses to continue if the tag does not match
+`package.json`, builds the installer and publishes the release. Watch it on the
+repo's **Actions** tab; nothing is published if a check fails.
+
+It used to take ~8 minutes of this PC and its upload bandwidth — compiling
+`better-sqlite3` from source for Electron (there is no prebuilt binary for that
+ABI), fetching a 97 MB Electron, building NSIS, then pushing 82 MB up a home
+connection. All of that now happens on GitHub's runner, with Electron cached
+between runs. No access token to manage either: the workflow uses the automatic
+one, scoped to the repo and expiring with the run.
+
+`npm run build:win` still builds an installer locally without publishing, which is
+the right tool for testing a build. `npm run release:win` still publishes from your
+machine if you ever need it.
+
+---
+
+## 2a. What's in 0.7.1
+
+> **Upgrade in place.** Settings → Updates → Download, then Restart and install.
+> No schema change; your data is untouched.
+
+**You can no longer sell more than you have.** Reported by the owner: a sale could
+be saved for more units than were on the shelf, and the product's stock went
+negative. There was no check anywhere in the app — the stock figure is the sum of
+every movement, so nothing stopped a movement taking it below zero. It is now
+refused, with a message naming the product and what is actually in stock, and the
+refusal is complete: no invoice, no stock movement, no cash.
+
+The rule sits at the one place all stock changes pass through, so it covers
+transfers between branches and stock adjustments too, not just sales. Two things
+that deliberately still work: selling **exactly** the last unit you have, and
+**voiding** a sale when stock is at zero — refusing to reverse a sale would leave
+you unable to correct your own books. Both the counter screen and the sale form now
+warn you before you get as far as taking money, and if the goods have not arrived
+yet you can still write the order down as a **draft** or a **quotation**.
+
+**A new sale had nowhere to enter the payment.** Also reported. The payment box only
+appeared when *editing* a sale, so on a new one you had to save it, notice it was
+recorded as fully unpaid, and re-open it to enter the money. It now appears on a new
+sale too, with a **Paid in full** button for the usual case, and it stays hidden for
+drafts and quotations because nothing has been sold yet.
+
+**Fixed a crash when receiving a due from the Customer Dues page.** Pressing to
+receive a payment there showed a React error instead of opening. It only happened
+from that page: it loads the customer in the background, and the payment window was
+built in a way that could not survive the customer arriving a moment later. A second
+crash of exactly the same kind was found and fixed on the counter screen — it would
+have hit anyone opening the POS for the very first time, or after clearing the app's
+local settings.
+
+---
+
+## 2b. What's in 0.7.0
 
 > **Upgrade in place — do NOT reinstall.** Settings → Updates → Download, then
 > Restart and install. No schema change this time; every product, customer, sale,
@@ -173,7 +243,7 @@ baskets and bills and fails if they disagree by a single paisa.
 
 ---
 
-## 2b. What's in 0.6.0
+## 2c. What's in 0.6.0
 
 > **Upgrade in place — do NOT reinstall.** Settings → Updates → Download, then Restart
 > and install. There IS a small schema change this time (v7) but it only ADDS four
@@ -245,7 +315,7 @@ Under the hood: verification went from 999 to **1,078 automated checks**, all gr
 
 ---
 
-## 2c. What's in 0.5.0
+## 2d. What's in 0.5.0
 
 > **Upgrade in place — no reinstall.** No schema change again, so
 > `%APPDATA%\pos\pos.db` is untouched.
@@ -289,7 +359,7 @@ Also removed a fake "Advance Balance ৳ 0.00" tile from the supplier payment di
 
 ---
 
-## 2d. What's in 0.4.0
+## 2e. What's in 0.4.0
 
 > **Upgrading is enough — do NOT reinstall.** There is **no schema change** in
 > this release, so `%APPDATA%\pos\pos.db` is untouched: every product, customer,
@@ -363,7 +433,7 @@ honest option), and +47 Bangla phrases (2,353 total).
 
 ---
 
-## 2e. What's in 0.3.0
+## 2f. What's in 0.3.0
 
 **Product photos and the shop logo no longer disappear.** They were being saved
 as `URL.createObjectURL(file)` — a `blob:` handle into the *current window's*
@@ -435,11 +505,11 @@ the internet.
 
 ## 4. Verification
 
-1,108 checks across eight suites, all green:
+1,126 checks across eight suites, all green:
 
 | Suite | Checks |
 |---|---:|
-| `all.ts` | 395 |
+| `all.ts` | 413 |
 | `api.ts` | 216 (152 channels) |
 | `run.ts` | 105 |
 | `e2e.ts` | 68 |
@@ -448,7 +518,7 @@ the internet.
 | `costing.ts` | 93 |
 | `mirror.ts` | 20 |
 
-Plus `npm run i18n:check` — 32 checks, 2,405 Bangla phrases.
+Plus `npm run i18n:check` — 32 checks, 2,409 Bangla phrases.
 `npm run lint` does **not** work (eslint is not installed); `tsc` is the gate.
 
 ---

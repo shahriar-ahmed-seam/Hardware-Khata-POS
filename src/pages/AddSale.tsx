@@ -265,7 +265,18 @@ export default function AddSale() {
         method: 'Cash',
         // Defaults to what is still owing, which is what the owner is almost
         // always entering. Never negative.
-        amount: Math.max(0, Number((total - paidTotal).toFixed(2))),
+        amount: round2(Math.max(0, total - paidTotal)),
+        paidAt: fromLocalInput(date),
+      },
+    ]);
+
+  /** One tap for the commonest case: the customer paid the whole bill in cash. */
+  const payInFull = () =>
+    setPayments([
+      {
+        id: 'pay_' + Date.now(),
+        method: 'Cash',
+        amount: round2(total),
         paidAt: fromLocalInput(date),
       },
     ]);
@@ -296,7 +307,44 @@ export default function AddSale() {
      * screen, and in no receivables figure. The shop's own money quietly leaves
      * the books. Drafts and quotations are exempt — nothing is owed yet.
      */
-    const owingOnSave = round2(total - (editing ? paidTotal : 0));
+    /**
+     * NEGATIVE STOCK IS REFUSED. The backend enforces it in `recordMovement`, so
+     * saving would fail anyway — but failing at the end, after the whole form is
+     * filled in, is a poor way to find out. Checked here so the message names the
+     * product and the shortfall while there is still something to change.
+     *
+     * Only for a FINAL sale: drafts and quotations move no stock, so they are the
+     * right way to write down an order for goods that have not arrived yet.
+     */
+    if (newStatus === 'final') {
+      const shortfalls = lines
+        .map((l) => {
+          const p = products.find((x) => x.id === l.productId);
+          return { name: l.name, qty: l.qty, have: p?.stock, unit: p?.unit ?? '' };
+        })
+        // `have === undefined` means the catalogue has not loaded that product;
+        // leave it to the backend rather than blocking on missing information.
+        .filter((x) => x.have !== undefined && x.qty > (x.have as number) + 0.0001);
+      if (shortfalls.length > 0) {
+        const first = shortfalls[0];
+        toast.error(
+          shortfalls.length === 1
+            ? `Not enough stock for ${first.name}`
+            : `Not enough stock for ${shortfalls.length} items`,
+          {
+            description:
+              shortfalls.length === 1
+                ? `${first.have} ${first.unit} in stock, ${first.qty} needed. Receive a purchase or correct the stock count first — or save this as a draft.`
+                : shortfalls
+                    .map((x) => `${x.name}: ${x.have} in stock, ${x.qty} needed`)
+                    .join(' · '),
+          },
+        );
+        return;
+      }
+    }
+
+    const owingOnSave = round2(total - paidTotal);
     const isNamedCustomer = !!customer && customerId.startsWith('cu_');
     if (newStatus === 'final' && owingOnSave > 0.004 && !isNamedCustomer) {
       toast.error('Choose a customer before leaving money owing', {
@@ -332,13 +380,14 @@ export default function AddSale() {
       // On an edit the payments already recorded against the invoice are kept
       // (the backend re-applies them); paid/due are recomputed there and come
       // back on the next hydrate, so these are only the create-path defaults.
-      // On an edit these come from the payment editor below; on a create there
-      // are none yet (a form sale is taken to the counter or left on credit).
-      // The backend recomputes paid/due from the payments it is sent, and the
-      // real values arrive on the next hydrate — these are the local shape only.
-      paid: editing ? paidTotal : 0,
-      due: editing ? Math.max(0, total - paidTotal) : total,
-      payments: editing ? cleanPayments : [],
+      // From the payment editor, on a CREATE as well as an edit — a new sale used
+      // to always be sent with zero payments, so money taken at the desk could
+      // only be recorded by saving the invoice and then editing it. The backend
+      // recomputes paid/due from the payments it is sent and the real values come
+      // back on the next hydrate, so these are the local shape only.
+      paid: paidTotal,
+      due: round2(Math.max(0, total - paidTotal)),
+      payments: cleanPayments,
       audit: editing?.audit ?? [
         { id: 'a_' + Date.now(), at: new Date().toISOString(), by: 'Seam', action: 'created' },
       ],
@@ -722,24 +771,44 @@ export default function AddSale() {
           On a correction this is the difference between fixing a mistyped amount
           tendered in place and having to void the invoice the customer is holding.
         */}
-        {editing?.status === 'final' && (
+        {/*
+          PAYMENT — shown whenever this document will be a real sale, NEW OR EDIT.
+
+          It used to be `editing?.status === 'final'`, so a NEW sale had nowhere to
+          record what the customer paid: you had to save it, notice it was fully
+          unpaid, then re-open it as an edit to enter the money. Drafts and
+          quotations still hide it, because nothing has been sold yet.
+        */}
+        {status === 'final' && (
           <Card className="p-4 space-y-3">
             <div className="flex items-center justify-between gap-2">
               <div>
-                <div className="text-sm font-semibold">Payments received</div>
+                <div className="text-sm font-semibold">
+                  {editing ? 'Payments received' : 'How much is the customer paying now?'}
+                </div>
                 <div className="text-[11px] text-muted-foreground mt-0.5">
-                  Correct an amount that was keyed wrongly, or record a payment that was
-                  missed. Cash changes are posted to the shift that is open now.
+                  {editing
+                    ? 'Correct an amount that was keyed wrongly, or record a payment that was missed. Cash changes are posted to the shift that is open now.'
+                    : 'Leave it empty if the whole bill goes on their khata. Cash is posted to the shift that is open now.'}
                 </div>
               </div>
-              <Button variant="outline" size="sm" onClick={addPayment}>
-                <Plus className="size-3.5" /> Add payment
-              </Button>
+              <div className="flex items-center gap-2 shrink-0">
+                {/* The commonest case, one tap: they paid the lot. */}
+                {round2(total - paidTotal) > 0.004 && (
+                  <Button variant="outline" size="sm" onClick={payInFull}>
+                    Paid in full
+                  </Button>
+                )}
+                <Button variant="outline" size="sm" onClick={addPayment}>
+                  <Plus className="size-3.5" /> Add payment
+                </Button>
+              </div>
             </div>
 
             {payments.length === 0 ? (
               <div className="rounded-md border border-dashed border-border py-5 text-center text-xs text-muted-foreground">
-                No payment recorded — the whole invoice is on credit.
+                Nothing paid yet — the whole ৳{formatBDT(total, { withSymbol: false })} goes on
+                the customer’s khata.
               </div>
             ) : (
               <div className="space-y-2">
