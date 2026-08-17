@@ -386,7 +386,10 @@ export default function AddSale() {
       // recomputes paid/due from the payments it is sent and the real values come
       // back on the next hydrate, so these are the local shape only.
       paid: paidTotal,
-      due: round2(Math.max(0, total - paidTotal)),
+      // Credit notes come from sell returns, not from this form. The backend
+      // carries the existing value through a correction; this is the local shape.
+      credited: editing?.credited ?? 0,
+      due: round2(Math.max(0, total - paidTotal - (editing?.credited ?? 0))),
       payments: cleanPayments,
       audit: editing?.audit ?? [
         { id: 'a_' + Date.now(), at: new Date().toISOString(), by: 'Seam', action: 'created' },
@@ -618,6 +621,13 @@ export default function AddSale() {
                         counter and needs both before agreeing a price. */}
                     <th className="text-right px-2 py-2 font-medium w-[92px]">Buy price</th>
                     <th className="text-right px-2 py-2 font-medium w-[92px]">Avg buy</th>
+                    {/* IN STOCK, as a number on the line.
+                        The over-selling guard could only warn in English, which is
+                        no use to a Bangla-first user. A digit next to the quantity
+                        box needs no language: it turns red the moment the quantity
+                        passes it, so the problem is visible while it is being
+                        typed rather than announced at save time. */}
+                    <th className="text-right px-2 py-2 font-medium w-[86px]">In stock</th>
                     <th className="text-right px-2 py-2 font-medium">Qty</th>
                     <th className="text-right px-2 py-2 font-medium">Sell price</th>
                     <th className="text-right px-2 py-2 font-medium">Disc %</th>
@@ -651,11 +661,30 @@ export default function AddSale() {
                         <td className="px-2 py-2 text-right font-mono tabular text-xs text-primary">
                           {cat ? formatBDT(cat.avgCost ?? cat.cost, { withSymbol: false }) : '—'}
                         </td>
+                        {/* What is actually on the shelf. Red + bold once the
+                            quantity exceeds it — no words needed. */}
+                        <td
+                          className={cn(
+                            'px-2 py-2 text-right font-mono tabular text-xs',
+                            cat === undefined
+                              ? 'text-muted-foreground'
+                              : l.qty > cat.stock + 0.0001
+                                ? 'text-destructive font-bold'
+                                : 'text-muted-foreground',
+                          )}
+                        >
+                          {cat ? `${cat.stock} ${cat.unit}` : '—'}
+                        </td>
                         <td className="px-2 py-2 text-right">
                           <NumberField
                             value={l.qty}
                             onChangeNumber={(v) => updateLine(i, { qty: v })}
-                            className="h-7 w-20 px-2 text-right text-xs"
+                            className={cn(
+                              'h-7 w-20 px-2 text-right text-xs',
+                              cat !== undefined &&
+                                l.qty > cat.stock + 0.0001 &&
+                                'border-destructive text-destructive',
+                            )}
                           />
                         </td>
                         <td className="px-2 py-2 text-right">
@@ -688,7 +717,7 @@ export default function AddSale() {
                   })}
                   {lines.length === 0 && (
                     <tr>
-                      <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground text-sm">
+                      <td colSpan={10} className="px-4 py-8 text-center text-muted-foreground text-sm">
                         Search above to add items.
                       </td>
                     </tr>

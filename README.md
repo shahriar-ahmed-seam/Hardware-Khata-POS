@@ -104,7 +104,7 @@ empty ledger and the reference lists (units, categories, tax rates) a shop needs
   cannot void a sale, edit a finalized invoice or reach the owner-only settings.
 - **Full audit trail.** Nothing is silently deleted: a sale is voided, a purchase cancelled, a
   product archived, a buying price retracted — each with who, when and why.
-- **Bangla throughout** — a 2,409-phrase dictionary, toggled from the title bar. It translates
+- **Bangla throughout** — a 2,420-phrase dictionary, toggled from the title bar. It translates
   only the interface: product names, invoice numbers and amounts are your data and are never
   rewritten.
 
@@ -140,7 +140,7 @@ There is no account, no third-party credential and no outbound request from this
 ## Two rules the whole system is built on
 
 These are not implementation details. They are why the numbers can be trusted, and every one of
-the 1,126 automated checks exists to defend them.
+the 1,161 automated checks exists to defend them.
 
 **1. Stock is never a stored number.** On-hand quantity is always
 `SUM(qty)` of the stock movements for that product and branch. Every change is a signed,
@@ -164,7 +164,7 @@ verification suite asserts the identity directly.
 npm run backend:verify:all
 ```
 
-**1,126 automated checks across eight suites**, run against real SQLite databases — including a
+**1,161 automated checks across eight suites**, run against real SQLite databases — including a
 full simulated trading year and a complete shop day driven end to end through the same API the
 user interface uses.
 
@@ -249,7 +249,7 @@ cd Hardware-Khata-POS
 npm install
 
 npm run dev                  # launch the app (rebuilds native deps for Electron first)
-npm run backend:verify:all   # 1,126 checks (rebuilds native deps for Node first)
+npm run backend:verify:all   # 1,161 checks (rebuilds native deps for Node first)
 npm run build                # production bundles
 npm run build:win            # Windows installer, no upload
 ```

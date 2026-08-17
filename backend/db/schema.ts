@@ -318,6 +318,13 @@ CREATE TABLE IF NOT EXISTS sales (
   round_off           REAL NOT NULL DEFAULT 0,
   total               REAL NOT NULL DEFAULT 0,
   paid                REAL NOT NULL DEFAULT 0,
+  -- Settled WITHOUT money changing hands: the total of every CreditAdjust sell
+  -- return booked against this invoice. Kept apart from paid, so "money received"
+  -- stays honest while due still tells the truth about what is owed.
+  -- INVARIANT: due = max(0, total - paid - credited).
+  -- (No backticks in this file: SCHEMA_SQL is a String.raw template and a
+  -- backtick in an SQL comment terminates it.)
+  credited            REAL NOT NULL DEFAULT 0,
   due                 REAL NOT NULL DEFAULT 0,
   cogs                REAL NOT NULL DEFAULT 0,
   profit              REAL NOT NULL DEFAULT 0,
@@ -453,8 +460,13 @@ CREATE TABLE IF NOT EXISTS purchase_lines (
   product_id           TEXT NOT NULL REFERENCES products(id),
   name                 TEXT NOT NULL,
   sku                  TEXT NOT NULL,
+  -- qty and unit_cost_before_disc are in the unit the SUPPLIER quoted, which is
+  -- often a pack: "5 dozen at 620". unit_factor is how many BASE units that pack
+  -- holds (12 for a dozen), so stock moves in base units while the money stays
+  -- exactly as billed. See computePurchaseLine / createPurchase.
   qty                  REAL NOT NULL,
   unit                 TEXT NOT NULL DEFAULT 'pc',
+  unit_factor          REAL NOT NULL DEFAULT 1,
   imei                 TEXT,
   unit_cost_before_disc REAL NOT NULL DEFAULT 0,
   discount_pct         REAL NOT NULL DEFAULT 0,

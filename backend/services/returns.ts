@@ -119,7 +119,30 @@ export function createSellReturn(db: DB, input: CreateSellReturnInput) {
         customerId,
       );
     }
-    // CreditAdjust reduces due implicitly via the ledger calc (return counts against sales)
+    /**
+     * A CreditAdjust return settles part of the INVOICE, not just the customer's
+     * balance.
+     *
+     * It used to only affect `customerDue` (which subtracts CreditAdjust returns),
+     * while the sale row kept its original `due`. The two then disagreed for ever:
+     * a ৳20,000 credit sale with a ৳6,000 credit return showed the customer owing
+     * ৳14,000 and the invoice still reading "Unpaid ৳20,000". Worse, collecting
+     * that ৳14,000 left the invoice stuck at ৳6,000 permanently — the missing
+     * amount existed only as a return row, so no payment could ever clear it, and
+     * `ReceivePaymentModal` allocates against `sales.due`.
+     *
+     * `credited` is deliberately a separate column from `paid`: no money arrived,
+     * so it must not appear in "money received" anywhere. `due` accounts for both.
+     */
+    if (input.refundMethod === 'CreditAdjust' && input.saleId) {
+      db.prepare(
+        `UPDATE sales
+            SET credited = ROUND(credited + ?, 2),
+                due = MAX(0, ROUND(total - paid - (credited + ?), 2)),
+                updated_at = ?
+          WHERE id = ? AND status = 'final'`,
+      ).run(total, total, date, input.saleId);
+    }
 
     // link to sale audit
     if (input.saleId) {

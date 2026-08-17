@@ -64,6 +64,8 @@ export interface BackendSale {
   other: number;
   total: number;
   paid: number;
+  /** Optional: rows written before schema v8 have no value for it. */
+  credited?: number | null;
   due: number;
   profit?: number | null;
   valid_until: string | null;
@@ -110,6 +112,9 @@ export function toSaleRecord(b: BackendSale): SaleRecord {
     other: b.other,
     total: b.total,
     paid: b.paid,
+    // Settled by a credit note (a CreditAdjust return) rather than by money.
+    // Defaulted for rows written before schema v8.
+    credited: b.credited ?? 0,
     due: b.due,
     payments: (b.payments ?? []).map(
       (p): SalePayment => ({

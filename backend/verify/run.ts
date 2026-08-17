@@ -176,11 +176,41 @@ function main() {
       );
       if (Math.abs(expectedTotal - (sale.total as number)) > EPSILON) totalMismatch++;
 
-      // due = total - paid (>= 0)
+      /**
+       * due = total − paid − CREDITED (>= 0)
+       *
+       * `credited` is the part of the invoice settled by a CreditAdjust sell
+       * return: goods came back and the customer's debt was written down, with no
+       * money changing hands. It has to come off the due, or the invoice can never
+       * be cleared — which is exactly what used to happen. This check is what
+       * caught the change when the column was introduced (schema v8).
+       *
+       * A voided sale carries 0/0/0 by design, and a draft or quotation has no
+       * settlement at all, so both satisfy the identity trivially.
+       */
       const paid = row<{ s: number }>(db, 'SELECT COALESCE(SUM(amount),0) AS s FROM sale_payments WHERE sale_id = ?', id).s;
-      const expectedDue = round2(Math.max(0, (sale.total as number) - paid));
+      const credited = (sale.credited as number) ?? 0;
+      const isSettleable = sale.status === 'final';
+      const expectedDue = isSettleable
+        ? round2(Math.max(0, (sale.total as number) - paid - credited))
+        : 0;
       if (Math.abs(expectedDue - (sale.due as number)) > EPSILON) dueMismatch++;
-      if (Math.abs(paid - (sale.paid as number)) > EPSILON) dueMismatch++;
+      // `paid` on the header must equal the payment rows — except on a void, where
+      // it is deliberately zeroed while the rows are kept as the record of what
+      // really moved before the cancellation.
+      const expectedPaid = isSettleable ? paid : 0;
+      if (Math.abs(expectedPaid - (sale.paid as number)) > EPSILON) dueMismatch++;
+
+      // And the credit on the invoice must equal the CreditAdjust returns booked
+      // against it — the two are the same fact stored in two places.
+      if (isSettleable) {
+        const creditReturns = row<{ s: number }>(
+          db,
+          "SELECT COALESCE(SUM(total),0) AS s FROM sell_returns WHERE sale_id = ? AND refund_method = 'CreditAdjust'",
+          id,
+        ).s;
+        if (Math.abs(round2(creditReturns) - round2(credited)) > EPSILON) dueMismatch++;
+      }
 
       // subtotal = sum(line_subtotal)
       const lineSum = row<{ s: number }>(db, 'SELECT COALESCE(SUM(line_subtotal),0) AS s FROM sale_lines WHERE sale_id = ?', id).s;
@@ -191,7 +221,7 @@ function main() {
       if (Math.abs(expectedProfit - (sale.profit as number)) > EPSILON) profitMismatch++;
     }
     s.ok(`total = taxableBase+tax+ship+other+roundoff (n=${allSales.length})`, totalMismatch === 0, `${totalMismatch} bad`);
-    s.ok('due = total - paid, clamped >= 0', dueMismatch === 0, `${dueMismatch} bad`);
+    s.ok('due = total - paid - credited, clamped >= 0', dueMismatch === 0, `${dueMismatch} bad`);
     s.ok('subtotal = sum(line subtotals)', lineSumMismatch === 0, `${lineSumMismatch} bad`);
     s.ok('profit = subtotal - orderDisc - cogs', profitMismatch === 0, `${profitMismatch} bad`);
 

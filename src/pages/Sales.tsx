@@ -562,8 +562,12 @@ function Cell({ c, s }: { c: SalesColumn; s: SaleRecord }) {
         </td>
       );
     case 'paymentStatus':
-      if (s.status === 'void') return <td className="px-3 py-2.5"><Badge variant="destructive">Voided</Badge></td>;
-      return <td className="px-3 py-2.5"><SettlementBadge paid={s.paid} due={s.due} /></td>;
+      // Status is passed too, so a draft or quotation can never read "Paid".
+      return (
+        <td className="px-3 py-2.5">
+          <SettlementBadge paid={s.paid} due={s.due} credited={s.credited} status={s.status} />
+        </td>
+      );
     case 'paymentMethod': {
       const methods = Array.from(new Set(s.payments.map((p) => p.method)));
       const text = methods.length === 0 ? '—' : methods.length === 1 ? methods[0] : 'Mixed';

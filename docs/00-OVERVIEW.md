@@ -66,10 +66,10 @@ STORE WIRING      ████████████████████ 1
 AUTH + PERMISSIONS████████████████████ 100%  (bcrypt + IPC-boundary enforcement)
 FIRST-RUN WIZARD  ████████████████████ 100%  (writes a real shop, run-once)
 POS CHECKOUT      ████████████████████ 100%  (persists via sales.create)
-FINAL E2E TEST    ████████████████████ 100%  (1,126 checks: eight suites incl. E2E, paging, backup)
+FINAL E2E TEST    ████████████████████ 100%  (1,161 checks: eight suites incl. E2E, paging, backup)
 LIST PERFORMANCE  ████████████████████ 100%  (N+1 removed; ~74× faster; every list tab paginated)
 BACKUP & CLOUD    ████████████████████ 100%  (verified snapshots + retention + restore + CSV export)
-BANGLA UI         ████████████████████ 100%  (2,409-phrase dictionary + DOM layer, EN/বাং toggle)
+BANGLA UI         ████████████████████ 100%  (2,420-phrase dictionary + DOM layer, EN/বাং toggle)
 LEGIBILITY        ████████████████████ 100%  (bigger type + higher contrast for an elderly user)
 MOCK REMOVAL      ████████████████████ 100%  (src/mocks deleted; no fake numbers — see the note below)
 RESPONSIVE SHELL  ████████████████████ 100%  (sidebar/titlebar/POS adapt; min window 900×600)
@@ -88,7 +88,7 @@ MANUAL SMOKE TEST ░░░░░░░░░░░░░░░░░░░░�
 
 - **Frontend**: all modules built and visually complete.
 - **Backend data layer**: full data layer built and proven in isolation, then grown as
-  each slice was wired — **1,126 automated verification checks pass** (accounting
+  each slice was wired — **1,161 automated verification checks pass** (accounting
   identities, stock invariants, ledgers, cash, reports, auth, settings, determinism,
   persistence, paged reads, backup snapshots, cost history) across **152 registered
   channels**.
@@ -126,7 +126,7 @@ npm install
 # DEV (auto-rebuilds better-sqlite3 for Electron, then launches Vite + Electron)
 npm run dev
 
-# BACKEND VERIFICATION (auto-rebuilds for Node, runs 1,126 checks across eight suites)
+# BACKEND VERIFICATION (auto-rebuilds for Node, runs 1,161 checks across eight suites)
 npm run backend:verify:all
 
 # ONE SUITE AT A TIME (same rebuild, faster loop)

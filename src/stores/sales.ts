@@ -72,6 +72,13 @@ export interface SaleRecord {
   other: number;
   total: number;
   paid: number;
+  /**
+   * Settled by a CREDIT NOTE rather than by money — the total of the CreditAdjust
+   * sell returns booked against this invoice. Separate from `paid` so "money
+   * received" stays honest. INVARIANT: due = max(0, total − paid − credited).
+   * See `sales.credited` (schema v8).
+   */
+  credited: number;
   due: number;
   // Payments
   payments: SalePayment[];

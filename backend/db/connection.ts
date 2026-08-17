@@ -73,12 +73,22 @@ export function openDatabase(filePath: string, opts: { readonly?: boolean } = {}
  *       `cost`/`avg_cost` cache is recomputed ignoring retracted rows.
  *       All four columns are additive and nullable, so every existing entry
  *       stays live. See `addCostRetractionColumns`.
+ *  v8 — add `sales.credited`, the amount of an invoice settled by a CreditAdjust
+ *       sell return rather than by money. `customerDue` always deducted those
+ *       returns while the invoice kept its original `due`, so the customer's
+ *       balance and the invoice contradicted each other and the invoice could
+ *       never reach zero. Additive with a default of 0, and back-filled from the
+ *       returns already on record — see `addSaleCreditedColumn`.
+ *  v9 — add `purchase_lines.unit_factor`, so a purchase can be entered in the
+ *       unit the SUPPLIER quoted (a dozen, a box, a bundle) while stock still
+ *       moves in the base unit the shop sells. Defaults to 1, which is what every
+ *       existing line already means. See `addPurchaseUnitFactor`.
  */
 export function migrate(db: DB): void {
   db.exec(SCHEMA_SQL);
   db.exec(FTS_SQL);
 
-  const CURRENT_VERSION = 7;
+  const CURRENT_VERSION = 9;
   const row = db
     .prepare('SELECT MAX(version) AS v FROM schema_migrations')
     .get() as { v: number | null };
@@ -131,12 +141,109 @@ export function migrate(db: DB): void {
     );
   }
 
-  if (applied < CURRENT_VERSION) {
+  if (applied < 7) {
     addCostRetractionColumns(db);
     db.prepare('INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (?, ?)').run(
       7,
       'product_cost_history: ref_type/ref_id + retracted_at/retract_reason',
     );
+  }
+
+  if (applied < 8) {
+    addSaleCreditedColumn(db);
+    backfillSaleCredited(db);
+    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (?, ?)').run(
+      8,
+      'sales.credited (CreditAdjust returns settle the invoice they came from)',
+    );
+  }
+
+  if (applied < CURRENT_VERSION) {
+    addPurchaseUnitFactor(db);
+    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (?, ?)').run(
+      9,
+      'purchase_lines.unit_factor (buy by the dozen, sell by the piece)',
+    );
+  }
+}
+
+/**
+ * v9 — `purchase_lines.unit_factor`.
+ *
+ * Suppliers quote packs: "5 dozen at 620 each". The shop sells pieces. Before
+ * this, a purchase entered as 5 dozen added FIVE to stock instead of sixty, so the
+ * only safe way to buy was to convert by hand and enter 60 at 51.6667 — which does
+ * not divide evenly and left the bill a few paisa away from what the supplier
+ * actually charged.
+ *
+ * Defaults to 1, which is exactly what every existing line means (it was entered
+ * in base units), so nothing existing changes value.
+ */
+function addPurchaseUnitFactor(db: DB): void {
+  const cols = new Set(
+    (db.prepare('PRAGMA table_info(purchase_lines)').all() as { name: string }[]).map(
+      (c) => c.name,
+    ),
+  );
+  if (cols.has('unit_factor')) return;
+  try {
+    db.exec('ALTER TABLE purchase_lines ADD COLUMN unit_factor REAL NOT NULL DEFAULT 1');
+  } catch {
+    // "duplicate column name" — already present; ignore to stay idempotent.
+  }
+}
+
+/**
+ * v8 — `sales.credited`.
+ *
+ * A CreditAdjust sell return writes down what the customer owes without any money
+ * moving. `customerDue` always subtracted those returns, but the INVOICE kept its
+ * original `due`, so the two disagreed permanently: a ৳20,000 credit sale with a
+ * ৳6,000 credit return showed the customer owing ৳14,000 while the invoice still
+ * read "Unpaid ৳20,000" — and collecting the ৳14,000 left the invoice stuck at
+ * ৳6,000 for ever, because the missing amount existed only as a return row.
+ *
+ * Additive with a default of 0, so nothing existing changes shape. Unlike the
+ * other migrations this one DOES back-fill, because the correct value is not a
+ * guess: it is the sum of the CreditAdjust returns already recorded against each
+ * sale. Not back-filling would leave those invoices permanently unsettleable.
+ */
+function addSaleCreditedColumn(db: DB): void {
+  const cols = new Set(
+    (db.prepare('PRAGMA table_info(sales)').all() as { name: string }[]).map((c) => c.name),
+  );
+  if (cols.has('credited')) return;
+  try {
+    db.exec('ALTER TABLE sales ADD COLUMN credited REAL NOT NULL DEFAULT 0');
+  } catch {
+    // "duplicate column name" — already present; ignore to stay idempotent.
+  }
+}
+
+/**
+ * Set `credited` from the CreditAdjust returns that already exist, and bring
+ * `due` back into line with `total - paid - credited`.
+ *
+ * Only touches FINAL sales that actually have such a return, so a database with
+ * none is left completely untouched. Idempotent: re-running recomputes the same
+ * numbers from the same source rows.
+ */
+function backfillSaleCredited(db: DB): void {
+  try {
+    db.exec(`
+      UPDATE sales SET credited = (
+        SELECT COALESCE(SUM(r.total), 0) FROM sell_returns r
+         WHERE r.sale_id = sales.id AND r.refund_method = 'CreditAdjust'
+      )
+      WHERE status = 'final' AND EXISTS (
+        SELECT 1 FROM sell_returns r
+         WHERE r.sale_id = sales.id AND r.refund_method = 'CreditAdjust'
+      );
+      UPDATE sales SET due = MAX(0, ROUND(total - paid - credited, 2))
+       WHERE status = 'final' AND credited > 0;
+    `);
+  } catch {
+    // A database predating sell_returns has nothing to back-fill.
   }
 }
 

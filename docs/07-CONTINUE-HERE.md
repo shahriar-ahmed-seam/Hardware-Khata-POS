@@ -16,11 +16,11 @@
 
 ```bash
 npm install                        # if node_modules is missing — READ THE NPM NOTE BELOW
-npm run backend:verify:all         # must print 1,126 checks across EIGHT suites
+npm run backend:verify:all         # must print 1,161 checks across EIGHT suites
 npx tsc --noEmit -p tsconfig.json  # frontend typecheck — clean
 npx tsc --noEmit -p tsconfig.backend.json
 npm run build                      # renderer + main + preload
-npm run i18n:check                 # 32 checks, 2,409 Bangla phrases
+npm run i18n:check                 # 32 checks, 2,420 Bangla phrases
 npm run rebuild:electron           # LEAVE IT ON THE ELECTRON ABI (see §6)
 ```
 
@@ -40,15 +40,15 @@ Expected per-suite counts:
 
 | Suite | Checks | Covers |
 |-------|-------:|--------|
-| `all.ts` | 413 | scenarios + determinism + file-DB smoke + identities, incl. correcting an invoice's payments and **stock never going negative** |
+| `all.ts` | 446 | scenarios + determinism + file-DB smoke + identities, incl. correcting an invoice's payments and **stock never going negative** |
 | `api.ts` | 216 | the `buildApi()` facade — **152 channels** |
 | `run.ts` | 105 | identities on a 365-day dataset, custom date ranges, **Saturday week start**, **payment detail rows == report total** |
 | `e2e.ts` | 68 | one full shop day |
 | `paging.ts` | 91 | paginated list reads + Paid/Partial/Due filtering |
 | `backup.ts` | 120 | backup, cloud, CSV export, invoice PDFs, pendrive copies |
-| `costing.ts` | 93 | purchase-price history, purchases feeding it, a cancelled purchase retracting its price, **a product born on a purchase not being priced twice**, migration head (**v7**) |
+| `costing.ts` | 95 | purchase-price history, purchases feeding it, a cancelled purchase retracting its price, **a product born on a purchase not being priced twice**, migration head (**v7**) |
 | `mirror.ts` | 20 | **the renderer's money math vs `core/calc.ts`** — 800 randomised baskets and bills, must agree to the paisa |
-| **total** | **1,126** | |
+| **total** | **1,161** | |
 
 > `mirror.ts` is the only suite that touches `src/`. It imports `src/lib/money.ts`
 > (which deliberately has NO imports of its own) and drives it against
@@ -81,7 +81,58 @@ first, as always.
 
 ---
 
-## 3e. What landed in the money-and-payments session (0.7.0, the most recent work)
+## 3g. What landed in the due-and-units session (0.8.0, the most recent work)
+
+Owner reported: "due is wrongly counted in invoices, many inconsistencies";
+over-selling only warned in English; buying by the dozen; and "make the whole sale
+and purchase chain perfect".
+
+**Two audits were run before touching anything** (a settlement audit and a
+draft/quotation/returns completeness audit). Their findings are the reason the
+remaining work in §4 is now written down precisely rather than guessed at — READ
+THAT LIST before picking this up.
+
+**The due bugs — three separate causes, all fixed:**
+
+- **A CreditAdjust return never reduced the invoice.** `customerDue` subtracts those
+  returns; the sale row kept its original `due`. A ৳20,000 credit sale with a ৳6,000
+  credit return showed the customer owing ৳14,000 and the invoice reading "Unpaid
+  ৳20,000" — and because `ReceivePaymentModal` allocates against `sales.due`,
+  collecting the ৳14,000 left the invoice stuck at ৳6,000 for ever. **Schema v8**
+  adds `sales.credited` (settled without money) with the invariant
+  `due = max(0, total − paid − credited)`, and it BACK-FILLS from the returns
+  already on record — the only migration in this project that writes existing data,
+  because not doing so would leave those invoices permanently unsettleable.
+- **`voidSale` / `cancelPurchase` left `paid`/`due` on the row.** The ledger
+  correctly ignored them (status-scoped), so one voided credit sale produced four
+  different answers on one screen. Both now zero the columns; the payment ROWS are
+  kept as the record of what really moved.
+- **`settlementOf` read `due === 0` as "Paid"**, so a draft or quotation rendered a
+  green Paid badge. It now takes the STATUS and answers before looking at money.
+
+Also: `paged.ts`'s payment filter tests `(paid + credited)` so it agrees with the
+badge; `CustomerDetail`'s hand-built ledger credited EVERY return (not just
+CreditAdjust) and dropped a negative opening balance.
+
+**Buy by the dozen, sell by the piece (schema v9, `purchase_lines.unit_factor`).**
+The money stays at PACK level so the bill matches the supplier exactly (5 × 620 =
+3,100), stock converts to base units (60), and **the per-piece cost is never
+rounded before it is multiplied** — 620/12 is 51.666…, and storing 51.67 for 60
+pieces would value the delivery at ৳3,100.20. `setProductCost` records the per-piece
+figure (৳51.67 displayed) so margins stay right. `cancelPurchase` had to be fixed to
+reverse in base units too, or it would have added 60 and removed 5.
+
+**Stock on the sale line.** An `In stock` column, red when the quantity passes it —
+the 0.7.1 guard could only warn in English.
+
+**NOT DONE — see §4.** The "whole chain" request is a much larger body of work than
+one session: returns still have no detail view, the purchase-returns list is never
+populated, there is no `purchases.update`, and Convert on a draft/quotation does not
+convert. All of it is inventoried in §4 with file references.
+
+---
+
+## 3f. What landed in the money-and-payments session (0.7.0)
 
 Three things the owner reported, in their words: the average buying price was wrong,
 "check any other calculation bugs", and "partial/due/full payment is not user
@@ -147,7 +198,7 @@ Now blocked in both places a sale can be created. See rule 22.
 `SettlementBadge`; six places had their own copy of that ladder.
 
 **NOT verified:** the new payment screen has not been clicked through by a human.
-Typecheck, 1,126 checks and a production build pass, but the feel of that screen
+Typecheck, 1,161 checks and a production build pass, but the feel of that screen
 matters as much as its arithmetic.
 
 ---
@@ -512,7 +563,7 @@ those entries — so a purchase keyed at the wrong price and cancelled a minute 
 moved the shop's average buying price permanently, with no way to undo it.
 
 **Decided: if the delivery never arrived, the shop never paid that price**, so the
-entry must stop counting. It is **retracted, never deleted** (schema **v7**:
+entry must stop counting. It is **retracted, never deleted** (schema **v9**:
 `product_cost_history.ref_type/ref_id/retracted_at/retract_reason`). The row stays,
 because the history is the audit record of what was entered and when — an owner
 staring at a surprising average most needs to see that the price *was* entered
@@ -524,7 +575,71 @@ Nothing is back-filled: purchases cancelled before v7 never recorded which histo
 rows they created, and guessing from timestamps could retract a price the owner
 typed by hand.
 
-### Still open
+### 4b. THE SALE / PURCHASE CHAIN — audited inventory, largely still open
+
+The owner asked for drafts, quotations, sell returns and purchase returns to work
+"perfectly, including editing, viewing". A full audit was run; the money side was
+fixed in 0.8.0 (§3g) but most of the DOCUMENT side is still missing. This is the
+precise inventory — do not re-derive it.
+
+**Sell returns** (`src/pages/SellReturns.tsx`)
+- No detail view at all. The row's Eye button has **no `onClick`** — it is dead.
+  There is no way in the app to see which items were returned.
+- Blocked on backend: `listSellReturns` is `SELECT * FROM sell_returns` (header
+  only), so `toSellReturnRecord` leaves `lines: []` **and hard-codes
+  `customerName: 'Walk-in Customer'` for every row** — the Customer column is wrong
+  on every return, and the search box matches that constant.
+- Needs: `sellReturns.get` (header + lines + customer join), a `ReturnDetail`
+  drawer, and a customer-name join on the list query.
+- The page's own "New Return" button cannot create anything (`picking` is never
+  set, so the mounted `CreateReturnModal` is unreachable). Working entry points are
+  the Sales row icon and `SaleDetail`.
+- No cumulative over-return guard in either the modal or `createSellReturn`: the
+  same item can be returned repeatedly beyond what was sold.
+
+**Purchase returns** (`src/pages/PurchaseReturns.tsx`)
+- **The list is ALWAYS EMPTY.** Nothing in the app ever calls
+  `purchaseReturns.list` — there is no adapter and `usePurchases.hydrate()` only
+  loads purchases. Creating a return appears to do nothing.
+- Needs: a `toPurchaseReturnRecord` adapter + the call in `hydrate`, then the same
+  detail view as above. Dead Eye button here too.
+- `stores/purchases.ts addReturn` hard-codes `branchId: 'br_mp'`.
+- `createPurchaseReturn` writes no `purchase_audit` row, so a bill gives no sign
+  that goods went back (the sell side does write one).
+
+**Drafts / quotations**
+- `AddSale`'s `editing` lookup reads `useSales().sales` — ONE PAGE — with no
+  `sales.get` fallback. A deep link or refresh at `/sales/:id/edit` silently renders
+  an EMPTY NEW SALE FORM, and saving creates a SECOND document. Highest-value fix
+  in this area.
+- "Convert to Sale" only navigates to the edit form; `?convert=true` is never read.
+  Converting by hand keeps the DRAFT reference number (`DRF-…`) as the final
+  invoice number, because `updateSale` preserves `invoice_no`. Needs a real
+  `sales.convert` that re-sequences via `nextRef(db,'sale')` and writes
+  `source_quotation_id` (the column exists; nothing sets it).
+- A quotation prints through `InvoicePrintModal`, titled "Invoice", with footer text
+  claiming it is a reprint of an original invoice. A customer handed one gets
+  something that looks like a bill.
+- `CustomerDetail` fetches with no `statuses`, so drafts/quotations/voids appear in
+  the Sales History tab (their badge is now correct, but they arguably should not be
+  in that list at all).
+
+**Purchases**
+- **There is no `purchases.update` channel.** `/purchases/:id/edit` changes the
+  in-memory copy only — the edit is lost on the next hydrate. Sales can be
+  corrected; purchases cannot.
+
+**Both sides**
+- Non-cash refunds (`Bank`/`bKash`/`Nagad`/`Card`) are financial no-ops: no cash
+  movement (correct — it is not the drawer), but also no due reduction and nothing
+  recorded anywhere. The money left the shop's bank and the books never learn.
+  Needs a decision: a bank ledger, or restrict the refund methods offered.
+- `customers.store_credit` accumulates from StoreCredit returns and **nothing ever
+  spends or displays it**.
+- `SaleDetail`'s `returnIds` badge and its `!sale.shipmentId` check are dead —
+  `toSaleRecord` never populates either field.
+
+### Still open (other)
 
 5. **Manual GUI smoke test** — `docs/06-E2E-AND-SMOKE-TEST.md`, human-only. This
    is now the only unticked item in the definition of done.
@@ -663,6 +778,28 @@ typed by hand.
    minified error. There is no eslint in this project, so nothing catches it
    automatically: put the guard in the RETURNED MARKUP, or hoist every hook above
    it. When touching a component with an early return, check what is below it.
+25. **`due = max(0, total − paid − credited)` IS THE INVOICE INVARIANT**, and
+   `run.ts` asserts it over the whole dataset. `credited` (schema v8) is the part
+   settled by a CreditAdjust sell return — no money arrived, so it must never be
+   added to `paid` or appear in any "money received" figure, but it MUST come off
+   the due or the invoice can never be cleared. Anything that writes `due` has to
+   account for it: `addSalePayment` and `updateSale` both do, and `updateSale`
+   carries the existing value forward rather than re-deriving it.
+26. **A CANCELLED DOCUMENT OWES NOTHING.** `voidSale` and `cancelPurchase` zero
+   `paid`/`credited`/`due` while KEEPING the payment rows. The ledgers were always
+   status-scoped and ignored these rows; leaving stale columns behind is what made
+   one voided sale give four different answers across a single screen.
+27. **THE STATUS IS PART OF THE SETTLEMENT ANSWER.** A draft or quotation has
+   `paid = 0, due = 0`, which reads as "fully paid" to anything that looks only at
+   the numbers. `settlementOf` takes the status and answers 'draft' / 'quotation' /
+   'void' before it looks at money. Never re-implement that ladder inline.
+28. **MONEY STAYS IN THE UNIT IT WAS BILLED IN; STOCK MOVES IN BASE UNITS.**
+   A purchase of "5 dozen at 620" stores qty 5 at 620 (so the bill is exactly
+   ৳3,100) with `unit_factor` 12, and the movement is 60 pieces. The per-base-unit
+   cost is `unitCostBeforeTax / factor` and is **passed to `recordMovement`
+   UNROUNDED** — 620/12 is 51.666…, and rounding to 51.67 before multiplying by 60
+   invents twenty paisa on every pack. Anything that reverses a purchase must
+   convert by the same factor (`cancelPurchase` had this bug).
 
 **Bangla:** append-only `Object.assign(BN, {…})` blocks in `src/lib/bn/dict.ts`.
 Never reorder or delete. Duplicate keys across blocks **must agree** —

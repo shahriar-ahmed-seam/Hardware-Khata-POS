@@ -168,7 +168,10 @@ export default function CustomerDetail() {
       saleId?: string;
     }[] = [];
 
-    if (customer.openingBalance && customer.openingBalance > 0) {
+    // `!== 0`, not `> 0`: a NEGATIVE opening balance is a customer advance, and
+    // `customerDue` counts it unconditionally — skipping it here made the ledger
+    // start from a different number than the stat.
+    if (customer.openingBalance && customer.openingBalance !== 0) {
       entries.push({
         id: 'open',
         date: customer.joined,
@@ -202,16 +205,28 @@ export default function CustomerDetail() {
           });
         });
       });
-    customerReturns.forEach((r) => {
-      entries.push({
-        id: r.id,
-        date: r.date,
-        type: 'return',
-        reference: `${r.refNo} · against ${r.saleInvoiceNo}`,
-        debit: 0,
-        credit: r.total,
+    /**
+     * ONLY CreditAdjust returns belong in the ledger.
+     *
+     * This credited EVERY return, so a customer refunded ৳6,000 in cash had that
+     * ৳6,000 taken off their running balance as well as out of the drawer — the
+     * ledger tab's closing balance then disagreed with the "Outstanding Due" stat
+     * three inches above it. A cash/bKash/card refund hands the money back; it
+     * does not reduce what they owe. `customerDue` in the backend has always
+     * scoped this to `refund_method = 'CreditAdjust'`; this is the same rule.
+     */
+    customerReturns
+      .filter((r) => r.refundMethod === 'CreditAdjust')
+      .forEach((r) => {
+        entries.push({
+          id: r.id,
+          date: r.date,
+          type: 'return',
+          reference: `${r.refNo} · against ${r.saleInvoiceNo}`,
+          debit: 0,
+          credit: r.total,
+        });
       });
-    });
 
     entries.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     let running = 0;
@@ -532,11 +547,12 @@ export default function CustomerDetail() {
                           )}
                         </td>
                         <td className="px-2 py-2">
-                          {s.status === 'void' ? (
-                            <Badge variant="destructive">Voided</Badge>
-                          ) : (
-                            <SettlementBadge paid={s.paid} due={s.due} />
-                          )}
+                          <SettlementBadge
+                            paid={s.paid}
+                            due={s.due}
+                            credited={s.credited}
+                            status={s.status}
+                          />
                         </td>
                       </tr>
                     ))

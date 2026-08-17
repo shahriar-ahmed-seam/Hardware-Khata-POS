@@ -35,12 +35,34 @@ import {
 } from '@/stores/purchases';
 import { ProductImage } from '@/components/products/ProductImage';
 import { formatBDT, cn } from '@/lib/utils';
+import { round2 } from '@/lib/money';
 import { consumePurchasePrefill } from '@/lib/purchasePrefill';
 import { AddPurchasePaymentModal } from '@/components/purchases/AddPurchasePaymentModal';
 import { NewSupplierModal } from '@/components/purchases/NewSupplierModal';
 import { NewProductDrawer } from '@/components/products/NewProductDrawer';
 import { DateTimeField } from '@/components/ui/DateTimeField';
 import { toLocalInput, fromLocalInput } from '@/lib/datetime';
+
+/**
+ * The pack sizes a Bangladeshi hardware supplier actually quotes in.
+ *
+ * A shop sells screws, hinges and fittings by the piece but buys them by the
+ * dozen, the gross or the box. Entering "5 dozen at 620" used to mean doing the
+ * division by hand — 60 at 51.6667 — which does not come back to the ৳3,100 the
+ * supplier charged. Choosing the pack keeps the bill exact and lets the app
+ * convert the stock.
+ */
+const PACKS: { factor: number; label: string }[] = [
+  { factor: 1, label: 'each' },
+  { factor: 12, label: 'dozen' },
+  { factor: 24, label: '2 dozen' },
+  { factor: 144, label: 'gross' },
+  { factor: 10, label: 'box of 10' },
+  { factor: 20, label: 'box of 20' },
+  { factor: 25, label: 'box of 25' },
+  { factor: 50, label: 'box of 50' },
+  { factor: 100, label: 'box of 100' },
+];
 
 export default function AddPurchase() {
   const nav = useNavigate();
@@ -560,6 +582,8 @@ export default function AddPurchase() {
                     <th className="text-left px-2 py-2 font-medium w-8">#</th>
                     <th className="text-left px-2 py-2 font-medium">Product Name</th>
                     <th className="text-right px-1 py-2 font-medium w-[74px]">Qty</th>
+                    {/* The unit the SUPPLIER is quoting. See the cell below. */}
+                    <th className="text-left px-1 py-2 font-medium w-[84px]">Bought as</th>
                     <th className="text-left px-1 py-2 font-medium w-[96px]">Serial</th>
                     {/* Read-only: the average we have paid for this item before,
                         sitting right next to the price being entered so a bad
@@ -593,6 +617,42 @@ export default function AddPurchase() {
                           onChangeNumber={(v) => updateLine(i, { qty: Math.max(0, v) })}
                           className="h-7 w-full px-1.5 text-right text-xs"
                         />
+                      </td>
+                      {/*
+                        BOUGHT BY THE PACK, SOLD BY THE PIECE.
+                        The supplier says "5 dozen at 620". Choosing the pack here
+                        keeps the bill exactly 5 × 620 while stock arrives as 60
+                        pieces — so nothing has to be divided by hand into a price
+                        like 51.6667 that does not come back to the bill.
+                      */}
+                      <td className="px-1 py-2">
+                        <select
+                          value={l.unitFactor && l.unitFactor > 1 ? String(l.unitFactor) : '1'}
+                          onChange={(e) => {
+                            const factor = Number(e.target.value);
+                            const preset = PACKS.find((p) => p.factor === factor);
+                            updateLine(i, {
+                              unitFactor: factor,
+                              unit: factor > 1 ? (preset?.label ?? 'pack') : (cat?.unit ?? 'pc'),
+                              baseUnit: cat?.unit ?? 'pc',
+                            });
+                          }}
+                          className="h-7 w-full px-1 rounded border border-input bg-background text-[11px] outline-none focus:ring-2 focus:ring-ring/50"
+                          title="What the supplier is quoting — the price is per one of these"
+                        >
+                          {PACKS.map((p) => (
+                            <option key={p.factor} value={p.factor}>
+                              {p.factor === 1 ? (cat?.unit ?? 'each') : p.label}
+                            </option>
+                          ))}
+                        </select>
+                        {/* Says out loud what will land in stock, so the buyer can
+                            check it against the delivery before saving. */}
+                        {(l.unitFactor ?? 1) > 1 && (
+                          <div className="text-[10px] text-muted-foreground mt-0.5 text-center tabular">
+                            = {round2(l.qty * (l.unitFactor ?? 1))} {cat?.unit ?? 'pc'}
+                          </div>
+                        )}
                       </td>
                       <td className="px-1 py-2">
                         <Input
@@ -663,7 +723,7 @@ export default function AddPurchase() {
                   })}
                   {lines.length === 0 && (
                     <tr>
-                      <td colSpan={12} className="px-4 py-8 text-center text-muted-foreground text-sm">
+                      <td colSpan={13} className="px-4 py-8 text-center text-muted-foreground text-sm">
                         Search above to add items.
                       </td>
                     </tr>

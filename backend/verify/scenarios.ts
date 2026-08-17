@@ -915,7 +915,272 @@ export function runScenarios(s: Suite) {
       2,
     );
 
-    // ---- STOCK CAN NEVER GO NEGATIVE ----
+    // ---- BUY BY THE DOZEN, SELL BY THE PIECE ----
+  // The owner's case, with their numbers: a supplier bills 5 dozen at ৳620, which
+  // is ৳51.666… a piece. The point of the checks is that NOTHING is invented by
+  // that division — the bill matches the supplier exactly, stock arrives in
+  // pieces, and the valuation of those pieces adds back up to the bill.
+  s.section('scenario-buy-by-the-dozen');
+  {
+    const db = fresh();
+    const pid = createProduct(db, {
+      sku: 'DOZEN-TEST',
+      name: 'Sold By The Piece',
+      cost: 0,
+      price: 80,
+      unit: 'pc',
+      openingStock: 0,
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      recordOpeningCost: false,
+    }).id;
+
+    const pur = createPurchase(db, {
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      supplierId: 'sp1',
+      lines: [
+        {
+          productId: pid,
+          qty: 5,
+          unit: 'dozen',
+          unitFactor: 12,
+          unitCostBeforeDisc: 620,
+        },
+      ],
+    });
+
+    // The money is what the supplier actually charged — not 60 × 51.67 = 3,100.20.
+    s.money('the bill is exactly 5 × 620', pur.totals.total, 3100);
+    s.money('stock arrives in PIECES, not packs', stockOnHand(db, pid, 'br_mp'), 60);
+
+    // The valuation of those 60 pieces must come back to the bill exactly. This is
+    // what a rounded per-piece cost would break.
+    const movValue = (
+      db
+        .prepare(
+          `SELECT COALESCE(SUM(qty * unit_cost), 0) AS v FROM stock_movements
+            WHERE product_id = ? AND reason = 'purchase'`,
+        )
+        .get(pid) as { v: number }
+    ).v;
+    s.money('60 pieces are valued at exactly the bill', round2(movValue), 3100);
+    s.money(
+      'weighted-average cost is the true per-piece cost',
+      weightedAvgCost(db, pid),
+      round2(3100 / 60),
+    );
+
+    // The recorded BUYING PRICE is per piece — recording 620 would make the piece
+    // look twelve times dearer than it is and wreck every margin on the product.
+    s.money(
+      'the buying price is per piece, not per dozen',
+      (db.prepare('SELECT cost FROM products WHERE id = ?').get(pid) as { cost: number }).cost,
+      51.67,
+    );
+
+    // Selling one piece must cost the shop the true per-piece cost, so the profit
+    // on a ৳80 sale is 80 − 51.666…, not 80 − 620.
+    const sale = createSale(db, {
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      lines: [{ productId: pid, qty: 1, spr: 80 }],
+      payments: [{ method: 'Cash', amount: 80 }],
+    });
+    const sold = db.prepare('SELECT cogs, profit FROM sales WHERE id = ?').get(sale.id) as {
+      cogs: number;
+      profit: number;
+    };
+    s.money('COGS for one piece is the per-piece cost', sold.cogs, round2(3100 / 60));
+    s.money('so the profit on one piece is honest', sold.profit, round2(80 - 3100 / 60));
+    s.money('and 59 pieces are left', stockOnHand(db, pid, 'br_mp'), 59);
+
+    // Cancelling must remove exactly what arrived — 60 pieces, not 5.
+    const pur2 = createPurchase(db, {
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      supplierId: 'sp1',
+      lines: [
+        { productId: pid, qty: 2, unit: 'dozen', unitFactor: 12, unitCostBeforeDisc: 600 },
+      ],
+    });
+    s.money('a second pack purchase adds 24', stockOnHand(db, pid, 'br_mp'), 83);
+    cancelPurchase(db, pur2.id, 'u_admin', 'wrong supplier');
+    s.money(
+      'cancelling a pack purchase removes all 24, not 2',
+      stockOnHand(db, pid, 'br_mp'),
+      59,
+    );
+
+    // A plain purchase (no pack) must be completely unaffected by any of this.
+    createPurchase(db, {
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      supplierId: 'sp1',
+      lines: [{ productId: pid, qty: 10, unitCostBeforeDisc: 55 }],
+    });
+    s.money('buying in the base unit still adds exactly that many', stockOnHand(db, pid, 'br_mp'), 69);
+  }
+
+  // ---- A CREDIT RETURN SETTLES THE INVOICE IT CAME FROM ----
+  // Reported by the owner as "due is wrongly counted in invoices". A CreditAdjust
+  // return wrote down the CUSTOMER's balance (customerDue subtracts those returns)
+  // but left the INVOICE's due untouched, so the two disagreed permanently — and
+  // because ReceivePaymentModal allocates against `sales.due`, collecting the
+  // customer's real balance left the invoice stuck at a residual that no payment
+  // could ever clear. schema v8 added `sales.credited` to close that gap.
+  s.section('scenario-credit-return-settles-invoice');
+  {
+    const db = fresh();
+    const pid = createProduct(db, {
+      sku: 'CREDIT-RET',
+      name: 'Credit Return Widget',
+      cost: 500,
+      price: 1000,
+      unit: 'pc',
+      openingStock: 100,
+      branchId: 'br_mp',
+      userId: 'u_admin',
+    }).id;
+
+    // A ৳20,000 credit sale: 20 at 1,000, nothing paid.
+    const sale = createSale(db, {
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      customerId: 'cu2',
+      lines: [{ productId: pid, qty: 20, spr: 1000 }],
+      payments: [],
+    });
+    const dueBefore = customerDue(db, 'cu2');
+    const saleRow = () =>
+      db.prepare('SELECT total, paid, credited, due FROM sales WHERE id = ?').get(sale.id) as {
+        total: number;
+        paid: number;
+        credited: number;
+        due: number;
+      };
+    s.money('the invoice starts fully unpaid', saleRow().due, 20000);
+    s.money('and starts with no credit', saleRow().credited, 0);
+
+    // The customer brings back 6 of them and takes it off their account.
+    createSellReturn(db, {
+      saleId: sale.id,
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      refundMethod: 'CreditAdjust',
+      reason: 'damaged',
+      lines: [{ productId: pid, qty: 6, unitPrice: 1000, refundAmount: 6000 }],
+    });
+
+    s.money('the credit is recorded on the invoice', saleRow().credited, 6000);
+    s.money('the invoice due drops to what is really owed', saleRow().due, 14000);
+    s.money('no money was recorded as received', saleRow().paid, 0);
+    s.money(
+      'the customer balance agrees with the invoice',
+      customerDue(db, 'cu2'),
+      round2(dueBefore - 6000),
+    );
+    s.money('the goods came back into stock', stockOnHand(db, pid, 'br_mp'), 86);
+
+    // THE CASE THAT WAS BROKEN: paying the real balance must clear the invoice.
+    addSalePayment(db, sale.id, { method: 'Cash', amount: 14000 }, 'u_admin');
+    s.money('paying the balance clears the invoice', saleRow().due, 0);
+    s.money('and clears the customer', customerDue(db, 'cu2'), round2(dueBefore - 20000));
+    s.money('money received is only the cash', saleRow().paid, 14000);
+    s.money('the credit is still on record', saleRow().credited, 6000);
+    s.money(
+      'total is accounted for exactly once: paid + credited',
+      round2(saleRow().paid + saleRow().credited),
+      saleRow().total,
+    );
+
+    // A CASH refund must NOT touch the due — the money went back over the counter,
+    // so the receivable is unchanged. This is the distinction the old client-side
+    // ledger got wrong by crediting every return.
+    const cashSale = createSale(db, {
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      customerId: 'cu2',
+      lines: [{ productId: pid, qty: 5, spr: 1000 }],
+      payments: [{ method: 'Cash', amount: 5000 }],
+    });
+    const cashRow = () =>
+      db.prepare('SELECT paid, credited, due FROM sales WHERE id = ?').get(cashSale.id) as {
+        paid: number;
+        credited: number;
+        due: number;
+      };
+    const dueBeforeCashReturn = customerDue(db, 'cu2');
+    createSellReturn(db, {
+      saleId: cashSale.id,
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      refundMethod: 'Cash',
+      reason: 'damaged',
+      lines: [{ productId: pid, qty: 2, unitPrice: 1000, refundAmount: 2000 }],
+    });
+    s.money('a cash refund records no credit on the invoice', cashRow().credited, 0);
+    s.money('and leaves the paid invoice settled', cashRow().due, 0);
+    s.money(
+      'and does not change what the customer owes',
+      customerDue(db, 'cu2'),
+      dueBeforeCashReturn,
+    );
+  }
+
+  // ---- A VOIDED SALE OWES NOTHING ----
+  // The columns used to be left as they were, so a voided credit sale still
+  // rendered a red "Unpaid ৳8,500", matched the Unpaid filter and inflated the
+  // pager, while the KPI strip and `customerDue` (both status-scoped) correctly
+  // ignored it. Four answers on one screen.
+  s.section('scenario-void-owes-nothing');
+  {
+    const db = fresh();
+    const pid = createProduct(db, {
+      sku: 'VOID-DUE',
+      name: 'Void Due Widget',
+      cost: 100,
+      price: 200,
+      unit: 'pc',
+      openingStock: 50,
+      branchId: 'br_mp',
+      userId: 'u_admin',
+    }).id;
+    const dueStart = customerDue(db, 'cu2');
+    const sale = createSale(db, {
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      customerId: 'cu2',
+      lines: [{ productId: pid, qty: 10, spr: 200 }],
+      payments: [{ method: 'bKash', amount: 500, reference: 'TX1' }],
+    });
+    const row2 = () =>
+      db.prepare('SELECT status, paid, credited, due FROM sales WHERE id = ?').get(sale.id) as {
+        status: string;
+        paid: number;
+        credited: number;
+        due: number;
+      };
+    s.money('partly paid before the void', row2().due, 1500);
+
+    voidSale(db, sale.id, 'u_admin', 'entered by mistake');
+    s.eq('the sale is void', row2().status, 'void');
+    s.money('a voided invoice owes nothing', row2().due, 0);
+    s.money('and shows nothing as received', row2().paid, 0);
+    s.money('the customer owes what they did before it', customerDue(db, 'cu2'), dueStart);
+    s.eq(
+      'the payment rows are KEPT as the record of what moved',
+      (
+        db.prepare('SELECT COUNT(*) c FROM sale_payments WHERE sale_id = ?').get(sale.id) as {
+          c: number;
+        }
+      ).c,
+      1,
+    );
+    s.money('the goods came back', stockOnHand(db, pid, 'br_mp'), 50);
+  }
+
+  // ---- STOCK CAN NEVER GO NEGATIVE ----
   // Reported by the owner: a sale could be saved for more than was on the shelf
   // and the product went to a negative quantity. There was NO check anywhere —
   // `run.ts` asserted "stock is never negative" over the seeded dataset, which

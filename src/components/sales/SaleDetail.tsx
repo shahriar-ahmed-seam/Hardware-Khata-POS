@@ -144,8 +144,14 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
   const StatusPill = () => {
     if (sale.status === 'void') return <Badge variant="destructive">Voided</Badge>;
     if (sale.status === 'draft') return <Badge variant="info">Draft</Badge>;
-    if (sale.status === 'quotation') return <Badge variant="warning">Quotation</Badge>;
-    return <SettlementBadge paid={sale.paid} due={sale.due} />;
+    return (
+      <SettlementBadge
+        paid={sale.paid}
+        due={sale.due}
+        credited={sale.credited}
+        status={sale.status}
+      />
+    );
   };
 
   return (

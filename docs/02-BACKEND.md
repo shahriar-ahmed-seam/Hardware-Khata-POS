@@ -59,7 +59,7 @@ api.ts            buildApi(): flat { channel -> handler(db, payload) } — 152 c
 README.md         architecture deep-dive
 ```
 
-## Database schema (head: v7)
+## Database schema (head: v9)
 
 > Migrations live in `db/connection.ts` and are all **additive and idempotent** —
 > v2 price-group columns, v3 shipments, v4 cost history, v5 `products.archived_at`,
@@ -273,18 +273,18 @@ Symptom of wrong ABI: `ERR_DLOPEN_FAILED`. Fix: run the matching rebuild script.
 
 ## Verification — what's proven
 
-Run `npm run backend:verify:all` → **eight suites, 1,126 checks** (grew from 122 as slices
+Run `npm run backend:verify:all` → **eight suites, 1,161 checks** (grew from 122 as slices
 were wired):
 
 | Suite | Checks | What it covers |
 |-------|-------:|----------------|
-| `all.ts` | 413 | scenarios + determinism + file-DB smoke + identities |
+| `all.ts` | 446 | scenarios + determinism + file-DB smoke + identities |
 | `api.ts` | 216 | the `buildApi()` facade |
 | `run.ts` | 105 | identities on a 365-day dataset, date ranges, payment detail rows |
 | `e2e.ts` | 68 | one full shop day |
 | `paging.ts` | 91 | paginated list reads |
 | `backup.ts` | 120 | backup, cloud, CSV export, invoice PDFs, pendrive copies |
-| `costing.ts` | 93 | purchase-price history, incl. retraction on a cancelled purchase |
+| `costing.ts` | 95 | purchase-price history, incl. retraction on a cancelled purchase |
 | `mirror.ts` | 20 | the renderer's money math vs the calculation core, over randomised inputs |
 
 - **68 E2E** (e2e.ts) — a full shop day through the `buildApi()` facade from a clean
@@ -314,7 +314,7 @@ were wired):
   product columns are a cache that cannot drift from it; a received purchase moves both the
   current and the average buying price; an ordered purchase moves neither; and **cancelling a
   purchase retracts the price it recorded** without deleting the row (schema v7).
-- **+ combined** (all.ts, 413 checks): scenarios + identities + determinism (same
+- **+ combined** (all.ts, 446 checks): scenarios + identities + determinism (same
   seed→same data) + persistent-file smoke.
 
 Single suites: `npm run backend:verify` (identities), `backend:scenarios`, `backend:e2e`,

@@ -118,6 +118,19 @@ function computeSaleBody(
   );
   const profit = computeSaleProfit(totals.subtotal, totals.orderDiscount, cogs);
 
+  /**
+   * A DRAFT or QUOTATION has no settlement: nothing has been sold, so nobody owes
+   * anything. Both columns are 0.
+   *
+   * Note what that means downstream: `due = 0` reads as "fully paid" to anything
+   * that only looks at the two numbers. Every screen that can show a non-final
+   * document must therefore check the STATUS FIRST — see `settlementOf`, which now
+   * takes the status and returns a distinct state for these.
+   *
+   * `credited` is not set here: it belongs to sell returns that happened
+   * independently of this input, so createSale leaves it at its default 0 and
+   * updateSale carries the existing value forward.
+   */
   const payments = input.payments ?? [];
   const paid = status === 'final' ? sum2(payments.map((p) => p.amount)) : 0;
   const due = status === 'final' ? round2(Math.max(0, totals.total - paid)) : 0;
@@ -450,7 +463,19 @@ export function updateSale(db: DB, saleId: string, input: UpdateSaleInput) {
 
     // ---------- 3. recompute from the new input ----------
     const body = computeSaleBody(db, input, newStatus);
-    const { totals, cogs, profit, paid, due } = body;
+    const { totals, cogs, profit, paid } = body;
+    /**
+     * `credited` SURVIVES a correction, and the due is recomputed around it.
+     *
+     * Credit notes are not part of the edited input — they come from sell returns
+     * that already happened — so re-deriving `due` as `total - paid` here would
+     * silently wipe them and put the customer back in debt for goods they had
+     * returned. Zeroed only when the correction turns the sale into a draft or a
+     * quotation, which have no settlement at all.
+     */
+    const credited = newStatus === 'final' ? round2((sale.credited as number) ?? 0) : 0;
+    const due =
+      newStatus === 'final' ? round2(Math.max(0, totals.total - paid - credited)) : 0;
 
     // ---------- 4. rewrite the header (id + invoice_no untouched) ----------
     db.prepare(
@@ -459,7 +484,8 @@ export function updateSale(db: DB, saleId: string, input: UpdateSaleInput) {
          agent_id = @agentId, subtotal = @subtotal, total_line_discount = @totalLineDiscount,
          order_discount_pct = @odpct, order_discount_flat = @odflat, order_discount = @orderDiscount,
          tax_pct = @taxPct, tax = @tax, shipping = @shipping, other = @other, round_off = @roundOff,
-         total = @total, paid = @paid, due = @due, cogs = @cogs, profit = @profit,
+         total = @total, paid = @paid, credited = @credited, due = @due,
+         cogs = @cogs, profit = @profit,
          valid_until = @validUntil, notes = @notes, updated_at = @updatedAt
        WHERE id = @id`,
     ).run({
@@ -481,6 +507,7 @@ export function updateSale(db: DB, saleId: string, input: UpdateSaleInput) {
       roundOff: totals.roundOff,
       total: totals.total,
       paid,
+      credited,
       due,
       cogs,
       profit,
@@ -551,7 +578,11 @@ export function addSalePayment(db: DB, saleId: string, p: SalePaymentInput, user
     ).run(newId('pay'), saleId, p.method, round2(p.amount), p.reference ?? null, at, userId);
 
     const paid = round2((sale.paid as number) + p.amount);
-    const due = round2(Math.max(0, (sale.total as number) - paid));
+    // `credited` (CreditAdjust returns) settles the invoice too, so it has to come
+    // off the due as well — otherwise an invoice with a credit note could never be
+    // cleared by payment, which is exactly the bug this column was added for.
+    const credited = round2((sale.credited as number) ?? 0);
+    const due = round2(Math.max(0, (sale.total as number) - paid - credited));
     db.prepare('UPDATE sales SET paid = ?, due = ?, updated_at = ? WHERE id = ?').run(
       paid,
       due,
@@ -645,8 +676,27 @@ export function voidSale(db: DB, saleId: string, userId: string, reason?: string
       }
     }
 
+    /**
+     * `paid`, `credited` and `due` are ZEROED, not left as they were.
+     *
+     * A voided invoice is cancelled: nobody owes anything on it any more. The
+     * columns used to be left untouched, and because `paid`/`due` drive the
+     * settlement badge, the payment filter in `paged.ts`, the pager count and the
+     * per-row Due column, one voided credit sale produced four different answers
+     * on one screen — a red "৳8,500 Unpaid" row sitting under a KPI strip that
+     * (correctly) excluded voids, and matching the "Unpaid" filter.
+     *
+     * `customerDue` never counted it (every term is scoped `status='final'`), so
+     * this brings the row into line with the ledger rather than changing what the
+     * shop is owed. The `sale_payments` rows are deliberately KEPT: they are the
+     * record of money that really did change hands before the void, and the cash
+     * reversal above is what returns it.
+     */
     db.prepare(
-      `UPDATE sales SET status = 'void', voided_at = ?, voided_by = ?, void_reason = ?, updated_at = ? WHERE id = ?`,
+      `UPDATE sales
+          SET status = 'void', paid = 0, credited = 0, due = 0,
+              voided_at = ?, voided_by = ?, void_reason = ?, updated_at = ?
+        WHERE id = ?`,
     ).run(at, userId, reason ?? null, at, saleId);
 
     db.prepare(`INSERT INTO sale_audit (id, sale_id, at, by_user, action, note) VALUES (?,?,?,?,?,?)`).run(

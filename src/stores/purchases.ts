@@ -20,8 +20,23 @@ export interface PurchaseLine {
   name: string;
   sku: string;
   qty: number;
+  /** The unit the SUPPLIER quoted — 'dozen', 'box', or the base unit. */
   unit: string;
+  /**
+   * How many of the shop's selling units are in one purchase unit. 12 for a
+   * dozen; 1 (or undefined) when buying in the same unit you sell in.
+   *
+   * This is what makes "5 dozen for 620 each" work without inventing money: the
+   * bill is 5 × 620 exactly, stock arrives as 60, and the per-piece cost
+   * (51.666…) is kept at full precision where valuation reads it. Rounding it to
+   * 51.67 and multiplying by 60 would value the delivery at ৳3,100.20 against a
+   * ৳3,100 bill. See createPurchase in backend/services/purchases.ts.
+   */
+  unitFactor?: number;
+  /** The shop's own selling unit, recorded on the stock movement. */
+  baseUnit?: string;
   imei?: string; // serial / IMEI for serialized items
+  /** Cost of ONE PURCHASE UNIT (one dozen), before discounts. */
   unitCostBeforeDisc: number;
   discountPct: number;
   discountFlat: number;
@@ -294,6 +309,11 @@ export const usePurchases = create<State>((set, get) => ({
           productId: l.productId,
           qty: l.qty,
           unit: l.unit,
+          // "5 dozen at 620": qty and cost stay as the supplier billed them and
+          // the backend converts stock to base units, so the bill matches the
+          // supplier to the paisa even though 620/12 does not divide evenly.
+          unitFactor: l.unitFactor && l.unitFactor > 0 ? l.unitFactor : 1,
+          baseUnit: l.baseUnit,
           imei: l.imei,
           unitCostBeforeDisc: l.unitCostBeforeDisc,
           discountPct: l.discountPct,

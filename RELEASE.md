@@ -1,7 +1,7 @@
 # Hardware Khata POS — Releasing & Updating
 
-**Current version: 0.7.1** · Windows x64 · NSIS installer, per-user (no admin needed)
-Installer: `release/HardwareKhataPOS-Setup-0.7.1.exe` (~82 MB)
+**Current version: 0.8.0** · Windows x64 · NSIS installer, per-user (no admin needed)
+Installer: `release/HardwareKhataPOS-Setup-0.8.0.exe` (~82 MB)
 
 > **Releases are built by GitHub now, not on your PC.** Bump the version, commit,
 > then push a tag — `.github/workflows/release.yml` runs the checks, builds the
@@ -76,7 +76,7 @@ always be run by hand — it upgrades in place and never touches the database.
 `%APPDATA%\pos\pos.db` — **outside** the install folder, so installing,
 upgrading and uninstalling never touch it.
 
-- Schema is at **v7**; migrations run automatically on launch and are additive.
+- Schema is at **v9**; migrations run automatically on launch and are additive.
   v7 adds four nullable columns to `product_cost_history` so a cancelled purchase
   can retract the buying price it recorded. Nothing existing is rewritten.
   **0.4.0 adds no migration at all**, so upgrading to it cannot touch your data.
@@ -92,10 +92,10 @@ upgrading and uninstalling never touch it.
 
 ```bash
 # 1. bump the version — the updater compares against this
-#    package.json → "version": "0.7.2"
+#    package.json → "version": "0.8.1"
 # 2. commit it
 # 3. tag and push:
-git tag -a v0.7.2 -m "what changed"
+git tag -a v0.8.1 -m "what changed"
 git push origin main --follow-tags
 ```
 
@@ -118,7 +118,72 @@ machine if you ever need it.
 
 ---
 
-## 2a. What's in 0.7.1
+## 2a. What's in 0.8.0
+
+> **Upgrade in place.** Settings → Updates → Download, then Restart and install.
+> There IS a schema change (v8 and v9) but both only ADD columns, and one of them
+> repairs invoices that were already wrong — see below. Nothing is deleted.
+
+### Money owed on invoices was being counted wrongly
+
+Reported by the owner as "due is wrongly counted in invoices… many
+inconsistencies". There were three separate causes.
+
+**A returned item taken off the customer's account never came off the invoice.**
+When a customer returned goods and you chose *adjust against their account*
+(rather than handing cash back), the app reduced what the customer owed but left
+the invoice showing the original amount. So a ৳20,000 credit sale with ৳6,000
+returned showed the customer owing ৳14,000 and the invoice still reading **Unpaid
+৳20,000**. Worse: collecting that ৳14,000 left the invoice stuck at ৳6,000 for
+ever, because the missing amount only existed as a return — no payment could ever
+clear it. The invoice now records the credit, its due drops to ৳14,000
+immediately, and paying that settles it. **Invoices already affected are repaired
+automatically on upgrade** from the returns already on record.
+
+**A cancelled invoice still showed money owing.** Voiding a sale reversed the
+stock and the cash but left the *paid* and *due* figures on the row. The customer
+correctly owed nothing, yet the sales list still showed a red amount on that
+invoice, it still matched the **Unpaid** filter, and it was still counted in the
+pager — while the totals above the list correctly ignored it. Four different
+answers on one screen. A voided invoice now owes nothing, and the same fix is
+applied to cancelled purchase bills.
+
+**Quotations and drafts showed a green "Paid" badge.** A quotation is stored with
+nothing paid and nothing owing, and "nothing owing" was being read as "fully
+paid". So a ৳12,000 quotation in a customer's history read *Total 12,000 / Paid 0 /
+Due — / **Paid***. They now show **Quotation** and **Draft**.
+
+Also fixed: the customer's ledger tab credited *every* return, including ones where
+you handed the cash back — so its closing balance disagreed with the Outstanding
+Due figure on the same page. And a customer who had paid in advance (a negative
+opening balance) had that advance left out of the ledger.
+
+### You can now buy by the dozen and sell by the piece
+
+The owner's example: a supplier gives 5 dozen at ৳620 a dozen. That is ৳51.6667 a
+piece, which does not divide evenly — and entering it by hand as 60 pieces at 51.67
+would value the delivery at ৳3,100.20 against a bill of ৳3,100.
+
+The purchase form now has a **Bought as** column: choose *dozen*, *gross*, or a box
+size, and enter the quantity and price exactly as the supplier billed them. The
+form shows you what will land in stock (`= 60 pc`), the bill stays exactly ৳3,100,
+and 60 pieces arrive. The recorded buying price becomes **৳51.67 per piece** — the
+honest per-piece figure, not the ৳620 pack price — so margins on the product stay
+correct, and the full-precision figure is kept where stock value and profit are
+calculated so not a single paisa is invented.
+
+### The stock figure is on the sale line now
+
+0.7.1 stopped you selling more than you have, but it could only warn in English,
+which is no help to a Bangla-speaking user. Each line on a new sale now has an **In
+stock** column showing the number, and both it and the quantity box turn red the
+moment the quantity passes it. No words needed.
+
+Under the hood: verification went from 1,126 to **1,161 checks**.
+
+---
+
+## 2b. What's in 0.7.1
 
 > **Upgrade in place.** Settings → Updates → Download, then Restart and install.
 > No schema change; your data is untouched.
@@ -154,7 +219,7 @@ local settings.
 
 ---
 
-## 2b. What's in 0.7.0
+## 2c. What's in 0.7.0
 
 > **Upgrade in place — do NOT reinstall.** Settings → Updates → Download, then
 > Restart and install. No schema change this time; every product, customer, sale,
@@ -243,7 +308,7 @@ baskets and bills and fails if they disagree by a single paisa.
 
 ---
 
-## 2c. What's in 0.6.0
+## 2d. What's in 0.6.0
 
 > **Upgrade in place — do NOT reinstall.** Settings → Updates → Download, then Restart
 > and install. There IS a small schema change this time (v7) but it only ADDS four
@@ -315,7 +380,7 @@ Under the hood: verification went from 999 to **1,078 automated checks**, all gr
 
 ---
 
-## 2d. What's in 0.5.0
+## 2e. What's in 0.5.0
 
 > **Upgrade in place — no reinstall.** No schema change again, so
 > `%APPDATA%\pos\pos.db` is untouched.
@@ -359,7 +424,7 @@ Also removed a fake "Advance Balance ৳ 0.00" tile from the supplier payment di
 
 ---
 
-## 2e. What's in 0.4.0
+## 2f. What's in 0.4.0
 
 > **Upgrading is enough — do NOT reinstall.** There is **no schema change** in
 > this release, so `%APPDATA%\pos\pos.db` is untouched: every product, customer,
@@ -433,7 +498,7 @@ honest option), and +47 Bangla phrases (2,353 total).
 
 ---
 
-## 2f. What's in 0.3.0
+## 2g. What's in 0.3.0
 
 **Product photos and the shop logo no longer disappear.** They were being saved
 as `URL.createObjectURL(file)` — a `blob:` handle into the *current window's*
@@ -505,11 +570,11 @@ the internet.
 
 ## 4. Verification
 
-1,126 checks across eight suites, all green:
+1,161 checks across eight suites, all green:
 
 | Suite | Checks |
 |---|---:|
-| `all.ts` | 413 |
+| `all.ts` | 446 |
 | `api.ts` | 216 (152 channels) |
 | `run.ts` | 105 |
 | `e2e.ts` | 68 |
@@ -518,7 +583,7 @@ the internet.
 | `costing.ts` | 93 |
 | `mirror.ts` | 20 |
 
-Plus `npm run i18n:check` — 32 checks, 2,409 Bangla phrases.
+Plus `npm run i18n:check` — 32 checks, 2,420 Bangla phrases.
 `npm run lint` does **not** work (eslint is not installed); `tsc` is the gate.
 
 ---

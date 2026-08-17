@@ -60,7 +60,21 @@ export function runCosting(s: Suite) {
       version: number;
     }[]
   ).map((r) => r.version);
-  s.eq('every migration up to the head is recorded', versions.join(','), '1,2,3,4,5,6,7');
+  s.eq('every migration up to the head is recorded', versions.join(','), '1,2,3,4,5,6,7,8,9');
+  s.ok(
+    'purchase_lines.unit_factor exists (v9)',
+    new Set(
+      (db.prepare('PRAGMA table_info(purchase_lines)').all() as { name: string }[]).map(
+        (c) => c.name,
+      ),
+    ).has('unit_factor'),
+  );
+  s.ok(
+    'sales.credited exists (v8)',
+    new Set(
+      (db.prepare('PRAGMA table_info(sales)').all() as { name: string }[]).map((c) => c.name),
+    ).has('credited'),
+  );
   s.ok('cost-history migration (v4) is recorded', versions.includes(4));
   s.ok('products.archived_at exists (v5)', cols.has('archived_at'));
   s.ok('blob-image cleanup migration (v6) is recorded', versions.includes(6));

@@ -73,14 +73,24 @@ const PAISA = 0.005;
  * Shared by sales and purchases on purpose: "partially paid" has to mean the same
  * thing on both sides of the shop's books.
  */
-function paymentStateSql(alias: string, state: PageQuery['payment']): string | null {
+function paymentStateSql(
+  alias: string,
+  state: PageQuery['payment'],
+  /**
+   * How much of the document counts as SETTLED. Sales pass
+   * `(s.paid + s.credited)` because a credit note settles an invoice without any
+   * money arriving — the filter has to agree with the badge the row renders (see
+   * `settlementOf`). Purchases have no such column and use the default.
+   */
+  settled = `${alias}.paid`,
+): string | null {
   switch (state) {
     case 'paid':
       return `${alias}.due <= ${PAISA}`;
     case 'partial':
-      return `${alias}.paid > ${PAISA} AND ${alias}.due > ${PAISA}`;
+      return `${settled} > ${PAISA} AND ${alias}.due > ${PAISA}`;
     case 'due':
-      return `${alias}.paid <= ${PAISA} AND ${alias}.due > ${PAISA}`;
+      return `${settled} <= ${PAISA} AND ${alias}.due > ${PAISA}`;
     default:
       return null;
   }
@@ -165,7 +175,9 @@ export function listSalesPage(db: DB, query: PageQuery = {}): Page<Record<string
     where.push('EXISTS (SELECT 1 FROM sale_payments sp WHERE sp.sale_id = s.id AND sp.method = @method)');
     params.method = query.method;
   }
-  const salePayment = paymentStateSql('s', query.payment);
+  // A part-returned invoice is partly settled, so the filter tests paid+credited
+  // to agree with the badge the row renders.
+  const salePayment = paymentStateSql('s', query.payment, '(s.paid + s.credited)');
   if (salePayment) where.push(`(${salePayment})`);
 
   const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';

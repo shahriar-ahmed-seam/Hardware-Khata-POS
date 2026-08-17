@@ -13,9 +13,26 @@ export type PurchaseStatus = 'received' | 'ordered' | 'in-transit' | 'cancelled'
 
 export interface PurchaseLineInput {
   productId: string;
+  /**
+   * IN THE UNIT THE SUPPLIER QUOTED. For "5 dozen at 620" this is 5, `unit` is
+   * 'dozen', `unitFactor` is 12 and `unitCostBeforeDisc` is 620.
+   */
   qty: number;
+  /** The purchase unit's name, for the bill and the audit trail. */
   unit?: string;
+  /**
+   * How many BASE units one purchase unit holds. 12 for a dozen, 1 (the default)
+   * when buying in the same unit the shop sells in.
+   *
+   * Stock moves in base units and the money stays at pack level, so the bill
+   * matches the supplier to the paisa even when the per-piece cost does not divide
+   * evenly — see the note in `createPurchase`.
+   */
+  unitFactor?: number;
+  /** The shop's own selling unit, used on the stock movement. Defaults to 'pc'. */
+  baseUnit?: string;
   imei?: string;
+  /** Cost of ONE PURCHASE UNIT (one dozen), before discounts. */
   unitCostBeforeDisc: number;
   discountPct?: number;
   discountFlat?: number;
@@ -126,9 +143,9 @@ export function createPurchase(db: DB, input: CreatePurchaseInput) {
     });
 
     const lineStmt = db.prepare(
-      `INSERT INTO purchase_lines (id, purchase_id, product_id, name, sku, qty, unit, imei,
+      `INSERT INTO purchase_lines (id, purchase_id, product_id, name, sku, qty, unit, unit_factor, imei,
          unit_cost_before_disc, discount_pct, discount_flat, tax_pct, unit_cost_before_tax, line_total, new_sell_price, line_no)
-       VALUES (@id, @purchaseId, @productId, @name, @sku, @qty, @unit, @imei,
+       VALUES (@id, @purchaseId, @productId, @name, @sku, @qty, @unit, @unitFactor, @imei,
          @ucbd, @dpct, @dflat, @taxPct, @ucbt, @lineTotal, @newSell, @lineNo)`,
     );
     for (const l of computedLines) {
@@ -140,6 +157,7 @@ export function createPurchase(db: DB, input: CreatePurchaseInput) {
         sku: l.sku,
         qty: l.input.qty,
         unit: l.input.unit ?? 'pc',
+        unitFactor: l.input.unitFactor && l.input.unitFactor > 0 ? l.input.unitFactor : 1,
         imei: l.input.imei ?? null,
         ucbd: l.input.unitCostBeforeDisc,
         dpct: l.input.discountPct ?? 0,
@@ -182,13 +200,37 @@ export function createPurchase(db: DB, input: CreatePurchaseInput) {
     // stock in (received only)
     if (status === 'received') {
       for (const l of computedLines) {
+        /**
+         * BUY BY THE DOZEN, SELL BY THE PIECE.
+         *
+         * The line's `qty` and cost are in the unit the SUPPLIER quoted — "5 dozen
+         * at 620" — because that is what the bill says and the money must match it
+         * to the paisa. Stock, though, has to move in the unit the shop SELLS in,
+         * so the quantity is converted here and the cost is divided by the same
+         * factor.
+         *
+         * WHY THE PER-PIECE COST IS NOT ROUNDED
+         * 620 / 12 is 51.666… — it does not divide evenly, and that is the whole
+         * difficulty the owner described. Rounding it to 51.67 and then storing 60
+         * of them would value the delivery at ৳3,100.20 against a bill of ৳3,100:
+         * twenty paisa invented out of nowhere, on every pack, for ever.
+         *
+         * So `unit_cost` on the movement keeps full precision (the column is REAL).
+         * `weightedAvgCost` is `SUM(qty × unit_cost) / SUM(qty)`, so 60 × 51.666…
+         * comes back to exactly 3,100 and both stock valuation and COGS stay
+         * correct. Only the DISPLAYED buying price is rounded, to ৳51.67, which is
+         * an honest way to show a price that genuinely has no exact 2-decimal form.
+         */
+        const factor = l.input.unitFactor && l.input.unitFactor > 0 ? l.input.unitFactor : 1;
+        const baseQty = l.input.qty * factor;
+        const baseUnitCost = l.unitCostBeforeTax / factor;
         recordMovement(db, {
           productId: l.input.productId,
           branchId: input.branchId,
           reason: 'purchase',
-          qty: +l.input.qty,
-          unit: l.input.unit ?? 'pc',
-          unitCost: l.unitCostBeforeTax,
+          qty: +baseQty,
+          unit: l.input.baseUnit ?? 'pc',
+          unitCost: baseUnitCost,
           refType: 'purchase',
           refId: id,
           refNo,
@@ -221,10 +263,19 @@ export function createPurchase(db: DB, input: CreatePurchaseInput) {
          */
         setProductCost(db, {
           productId: l.input.productId,
-          cost: l.unitCostBeforeTax,
+          // PER BASE UNIT, so the recorded buying price is comparable with the
+          // shop's selling price. Buying "5 dozen at 620" records ৳51.67 a piece,
+          // not ৳620 — recording the pack price would make the average buying
+          // price of a piece look twelve times too high and wreck every margin
+          // figure on the product. `setProductCost` rounds for display; the
+          // unrounded figure is on the stock movement, where valuation reads it.
+          cost: baseUnitCost,
           userId: input.userId,
           source: 'purchase',
-          note: `Purchase ${refNo}`,
+          note:
+            factor > 1
+              ? `Purchase ${refNo} · ${l.input.qty} ${l.input.unit ?? 'pack'} of ${factor}`
+              : `Purchase ${refNo}`,
           // Tagged with the purchase so cancelling it can retract exactly the
           // prices it recorded — see `retractCostEntries` in services/costing.ts.
           refType: 'purchase',
@@ -331,13 +382,23 @@ export function cancelPurchase(db: DB, purchaseId: string, userId: string, reaso
         unknown
       >[];
       for (const l of lines) {
+        /**
+         * Reverse in BASE UNITS, converting by the same factor the receipt used.
+         *
+         * `purchase_lines.qty` is in the supplier's unit — 5, for five dozen — but
+         * the movement that put the goods in was 60 pieces. Reversing `-qty` would
+         * take out five and leave 55 pieces of phantom stock behind on every
+         * cancelled pack purchase.
+         */
+        const factor = (l.unit_factor as number) > 0 ? (l.unit_factor as number) : 1;
         recordMovement(db, {
           productId: l.product_id as string,
           branchId: pur.branch_id as string,
           reason: 'purchase_return',
-          qty: -(l.qty as number), // remove what was added
-          unit: l.unit as string,
-          unitCost: l.unit_cost_before_tax as number,
+          qty: -((l.qty as number) * factor), // remove exactly what was added
+          // The movement records base units, so it must not carry the pack's name.
+          unit: factor > 1 ? 'pc' : (l.unit as string),
+          unitCost: (l.unit_cost_before_tax as number) / factor,
           refType: 'purchase',
           refId: purchaseId,
           refNo: pur.ref_no as string,
@@ -382,8 +443,18 @@ export function cancelPurchase(db: DB, purchaseId: string, userId: string, reaso
      */
     retractCostEntries(db, 'purchase', purchaseId, `Purchase ${pur.ref_no as string} cancelled`);
 
+    /**
+     * `paid` and `due` are ZEROED — the same reasoning as `voidSale`. A cancelled
+     * bill is not payable, and `supplierDue` already excludes it
+     * (`status != 'cancelled'`), so leaving a stale `due` on the row only made the
+     * Purchases list contradict the supplier's payable. The `purchase_payments`
+     * rows stay: they record money that really moved, and the cash reversal above
+     * is what brings it back.
+     */
     db.prepare(
-      `UPDATE purchases SET status = 'cancelled', cancelled_at = ?, updated_at = ? WHERE id = ?`,
+      `UPDATE purchases
+          SET status = 'cancelled', paid = 0, due = 0, cancelled_at = ?, updated_at = ?
+        WHERE id = ?`,
     ).run(at, at, purchaseId);
     db.prepare(`INSERT INTO purchase_audit (id, purchase_id, at, by_user, action, note) VALUES (?,?,?,?,?,?)`).run(
       newId('pa'),

@@ -3251,3 +3251,28 @@ Object.assign(BN, {
   'Leave it empty if the whole bill goes on their khata. Cash is posted to the shift that is open now.':
     'পুরো বিলটি খাতায় উঠলে খালি রাখুন। নগদ টাকা এখন খোলা শিফটে জমা হবে।',
 });
+
+// ---------------------------------------------------------------------------
+// APPEND-ONLY BLOCK — the stock figure on a sale line (so over-selling is visible
+// as a number rather than an English warning), buying by the dozen on the
+// purchase form, and the document states a draft/quotation now shows instead of
+// borrowing the "Paid" badge.
+// ---------------------------------------------------------------------------
+Object.assign(BN, {
+  // ('In stock', 'Draft' and 'Voided' are all translated in earlier blocks —
+  // i18n:check caught three second entries here that disagreed with them.)
+
+  // --- buying in the unit the supplier quotes
+  'Bought as': 'যেভাবে কিনেছেন',
+  each: 'প্রতিটি',
+  dozen: 'ডজন',
+  '2 dozen': '২ ডজন',
+  gross: 'গ্রোস (১৪৪)',
+  'box of 10': '১০-এর বক্স',
+  'box of 20': '২০-এর বক্স',
+  'box of 25': '২৫-এর বক্স',
+  'box of 50': '৫০-এর বক্স',
+  'box of 100': '১০০-এর বক্স',
+  'What the supplier is quoting — the price is per one of these':
+    'সাপ্লায়ার যে হিসেবে দাম বলছেন — দামটি এর প্রতিটির জন্য',
+});
