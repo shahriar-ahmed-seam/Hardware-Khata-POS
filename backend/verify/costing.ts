@@ -334,6 +334,85 @@ export function runCosting(s: Suite) {
     avgBeforeOrdered,
   );
 
+  // ------------- A PRODUCT BORN ON A PURCHASE IS NOT PRICED TWICE ------------
+  // The owner's report, with their numbers. Adding a product from inside Add
+  // Purchase pre-fills the line's unit cost from the cost typed in the drawer, so
+  // creating the product AND receiving the line recorded the same observation
+  // twice. It looked harmless until the second real purchase:
+  //     created 120, received 120, later bought at 124
+  //     -> (120 + 120 + 124) / 3 = 121.33   but the shop only ever paid 120 and 124
+  //     -> the honest average is (120 + 124) / 2 = 122
+  s.section('costing-new-product-on-a-purchase');
+  {
+    // `recordOpeningCost: false` is what NewProductDrawer sends in lockStock mode.
+    const bornId = createProduct(db, {
+      sku: 'COST-BORN-ON-PURCHASE',
+      name: 'Added While Buying It',
+      cost: 120,
+      price: 150,
+      unit: 'bag',
+      openingStock: 0,
+      recordOpeningCost: false,
+    }).id;
+
+    s.eq('no history entry is opened for it', listCostHistory(db, bornId).length, 0);
+    s.money('but it still shows the cost that was typed', costOf(db, bornId), 120);
+    s.money(
+      'and the average falls back to that cost rather than 0',
+      computeAvgCost(db, bornId),
+      120,
+    );
+
+    createPurchase(db, {
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      supplierId: 'sp1',
+      lines: [{ productId: bornId, qty: 10, unitCostBeforeDisc: 120 }],
+    });
+    s.eq('the purchase line records the FIRST entry', listCostHistory(db, bornId).length, 1);
+    s.money('the average is still 120', computeAvgCost(db, bornId), 120);
+
+    createPurchase(db, {
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      supplierId: 'sp1',
+      lines: [{ productId: bornId, qty: 10, unitCostBeforeDisc: 124 }],
+    });
+    s.eq('two purchases, two entries', listCostHistory(db, bornId).length, 2);
+    s.money(
+      'the average is (120 + 124) / 2, NOT (120 + 120 + 124) / 3',
+      computeAvgCost(db, bornId),
+      122,
+    );
+    s.money('and the current buying price is the newest one', costOf(db, bornId), 124);
+
+    // The default is unchanged: a product added to the catalogue on its own DOES
+    // open its history, because nothing else is about to record that price.
+    const cataloguedId = createProduct(db, {
+      sku: 'COST-BORN-IN-CATALOGUE',
+      name: 'Added On Its Own',
+      cost: 120,
+      price: 150,
+      unit: 'bag',
+    }).id;
+    s.eq(
+      'a product added on its own still opens its history',
+      listCostHistory(db, cataloguedId).length,
+      1,
+    );
+    createPurchase(db, {
+      branchId: 'br_mp',
+      userId: 'u_admin',
+      supplierId: 'sp1',
+      lines: [{ productId: cataloguedId, qty: 10, unitCostBeforeDisc: 124 }],
+    });
+    s.money(
+      'so ITS average counts the opening price it really stated',
+      computeAvgCost(db, cataloguedId),
+      122,
+    );
+  }
+
   // ------------------------------- CANCELLING a purchase retracts its price
   // The deliberate decision (v7): a cancellation already reverses the stock and
   // the cash, and the buying price has to come back too — if the delivery never

@@ -17,6 +17,11 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
+import {
+  SettlementBadge,
+  SETTLEMENT_LABEL,
+  type SettlementKey,
+} from '@/components/ui/SettlementBadge';
 import { Card } from '@/components/ui/Card';
 import { Popover } from '@/components/ui/Popover';
 import { ColumnsPanel } from '@/components/ui/ColumnsPanel';
@@ -338,18 +343,21 @@ export default function Sales() {
           </select>
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-0.5 p-0.5 bg-secondary rounded-md text-xs">
+              {/* Plain words, one vocabulary — see SettlementBadge. These used to
+                  render the raw filter keys, so the chips read "partial" / "due"
+                  while meaning "part paid" / "nothing paid yet". */}
               {(['all', 'paid', 'partial', 'due'] as StatusFilter[]).map((s) => (
                 <button
                   key={s}
                   onClick={() => onStatus(s)}
                   className={cn(
-                    'px-3 py-1 rounded capitalize font-medium transition',
+                    'px-3 py-1 rounded font-medium transition',
                     status === s
                       ? 'bg-card text-foreground shadow-sm'
                       : 'text-muted-foreground hover:text-foreground',
                   )}
                 >
-                  {s}
+                  {s === 'all' ? 'All' : SETTLEMENT_LABEL[s as SettlementKey]}
                 </button>
               ))}
             </div>
@@ -555,9 +563,7 @@ function Cell({ c, s }: { c: SalesColumn; s: SaleRecord }) {
       );
     case 'paymentStatus':
       if (s.status === 'void') return <td className="px-3 py-2.5"><Badge variant="destructive">Voided</Badge></td>;
-      if (s.due === 0) return <td className="px-3 py-2.5"><Badge variant="success">Paid</Badge></td>;
-      if (s.paid > 0) return <td className="px-3 py-2.5"><Badge variant="warning">Partial</Badge></td>;
-      return <td className="px-3 py-2.5"><Badge variant="destructive">Due</Badge></td>;
+      return <td className="px-3 py-2.5"><SettlementBadge paid={s.paid} due={s.due} /></td>;
     case 'paymentMethod': {
       const methods = Array.from(new Set(s.payments.map((p) => p.method)));
       const text = methods.length === 0 ? '—' : methods.length === 1 ? methods[0] : 'Mixed';

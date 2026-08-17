@@ -203,7 +203,10 @@ export default function ProductSellPage() {
             <SortHeader label="Invoices" k="invoices" sortKey={sortKey} sortDir={sortDir} onSort={onSort} align="right" />
             <SortHeader label="Revenue" k="revenue" sortKey={sortKey} sortDir={sortDir} onSort={onSort} align="right" />
             <SortHeader label="Profit" k="profit" sortKey={sortKey} sortDir={sortDir} onSort={onSort} align="right" />
-            <div className="text-right">Margin</div>
+            {/* Profit over REVENUE. The Items report's "Markup on cost" is the
+                other way round (profit over cost) and reads higher for the same
+                item, so the two are labelled differently on purpose. */}
+            <div className="text-right">Margin on sales</div>
           </div>
           {sorted.length === 0 && (
             <div className="px-4 py-12 text-center text-sm text-muted-foreground">

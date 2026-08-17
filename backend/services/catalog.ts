@@ -35,6 +35,27 @@ export interface ProductInput {
   openingStock?: number;
   branchId?: string;
   userId?: string;
+  /**
+   * Whether creating this product should OPEN ITS BUYING-PRICE HISTORY with the
+   * cost above. Default true, which is right when a product is added to the
+   * catalogue on its own: the owner is stating what the thing costs them.
+   *
+   * Pass FALSE when the product is being created as part of a purchase that is
+   * about to record the same price on its own line. Otherwise the price is
+   * counted twice and the average is wrong for the life of the product:
+   *
+   *   add product from a purchase, cost 120   -> history: [120]        avg 120
+   *   the purchase line receives it at 120    -> history: [120, 120]   avg 120  (looks fine)
+   *   a later purchase at 124                 -> history: [120, 120, 124]
+   *                                              avg 121.33, but the shop has only
+   *                                              ever bought at 120 and 124 -> 122
+   *
+   * `products.cost` and `avg_cost` are still seeded from the cost either way, so
+   * the product shows a buying price immediately and the purchase line can
+   * pre-fill from it. With no history rows, `computeAvgCost` falls back to
+   * `products.cost` — so an abandoned purchase still leaves an honest figure.
+   */
+  recordOpeningCost?: boolean;
 }
 
 /**
@@ -123,7 +144,12 @@ export function createProduct(db: DB, input: ProductInput) {
     // Open the buying-price history with the product's starting cost, so the
     // very first price change has something to compare against and the average
     // is built from a complete record rather than starting mid-story.
-    if ((input.cost ?? 0) > 0) {
+    //
+    // SKIPPED when the caller says this cost is about to be recorded again by a
+    // purchase line (`recordOpeningCost: false`). See the note on the field: this
+    // entry and the purchase's entry are the SAME observation, and counting both
+    // permanently skewed the average of every product added from a purchase.
+    if ((input.cost ?? 0) > 0 && input.recordOpeningCost !== false) {
       db.prepare(
         `INSERT INTO product_cost_history (id, product_id, cost, at, user_id, source, note)
          VALUES (@id, @productId, @cost, @at, @userId, 'initial', 'Opening buying price')`,

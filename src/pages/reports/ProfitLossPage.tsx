@@ -163,7 +163,9 @@ export default function ProfitLossPage() {
           />
           <KpiCard label="Gross profit" value={pnl.grossProfit} tone="primary" />
           <KpiCard
-            label="Margin"
+            // Gross profit over revenue. The Items report shows markup over COST,
+            // which is a bigger number for the same goods — hence the two labels.
+            label="Margin on sales"
             value={pnl.marginPct}
             suffix="%"
             tone="info"

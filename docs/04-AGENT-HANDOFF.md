@@ -20,13 +20,13 @@ without breaking what works. For the full story of how the project got here, rea
 
 ```bash
 npm install
-npm run backend:verify:all   # must print 1,078 checks passed, seven suites (rebuilds for Node ABI)
+npm run backend:verify:all   # must print 1,108 checks passed, eight suites (rebuilds for Node ABI)
 npx tsc --noEmit -p tsconfig.json   # frontend typecheck — must be clean
 npm run build                # renderer + main + preload must build clean
 npm run rebuild:electron     # leave better-sqlite3 on the Electron ABI for `npm run dev`
 ```
 
-`backend:verify:all` runs seven suites; the expected per-suite counts are:
+`backend:verify:all` runs eight suites; the expected per-suite counts are:
 
 | Suite | Checks |
 |-------|-------:|
@@ -36,8 +36,9 @@ npm run rebuild:electron     # leave better-sqlite3 on the Electron ABI for `npm
 | `e2e.ts` (full shop day) | 68 |
 | `paging.ts` (paginated list reads) | 91 |
 | `backup.ts` (backup & cloud saving) | 120 |
-| `costing.ts` (purchase-price history + retraction) | 83 |
-| **total** | **1,078** |
+| `costing.ts` (purchase-price history + retraction) | 93 |
+| `mirror.ts` (renderer money math vs the calculation core) | 20 |
+| **total** | **1,108** |
 
 If these pass, the foundation is intact. If `backend:verify:all` fails, **stop and
 diagnose** — a failing identity check is a real correctness bug, not a flaky test.
@@ -185,8 +186,9 @@ npm run backend:scenarios    # scenario tests
 npm run backend:e2e          # 68 full-shop-day checks
 npm run backend:paging       # 91 paged-list-read checks
 npm run backend:backup       # 120 backup, cloud & invoice-PDF checks
-npm run backend:costing      # 83 purchase-price history checks
-npm run backend:verify:all   # everything — seven suites, 1,078 checks
+npm run backend:costing      # 93 purchase-price history checks
+npm run backend:mirror       # 20 renderer-vs-core money checks (no rebuild needed)
+npm run backend:verify:all   # everything — eight suites, 1,108 checks
 npm run i18n:check           # 32 Bangla dictionary assertions
 npm run i18n:extract         # list untranslated source strings
 npm run rebuild:electron     # switch better-sqlite3 → Electron ABI (run last each session)
@@ -215,7 +217,7 @@ npm run rebuild:node         # switch better-sqlite3 → Node ABI
 2. ✅ Auth + permissions enforced at the IPC layer.
 3. ✅ First-run wizard creates a real shop; demo seed available for evaluation.
 4. ✅ POS checkout writes real sales (the last data surface — done).
-5. ✅ Automated end-to-end pass: 1,078 checks over seven suites.
+5. ✅ Automated end-to-end pass: 1,108 checks over eight suites.
 6. ✅ Windows installer (NSIS, x64, per-user) with native deps rebuilt for the bundled
    Electron, plus in-app updates from GitHub Releases (`RELEASE.md`).
 7. ✅ Backup & Cloud saving: verified snapshots into a folder the owner's cloud client syncs,

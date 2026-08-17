@@ -16,6 +16,11 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
+import {
+  SettlementBadge,
+  SETTLEMENT_LABEL,
+  type SettlementKey,
+} from '@/components/ui/SettlementBadge';
 import { Card } from '@/components/ui/Card';
 import { ColumnsPanel } from '@/components/ui/ColumnsPanel';
 import { Pagination } from '@/components/ui/Pagination';
@@ -283,18 +288,19 @@ export default function Purchases() {
           </select>
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-0.5 p-0.5 bg-secondary rounded-md text-xs">
+              {/* Plain words, shared with the badges — see SettlementBadge. */}
               {(['all', 'paid', 'partial', 'due'] as const).map((p) => (
                 <button
                   key={p}
                   onClick={() => onPaymentChip(p)}
                   className={cn(
-                    'px-3 py-1 rounded font-medium capitalize transition',
+                    'px-3 py-1 rounded font-medium transition',
                     payment === p
                       ? 'bg-card text-foreground shadow-sm'
                       : 'text-muted-foreground hover:text-foreground',
                   )}
                 >
-                  {p}
+                  {p === 'all' ? 'All' : SETTLEMENT_LABEL[p as SettlementKey]}
                 </button>
               ))}
             </div>
@@ -496,9 +502,7 @@ function Cell({ c, p }: { c: PurchaseColumn; p: PurchaseRecord }) {
         </td>
       );
     case 'paymentStatus':
-      if (p.due === 0) return <td className="px-3 py-2.5"><Badge variant="success">Paid</Badge></td>;
-      if (p.paid > 0) return <td className="px-3 py-2.5"><Badge variant="warning">Partial</Badge></td>;
-      return <td className="px-3 py-2.5"><Badge variant="destructive">Due</Badge></td>;
+      return <td className="px-3 py-2.5"><SettlementBadge paid={p.paid} due={p.due} /></td>;
     case 'status':
       return (
         <td className="px-3 py-2.5">

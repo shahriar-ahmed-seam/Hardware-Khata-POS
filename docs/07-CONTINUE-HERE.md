@@ -16,11 +16,11 @@
 
 ```bash
 npm install                        # if node_modules is missing — READ THE NPM NOTE BELOW
-npm run backend:verify:all         # must print 1,078 checks across SEVEN suites
+npm run backend:verify:all         # must print 1,108 checks across EIGHT suites
 npx tsc --noEmit -p tsconfig.json  # frontend typecheck — clean
 npx tsc --noEmit -p tsconfig.backend.json
 npm run build                      # renderer + main + preload
-npm run i18n:check                 # 32 checks, 2,385 Bangla phrases
+npm run i18n:check                 # 32 checks, 2,405 Bangla phrases
 npm run rebuild:electron           # LEAVE IT ON THE ELECTRON ABI (see §6)
 ```
 
@@ -46,8 +46,14 @@ Expected per-suite counts:
 | `e2e.ts` | 68 | one full shop day |
 | `paging.ts` | 91 | paginated list reads + Paid/Partial/Due filtering |
 | `backup.ts` | 120 | backup, cloud, CSV export, invoice PDFs, pendrive copies |
-| `costing.ts` | 83 | purchase-price history, purchases feeding it, **a cancelled purchase retracting its price**, migration head (**v7**) |
-| **total** | **1,078** | |
+| `costing.ts` | 93 | purchase-price history, purchases feeding it, a cancelled purchase retracting its price, **a product born on a purchase not being priced twice**, migration head (**v7**) |
+| `mirror.ts` | 20 | **the renderer's money math vs `core/calc.ts`** — 800 randomised baskets and bills, must agree to the paisa |
+| **total** | **1,108** | |
+
+> `mirror.ts` is the only suite that touches `src/`. It imports `src/lib/money.ts`
+> (which deliberately has NO imports of its own) and drives it against
+> `backend/core/calc.ts`. It needs no rebuild, so it also runs standalone with
+> `npm run backend:mirror`.
 
 Single suites: `backend:verify`, `backend:scenarios`, `backend:e2e`,
 `backend:paging`, `backend:backup`, `backend:costing`.
@@ -56,12 +62,12 @@ Single suites: `backend:verify`, `backend:scenarios`, `backend:e2e`,
 
 ## 2. Where the product is right now
 
-Shipping, installed, and self-updating. The last published release is **0.6.0**
+Shipping, installed, and self-updating. The last published release is **0.7.0**
 (NSIS, x64, per-user, ~82 MB) and the app updates itself from GitHub Releases —
 bump `package.json` and `npm run release:win`, see `RELEASE.md`.
 
-0.6.0 is the gap-clearing session's work (§3d), committed and tagged `v0.6.0` on
-`main`.
+0.7.0 is the money-and-payments session (§3e); 0.6.0 was the gap-clearing session
+(§3d). Both are on `main`, tagged.
 
 The owner's live database is at `%APPDATA%\pos\pos.db`. The schema HEAD is now
 **v7**; migrations are additive and run on launch, so their database upgrades in
@@ -70,12 +76,83 @@ password.
 Their backup folder is already `C:\Users\Seam\OneDrive\HardwareKhataPOS\Backups`,
 so snapshots *and* invoice PDFs cloud-sync via OneDrive.
 
-The working tree is clean at `v0.6.0`. **Do not commit unprompted** — ask the owner
+The working tree is clean at `v0.7.0`. **Do not commit unprompted** — ask the owner
 first, as always.
 
 ---
 
-## 3d. What landed in the gap-clearing session (the most recent work)
+## 3e. What landed in the money-and-payments session (0.7.0, the most recent work)
+
+Three things the owner reported, in their words: the average buying price was wrong,
+"check any other calculation bugs", and "partial/due/full payment is not user
+friendly enough". All three turned out to be deeper than they looked.
+
+**The average buying price counted one delivery twice.** The owner's arithmetic was
+exactly right — 120, 120, 124 averaging 121.33 where the honest answer is 122.
+**Two** pieces of code were writing the phantom entry, which is why fixing the
+obvious one did not help: `createProduct` opened the history with the cost typed in
+the drawer, and then `setProductCost` BACK-FILLED `products.cost` as an opening
+price because the product had no history yet. The back-fill is legitimate for
+products that predate the feature, so it is now gated on `cost_updated_at IS NULL`,
+which is precisely what identifies a pre-v4 row (the v4 migration added that column
+without filling it). See rule 21.
+
+> **Existing data was NOT touched.** Products added from a purchase before 0.7.0
+> still carry the duplicate entry. The signature is specific (an `initial` entry
+> equal to the first `purchase` entry, seconds apart), so a one-time repair that
+> RETRACTS them — never deletes — is easy to write. The owner was asked; do not do
+> it unprompted, it is their books.
+
+**The renderer's money math disagreed with the invoice.** A subagent compared every
+formula against `backend/core/calc.ts`; three of the findings were money-visible:
+
+- The sale form pooled all line discounts and clamped the POOL, where the backend
+  clamps EACH LINE. ৳100 discounted 150% plus a ৳1,000 line showed **৳950** against
+  a stored **৳1,000** — collect 950, and the invoice keeps a ৳50 due nobody knows
+  about. That screen has no cart-vs-backend warning the way POS does.
+- The sale form's Subtotal cell was missing the `max(0, …)` clamp — the same bug
+  already fixed on receipts — so it printed a negative number.
+- **Nothing in the renderer rounded**, while the core rounds at every step including
+  the unit price BEFORE multiplying by quantity. ৳99.99 at 5% × 1000 showed
+  ৳104,989.50 against ৳104,990.00 stored, and because POS caps its payments at the
+  CART total, a sale paid in full persisted with ৳0.50 owing that no payment screen
+  could clear. Purchases had the same gap: a line showing net cost 87.49 and total
+  8,749.13, which do not agree with each other.
+
+All of it now goes through `src/lib/money.ts`, and `backend/verify/mirror.ts` keeps
+it honest — 800 randomised baskets and bills, asserted equal to the paisa. It was
+negative-tested by removing one `round2`: 434 line mismatches, 228 phantom dues,
+worst divergence ৳7.06. See rule 20.
+
+Also: **"Margin" labelled two different figures** — profit over cost on the Items
+report, profit over revenue on P&L and Product Sell. Now "Markup on cost" and
+"Margin on sales". Neither formula changed; both were correct.
+
+**The payment screen was rebuilt around one question.** It used to demand a
+Single/Split choice before any money was counted, list **Credit as a payment
+method**, and — the actual failure — DISABLE Confirm when the customer paid part of
+the bill. `canConfirm` required `totalPaid >= total || creditAmount > 0`, so the
+everyday বাকি sale needed the user to know they must switch to Split, add a line, and
+set its method to Credit. It now asks "How much is the customer paying now?", shows
+the consequence in words (paid in full / change to give / what they will still owe
+and what their khata becomes), derives the quick amounts from the actual bill, and
+puts the outcome in the confirm button's label. Credit as a method is gone; it is one
+"Nothing now" button, which is what it always meant.
+
+That work exposed a real hole: **a due on a walk-in sale belonged to nobody** —
+visible as unpaid in the list, absent from every khata and every receivables figure.
+Now blocked in both places a sale can be created. See rule 22.
+
+`Partial`/`Due` became `Part paid`/`Unpaid` app-wide through one new
+`SettlementBadge`; six places had their own copy of that ladder.
+
+**NOT verified:** the new payment screen has not been clicked through by a human.
+Typecheck, 1,108 checks and a production build pass, but the feel of that screen
+matters as much as its arithmetic.
+
+---
+
+## 3d. What landed in the gap-clearing session (0.6.0)
 
 Every numbered gap in §4 closed. The suite went **999 → 1,078** checks, the channel
 count 150 → 152, and the schema to **v7**. Each gap looked small on the surface and
@@ -548,6 +625,26 @@ typed by hand.
    Cancelling the document that recorded a price stops it counting towards
    `cost`/`avg_cost`; the row stays, because it is the audit record of what was
    entered. Same principle as voiding rather than deleting a sale.
+20. **THE RENDERER NEVER DOES ITS OWN MONEY ARITHMETIC.** Every figure comes from
+   `src/lib/money.ts`, which mirrors `backend/core/calc.ts` step for step —
+   including WHERE it rounds. Three bugs came from ignoring this, all invisible to
+   every other suite because the backend was always right and the SCREEN was
+   wrong: a receipt printing a negative subtotal, a sale form showing ৳950 for an
+   invoice stored at ৳1,000, and a fully-paid sale keeping ৳0.50 owing because POS
+   caps its payments at the unrounded cart total. `backend/verify/mirror.ts` is
+   what keeps the two in step; if you change one side, change both and run it.
+21. **One price is recorded per observation, never two.** A product created inside
+   a purchase must not open its own price history — the purchase line is about to
+   record that same price (`recordOpeningCost: false`), and `setProductCost` only
+   back-fills `products.cost` for products that PREDATE the history feature
+   (`cost_updated_at IS NULL`). Counting one delivery twice permanently skewed the
+   average: 120 then 120 then 124 averaged 121.33 instead of 122.
+22. **বাকি NEEDS A NAME.** Money left owing must be against a real customer.
+   `customerDue()` sums by `customer_id`, so a due on a walk-in sale (stored with
+   NO customer) shows as unpaid in the sales list yet appears in no khata, on no
+   Customer Dues screen and in no receivables total — it is off the books and
+   uncollectable. Enforced in `PaymentModal` and in `AddSale.save`. If a third way
+   to create a sale is ever added, it needs the same guard.
 
 **Bangla:** append-only `Object.assign(BN, {…})` blocks in `src/lib/bn/dict.ts`.
 Never reorder or delete. Duplicate keys across blocks **must agree** —

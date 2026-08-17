@@ -15,6 +15,7 @@ import {
 import { Drawer } from '@/components/ui/Drawer';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
+import { SettlementBadge } from '@/components/ui/SettlementBadge';
 import { useSales, type SaleRecord } from '@/stores/sales';
 import { useCustomers } from '@/stores/contacts';
 import { confirm } from '@/stores/confirm';
@@ -144,9 +145,7 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
     if (sale.status === 'void') return <Badge variant="destructive">Voided</Badge>;
     if (sale.status === 'draft') return <Badge variant="info">Draft</Badge>;
     if (sale.status === 'quotation') return <Badge variant="warning">Quotation</Badge>;
-    if (sale.due === 0) return <Badge variant="success">Paid</Badge>;
-    if (sale.paid > 0) return <Badge variant="warning">Partial</Badge>;
-    return <Badge variant="destructive">Due</Badge>;
+    return <SettlementBadge paid={sale.paid} due={sale.due} />;
   };
 
   return (

@@ -12,6 +12,7 @@ import {
 import { Drawer } from '@/components/ui/Drawer';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
+import { SettlementBadge } from '@/components/ui/SettlementBadge';
 import { usePurchases } from '@/stores/purchases';
 import { confirm } from '@/stores/confirm';
 import { promptText } from '@/stores/prompt';
@@ -91,9 +92,7 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
     return <Badge variant="success">Received</Badge>;
   };
   const PaymentPill = () => {
-    if (purchase.due === 0) return <Badge variant="success">Paid</Badge>;
-    if (purchase.paid > 0) return <Badge variant="warning">Partial</Badge>;
-    return <Badge variant="destructive">Due</Badge>;
+    return <SettlementBadge paid={purchase.paid} due={purchase.due} />;
   };
 
   return (

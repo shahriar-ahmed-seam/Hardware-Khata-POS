@@ -1,7 +1,7 @@
 {
   "name": "pos",
   "private": true,
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Offline-first POS for hardware shop",
   "main": "dist-electron/main.js",
   "scripts": {
@@ -26,7 +26,8 @@
     "backend:paging": "npm run rebuild:node && tsx backend/verify/paging.ts",
     "backend:backup": "npm run rebuild:node && tsx backend/verify/backup.ts",
     "backend:costing": "npm run rebuild:node && tsx backend/verify/costing.ts",
-    "backend:verify:all": "npm run rebuild:node && tsx backend/verify/all.ts && tsx backend/verify/api.ts && tsx backend/verify/run.ts && tsx backend/verify/e2e.ts && tsx backend/verify/paging.ts && tsx backend/verify/backup.ts && tsx backend/verify/costing.ts"
+    "backend:mirror": "tsx backend/verify/mirror.ts",
+    "backend:verify:all": "npm run rebuild:node && tsx backend/verify/all.ts && tsx backend/verify/api.ts && tsx backend/verify/run.ts && tsx backend/verify/e2e.ts && tsx backend/verify/paging.ts && tsx backend/verify/backup.ts && tsx backend/verify/costing.ts && tsx backend/verify/mirror.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.51.0",

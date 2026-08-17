@@ -1,4 +1,5 @@
 export type PriceGroup = 'retail' | 'wholesale' | 'contractor';
+import { saleLineSubtotal, saleTotals, saleUnitPrice } from '@/lib/money';
 
 export type CartLine = {
   productId: string;
@@ -42,19 +43,35 @@ export type ParkedCart = {
   otherCharge: number;
 };
 
+/**
+ * The cart's money math now delegates to `src/lib/money.ts`, which mirrors
+ * `backend/core/calc.ts` step for step — INCLUDING the rounding.
+ *
+ * These used to be unrounded, while the backend rounds the unit price before
+ * multiplying by quantity and rounds every sum. On `basePrice 99.99` with a 5%
+ * markup and qty 1000 the cart said ৳104,989.50 and the invoice stored
+ * ৳104,990.00. POS caps the payments it sends at the CART total, so a sale paid
+ * in full to the last paisa was persisted with a ৳0.50 due that no payment
+ * screen could clear.
+ */
 export function unitPrice(line: CartLine) {
-  return line.basePrice * (1 + line.markupPct / 100);
+  return saleUnitPrice(line.basePrice, line.markupPct);
 }
 
 export function lineSubtotal(line: CartLine) {
-  const gross = unitPrice(line) * line.qty;
-  const afterPct = gross * (1 - line.discountPct / 100);
-  const afterFlat = afterPct - line.discountFlat;
-  return Math.max(0, afterFlat);
+  return saleLineSubtotal({
+    qty: line.qty,
+    unitPrice: unitPrice(line),
+    discountPct: line.discountPct,
+    discountFlat: line.discountFlat,
+  });
 }
 
 export interface OrderTotals {
+  /** GROSS, before line discounts — what the cart labels "Subtotal". */
   subtotal: number;
+  /** After line discounts. This is what the backend stores as `sales.subtotal`. */
+  netSubtotal: number;
   totalLineDiscount: number;
   orderDiscount: number;
   taxableBase: number;
@@ -65,30 +82,32 @@ export interface OrderTotals {
 }
 
 export function computeTotals(cart: ParkedCart): OrderTotals {
-  // Sum of "gross" before any line discount, used to show subtotal
-  let gross = 0;
-  let afterLineDiscount = 0;
-  for (const l of cart.lines) {
-    const g = unitPrice(l) * l.qty;
-    gross += g;
-    afterLineDiscount += lineSubtotal(l);
-  }
-  const totalLineDiscount = gross - afterLineDiscount;
-  const orderDiscount =
-    afterLineDiscount * (cart.orderDiscountPct / 100) + cart.orderDiscountFlat;
-  const taxableBase = Math.max(0, afterLineDiscount - orderDiscount);
-  const tax = taxableBase * (cart.orderTaxPct / 100);
-  const shipping = cart.shippingCharge || 0;
-  const other = cart.otherCharge || 0;
-  const total = taxableBase + tax + shipping + other;
+  const t = saleTotals({
+    lines: cart.lines.map((l) => ({
+      qty: l.qty,
+      unitPrice: unitPrice(l),
+      discountPct: l.discountPct,
+      discountFlat: l.discountFlat,
+    })),
+    orderDiscountPct: cart.orderDiscountPct,
+    orderDiscountFlat: cart.orderDiscountFlat,
+    taxPct: cart.orderTaxPct,
+    shipping: cart.shippingCharge || 0,
+    other: cart.otherCharge || 0,
+  });
   return {
-    subtotal: gross,
-    totalLineDiscount,
-    orderDiscount,
-    taxableBase,
-    tax,
-    shipping,
-    other,
-    total,
+    // `subtotal` here is the GROSS, before line discounts, because the cart shows
+    // "Subtotal" and "Line discounts" as two rows. The backend's `sales.subtotal`
+    // column is the NET figure (`t.subtotal`) — the same word for two things, so
+    // `netSubtotal` is exposed alongside for anything that must match the invoice.
+    subtotal: t.gross,
+    netSubtotal: t.subtotal,
+    totalLineDiscount: t.totalLineDiscount,
+    orderDiscount: t.orderDiscount,
+    taxableBase: t.taxableBase,
+    tax: t.tax,
+    shipping: t.shipping,
+    other: t.other,
+    total: t.total,
   };
 }

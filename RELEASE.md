@@ -1,7 +1,7 @@
 # Hardware Khata POS — Releasing & Updating
 
-**Current version: 0.6.0** · Windows x64 · NSIS installer, per-user (no admin needed)
-Installer: `release/HardwareKhataPOS-Setup-0.6.0.exe` (~82 MB)
+**Current version: 0.7.0** · Windows x64 · NSIS installer, per-user (no admin needed)
+Installer: `release/HardwareKhataPOS-Setup-0.7.0.exe` (~82 MB)
 
 ---
 
@@ -42,7 +42,7 @@ shop PC: opens the app ─────────┘
 
 ```powershell
 # 1. bump the version (this is what clients compare against)
-#    package.json → "version": "0.6.1"   ← must be HIGHER than the published one
+#    package.json → "version": "0.7.1"   ← must be HIGHER than the published one
 
 # 2. prove it still works
 npm run backend:verify:all          # 1,078 checks, seven suites
@@ -84,7 +84,96 @@ upgrading and uninstalling never touch it.
 
 ---
 
-## 2a. What's in 0.6.0
+## 2a. What's in 0.7.0
+
+> **Upgrade in place — do NOT reinstall.** Settings → Updates → Download, then
+> Restart and install. No schema change this time; every product, customer, sale,
+> purchase, balance and photo stays exactly as it is.
+
+### Taking payment is now one question
+
+The payment screen used to ask you to pick **Single** or **Split Payment** before
+you had counted any money, and it put **Credit** in the row of payment methods next
+to Cash and bKash — as though not paying were a way of paying.
+
+Worse: if a customer handed over ৳10,000 of a ৳12,450 bill, the **Confirm button
+was switched off**. To record "he paid some, the rest is বাকি" you had to know that
+you must switch to Split, add a second line, and set that line's method to Credit.
+The most ordinary partial payment in a hardware shop was, in practice, unreachable.
+
+It now asks one thing — **"How much is the customer paying now?"** — and tells you
+what will happen before you save it:
+
+* pays it all → **Paid in full. Nothing owing.**
+* pays more → **Give back as change: ৳550**
+* pays some → **Rahim will still owe ৳2,450**, and what his khata becomes
+
+The quick-amount buttons come from *your* bill now (৳12,500 / ৳13,000 / ৳15,000 on
+a ৳12,450 total) instead of a fixed 100/200/500 list that fits no real bill. There
+is a **Nothing now** button for a sale that goes entirely on khata. **Credit is gone
+as a method** — that button is what it always meant. Nothing is ever switched off
+for being a part payment, and the confirm button spells out the action:
+*"Take ৳10,000 · ৳2,450 on khata"*.
+
+**Money left owing now has to be against a name.** Leaving part of a walk-in sale
+unpaid used to be allowed, and it put the money on the invoice but in nobody's
+account: it showed as unpaid in the sales list yet appeared in no khata, on no
+Customer Dues screen, and in no total of what you are owed. It was quietly off your
+books and you could never have collected it. Both the counter screen and the sale
+form now stop and ask you to pick the customer.
+
+Across the app, **"Partial" is now "Part paid" and "Due" is now "Unpaid"** — "Due"
+could be read as an amount or as a deadline, when what it means is that nothing has
+been paid yet.
+
+### The average buying price was counting one delivery twice
+
+Reported by the owner, and exactly right. Adding a product from inside **Add
+Purchase** recorded its price once when the product was created and again when the
+purchase line was received. It looked harmless until the next real purchase:
+
+    added at 120, received at 120, later bought at 124
+    -> (120 + 120 + 124) / 3 = 121.33
+
+You had only ever paid 120 and 124, so the average should be **122**. Two separate
+pieces of code were writing that phantom entry; both are fixed, and a product added
+to the catalogue on its own still records its opening price as before.
+
+> **Products you added this way before 0.7.0 still carry the duplicate.** Nothing in
+> your existing records was rewritten — that is your books, not ours to edit
+> silently. Ask and a one-time repair can mark those duplicates as not counted,
+> without deleting anything.
+
+### Numbers on screen now match the invoice to the paisa
+
+The screens did their own arithmetic and rounded differently from the part of the
+app that actually saves the sale. Three consequences, all fixed:
+
+* **A sale form total could be lower than the invoice.** A line discounted by more
+  than the line was worth had its excess taken off *other* lines. Two items — ৳100
+  discounted 150%, and ৳1,000 — showed **৳950** while the saved invoice was
+  **৳1,000**. You collected 950 and the invoice kept a ৳50 due nobody knew about.
+* **A sale paid in full could keep a ৳0.50 balance** that no payment screen would
+  ever clear, because the cart total was a fraction of a taka below the stored one.
+* **A purchase line disagreed with itself** — net cost ৳87.49 and line total
+  ৳8,749.13 for 100 units — and sat ৳0.13 above the bill that got saved.
+
+A discount larger than an item also printed a **negative** amount on the sale form,
+the same fault already fixed on printed receipts.
+
+**"Margin" meant two different things.** The Items report showed profit measured
+against what you paid; Profit & Loss and Product Sell measured it against what you
+sold for. Both are real figures, but an item bought at 100 and sold at 150 read as
+"50%" on one screen and "33%" on another. They are now **"Markup on cost"** and
+**"Margin on sales"**.
+
+Under the hood: verification went from 1,078 to **1,108 checks**, including a new
+suite that drives the screen's arithmetic and the saving code with 800 randomised
+baskets and bills and fails if they disagree by a single paisa.
+
+---
+
+## 2b. What's in 0.6.0
 
 > **Upgrade in place — do NOT reinstall.** Settings → Updates → Download, then Restart
 > and install. There IS a small schema change this time (v7) but it only ADDS four
@@ -156,7 +245,7 @@ Under the hood: verification went from 999 to **1,078 automated checks**, all gr
 
 ---
 
-## 2b. What's in 0.5.0
+## 2c. What's in 0.5.0
 
 > **Upgrade in place — no reinstall.** No schema change again, so
 > `%APPDATA%\pos\pos.db` is untouched.
@@ -200,7 +289,7 @@ Also removed a fake "Advance Balance ৳ 0.00" tile from the supplier payment di
 
 ---
 
-## 2c. What's in 0.4.0
+## 2d. What's in 0.4.0
 
 > **Upgrading is enough — do NOT reinstall.** There is **no schema change** in
 > this release, so `%APPDATA%\pos\pos.db` is untouched: every product, customer,
@@ -274,7 +363,7 @@ honest option), and +47 Bangla phrases (2,353 total).
 
 ---
 
-## 2d. What's in 0.3.0
+## 2e. What's in 0.3.0
 
 **Product photos and the shop logo no longer disappear.** They were being saved
 as `URL.createObjectURL(file)` — a `blob:` handle into the *current window's*
@@ -346,7 +435,7 @@ the internet.
 
 ## 4. Verification
 
-1,078 checks across seven suites, all green:
+1,108 checks across eight suites, all green:
 
 | Suite | Checks |
 |---|---:|
@@ -356,9 +445,10 @@ the internet.
 | `e2e.ts` | 68 |
 | `paging.ts` | 91 |
 | `backup.ts` | 120 |
-| `costing.ts` | 83 |
+| `costing.ts` | 93 |
+| `mirror.ts` | 20 |
 
-Plus `npm run i18n:check` — 32 checks, 2,385 Bangla phrases.
+Plus `npm run i18n:check` — 32 checks, 2,405 Bangla phrases.
 `npm run lint` does **not** work (eslint is not installed); `tsc` is the gate.
 
 ---

@@ -182,22 +182,48 @@ export function setProductCost(db: DB, input: SetCostInput): CostInfo {
   }
   return tx(db, () => {
     const product = db
-      .prepare('SELECT id, name, cost FROM products WHERE id = ?')
-      .get(input.productId) as { id: string; name: string; cost: number } | undefined;
+      .prepare('SELECT id, name, cost, cost_updated_at FROM products WHERE id = ?')
+      .get(input.productId) as
+      | { id: string; name: string; cost: number; cost_updated_at: string | null }
+      | undefined;
     if (!product) throw new Error('Product not found');
 
     const at = input.at ?? new Date().toISOString();
 
-    // A product created before this feature has an opening cost but no history.
-    // Capture it as the first entry so the average and the history reflect what
-    // the shop was actually paying, instead of starting from the new price.
     const hasHistory =
       (
         db
           .prepare('SELECT COUNT(*) AS n FROM product_cost_history WHERE product_id = ?')
           .get(input.productId) as { n: number }
       ).n > 0;
-    if (!hasHistory && product.cost > 0) {
+
+    /**
+     * BACK-FILL THE OPENING PRICE — but only for a product that PREDATES the
+     * cost-history feature.
+     *
+     * A product created before v4 has a `cost` and no history at all, so the very
+     * first recorded change would otherwise start the average from the new price
+     * and throw away what the shop had been paying. Capturing it first is right.
+     *
+     * `cost_updated_at IS NULL` is what identifies those products: the v4
+     * migration added the column without back-filling it, while every product
+     * created since has it set at creation. That distinction matters because of a
+     * second, much more common case that must NOT be back-filled — a product
+     * created as part of a purchase:
+     *
+     *   Add Purchase -> "Add new product", cost 120  (no history opened; the
+     *                   purchase line is about to record that same price)
+     *   the line is received at 120                  -> back-filling here would
+     *                   write 120 as an "opening price" AND 120 as the purchase
+     *                   price: one delivery, two entries
+     *   a later purchase at 124                      -> (120+120+124)/3 = 121.33
+     *
+     * The shop has only ever bought at 120 and 124, so the honest average is 122.
+     * Skipping the back-fill for a product whose cost has never been observed is
+     * what makes that come out right. See ProductInput.recordOpeningCost.
+     */
+    const predatesCostHistory = product.cost_updated_at == null;
+    if (!hasHistory && product.cost > 0 && predatesCostHistory) {
       db.prepare(
         `INSERT INTO product_cost_history (id, product_id, cost, at, user_id, source, note)
          VALUES (@id, @productId, @cost, @at, @userId, 'initial', @note)`,

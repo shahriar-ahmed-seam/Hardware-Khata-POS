@@ -277,8 +277,13 @@ export function RecentSales() {
                 <td className="px-4 py-2">
                   <Badge
                     variant={
-                      s.status === 'paid' ? 'success' : s.status === 'partial' ? 'warning' : 'destructive'
+                      s.status === 'paid'
+                        ? 'success'
+                        : s.status === 'partial'
+                          ? 'warning'
+                          : 'destructive'
                     }
+                    // Same vocabulary as every list and drawer — see SettlementBadge.
                   >
                     {s.status}
                   </Badge>

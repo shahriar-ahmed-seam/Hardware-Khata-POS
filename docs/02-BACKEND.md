@@ -273,7 +273,7 @@ Symptom of wrong ABI: `ERR_DLOPEN_FAILED`. Fix: run the matching rebuild script.
 
 ## Verification — what's proven
 
-Run `npm run backend:verify:all` → **seven suites, 1,078 checks** (grew from 122 as slices
+Run `npm run backend:verify:all` → **eight suites, 1,108 checks** (grew from 122 as slices
 were wired):
 
 | Suite | Checks | What it covers |
@@ -284,7 +284,8 @@ were wired):
 | `e2e.ts` | 68 | one full shop day |
 | `paging.ts` | 91 | paginated list reads |
 | `backup.ts` | 120 | backup, cloud, CSV export, invoice PDFs, pendrive copies |
-| `costing.ts` | 83 | purchase-price history, incl. retraction on a cancelled purchase |
+| `costing.ts` | 93 | purchase-price history, incl. retraction on a cancelled purchase |
+| `mirror.ts` | 20 | the renderer's money math vs the calculation core, over randomised inputs |
 
 - **68 E2E** (e2e.ts) — a full shop day through the `buildApi()` facade from a clean
   first-run DB, reconciling every cross-module number (see `docs/06-E2E-AND-SMOKE-TEST.md`).

@@ -31,8 +31,9 @@ Status legend: 🔴 not started · 🟡 partial · 🟢 done
   definition of a week, the dead receipt toggles, derived figures over a paginated store, a
   sale's payments being correctable, the pendrive-detection fallback, and the decision on what
   a cancelled purchase does to the recorded buying price. See `07-CONTINUE-HERE.md` §4.
-- **Verification**: **1,078 checks** pass across seven suites (`npm run backend:verify:all`):
-  all.ts 395 · api.ts 216 · run.ts 105 · e2e.ts 68 · paging.ts 91 · backup.ts 120 · costing.ts 83.
+- **Verification**: **1,108 checks** pass across eight suites (`npm run backend:verify:all`):
+  all.ts 395 · api.ts 216 · run.ts 105 · e2e.ts 68 · paging.ts 91 · backup.ts 120 ·
+  costing.ts 93 · mirror.ts 20 (the renderer's money math against the calculation core).
 
 > Per-slice detail (what changed, deferrals) for the wiring + auth + setup work has been
 > consolidated; see `05-CONTEXT-AND-HISTORY.md` for the full blow-by-blow and every deferral.
@@ -335,7 +336,7 @@ became paginated (one 50-row page) the report silently under-counted every shop 
 
 `docs/06-E2E-AND-SMOKE-TEST.md`. A script cannot click, and it cannot judge whether a receipt
 reads correctly on a 58mm roll or whether the Bangla layout still fits. Everything a script
-*can* prove is proven — 1,078 checks.
+*can* prove is proven — 1,108 checks.
 
 ## ✅ Final rigorous end-to-end test (DONE)
 

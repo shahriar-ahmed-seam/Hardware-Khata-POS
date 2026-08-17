@@ -3196,3 +3196,42 @@ Object.assign(BN, {
   'Your shop': 'আপনার দোকান',
   'Your branch': 'আপনার শাখা',
 });
+
+// ---------------------------------------------------------------------------
+// APPEND-ONLY BLOCK — the rewritten "take payment" screen (one question instead
+// of Single/Split modes and a "Credit" method), the plain settlement vocabulary
+// shared by every list and badge, and the two margin figures that used to share
+// one label.
+//
+// Anything with a number interpolated into it (the Confirm button, "Give back
+// ৳550") is deliberately absent: the translation layer matches whole text nodes,
+// and those are assembled at render time.
+// ---------------------------------------------------------------------------
+Object.assign(BN, {
+  // --- taking payment at the counter
+  'Take payment': 'টাকা নিন',
+  'Bill total': 'বিলের মোট',
+  'How much is the customer paying now?': 'কাস্টমার এখন কত টাকা দিচ্ছেন?',
+  'Full amount': 'পুরো টাকা',
+  'Nothing now': 'এখন কিছু না',
+  'Record the whole bill as owing': 'পুরো বিলটি বাকি হিসেবে লিখুন',
+  'Paid by': 'যেভাবে দিলেন',
+  'Part of it another way (cash + bKash)': 'কিছু অংশ অন্য উপায়ে (নগদ + বিকাশ)',
+  'Give back as change': 'ফেরত দিতে হবে',
+  'The bill is paid in full.': 'বিল পুরোপুরি পরিশোধ হয়েছে।',
+  'Paid in full. Nothing owing.': 'পুরো পরিশোধ হয়েছে। কিছু বাকি নেই।',
+  'Goes on their khata. You can collect it any time.':
+    'তাঁর খাতায় উঠবে। যেকোনো সময় আদায় করতে পারবেন।',
+  'Choose customer': 'কাস্টমার বাছুন',
+  'Choose a customer first': 'আগে কাস্টমার বাছুন',
+  'This customer': 'এই কাস্টমার',
+
+  // --- how settled a document is (shared by every list, badge and filter chip)
+  'Part paid': 'কিছু পরিশোধিত',
+  Unpaid: 'পরিশোধ হয়নি',
+
+  // --- the two margin figures, no longer both called "Margin"
+  'Markup on cost': 'ক্রয়মূল্যের উপর লাভ',
+  'Margin on sales': 'বিক্রয়ের উপর লাভ',
+  'Typical markup (per item)': 'সাধারণ লাভ (প্রতি পণ্যে)',
+});

@@ -658,6 +658,22 @@ export default function POS() {
         total={totalsForActive.total}
         customerCreditLimit={customerForActive?.creditLimit}
         customerCurrentDue={customerForActive?.due}
+        customerName={customerForActive?.name}
+        /**
+         * Anything left unpaid needs a real customer to owe it. 'cu1' is the
+         * walk-in placeholder and is sent to the backend as NO customer, so a due
+         * against it would belong to nobody: `customerDue()` sums by customer_id,
+         * meaning that money would appear in no khata, on no Customer Dues screen
+         * and in no receivables total. The modal blocks on this and offers the
+         * picker rather than silently losing it.
+         */
+        hasNamedCustomer={
+          !!active.customerId && active.customerId !== 'cu1' && !!customerForActive
+        }
+        onPickCustomer={() => {
+          setPaymentOpen(false);
+          setPickerOpen(true);
+        }}
         startMode={paymentStartMode}
         // The payment modal initialises with `Cash` regardless; user clicks the chosen tile.
         // Keep startMethod available for a future "preselect" tweak.

@@ -12,6 +12,7 @@ import { useReport } from '@/hooks/useReport';
 import { hasBackend } from '@/lib/api';
 import { formatBDT, formatNumber } from '@/lib/utils';
 import { cn } from '@/lib/utils';
+import { markupOnCostPct } from '@/lib/money';
 
 interface ItemRow {
   id: string;
@@ -94,7 +95,10 @@ export default function ItemsReportPage() {
       price: p.price,
       wholesale: p.wholesale_price ?? undefined,
       contractor: p.contractor_price ?? undefined,
-      margin: p.margin ?? (p.cost > 0 ? ((p.price - p.cost) / p.cost) * 100 : 0),
+      // `products.list` does not return a margin column, so this is always
+      // computed here. Uses the shared helper so it matches `marginPct` in the
+      // backend's calc core, including returning 0 rather than dividing by zero.
+      margin: markupOnCostPct(p.price, p.cost),
       tax: p.tax_pct ?? 0,
       notForSale: p.not_for_sale === 1,
       showInPOS: p.show_in_pos !== 0,
@@ -172,7 +176,14 @@ export default function ItemsReportPage() {
           <Kpi label="Products" value={formatNumber(totals.products)} />
           <Kpi label="Categories" value={formatNumber(totals.categories)} />
           <Kpi label="Brands" value={formatNumber(totals.brands)} />
-          <Kpi label="Avg margin" value={`${totals.avgMargin.toFixed(1)}%`} tone="success" />
+          {/* Plain average across products, NOT weighted by what actually sells —
+              a ৳20 item at 300% pulls it as hard as a ৳50,000 one. Labelled
+              "typical" rather than presented as the shop's markup. */}
+          <Kpi
+            label="Typical markup (per item)"
+            value={`${totals.avgMargin.toFixed(1)}%`}
+            tone="success"
+          />
         </div>
 
         <Card className="p-3">
@@ -195,7 +206,11 @@ export default function ItemsReportPage() {
             <div>Unit</div>
             <div className="text-right">Cost</div>
             <div className="text-right">Price</div>
-            <div className="text-right">Margin</div>
+            {/* "Markup", not "Margin". This figure is (price − cost) / COST, which
+                is what a shopkeeper means by "I make 50% on that". Profit & Loss
+                and Product Sell show profit over REVENUE, which for the same item
+                is 33%. Two true numbers — so they must not share a label. */}
+            <div className="text-right">Markup on cost</div>
             <div className="text-right">Tax</div>
             <div className="text-right">POS</div>
           </div>

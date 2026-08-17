@@ -3,6 +3,7 @@ import { api } from '@/lib/api';
 import { toast } from '@/stores/toast';
 import { toPurchaseRecord, type BackendPurchase } from '@/hooks/purchaseAdapter';
 import { requireBranchId } from '@/lib/branch';
+import { markupOnCostPct, purchaseLine, purchaseTotals } from '@/lib/money';
 
 /**
  * Purchases store. Backend-only: the list is loaded through `hydrate` and every
@@ -116,15 +117,24 @@ export interface PurchaseReturn {
 }
 
 // ---- Helpers ----
+/**
+ * Preview a purchase line exactly as the backend will store it.
+ *
+ * Delegates to `src/lib/money.ts` (which mirrors `computePurchaseLine`) rather
+ * than repeating the arithmetic. The old copy here had the right ORDER and the
+ * right clamp but no rounding, and the backend rounds the unit cost BEFORE
+ * multiplying by quantity — so a line of 100 units at 99.99 less 12.5% showed a
+ * net cost of 87.49 and a line total of 8,749.13, which do not agree with each
+ * other and are ৳0.13 above the bill that actually gets saved. That drift
+ * accumulated across lines into the total the buyer approved.
+ */
 export function recomputeLine(l: PurchaseLine): PurchaseLine {
-  const grossPerUnit = l.unitCostBeforeDisc;
-  const afterPct = grossPerUnit * (1 - l.discountPct / 100);
-  const afterFlat = afterPct - l.discountFlat;
-  const unitCostBeforeTax = Math.max(0, afterFlat);
-  const lineTotal = unitCostBeforeTax * l.qty * (1 + l.taxPct / 100);
+  const { unitCostBeforeTax, lineTotal } = purchaseLine(l);
   let marginPct: number | undefined;
+  // Left undefined (renders '—') rather than 0 when there is no new sell price
+  // or no cost to compare against: "0% margin" would be a claim, not a blank.
   if (l.newSellPrice && unitCostBeforeTax > 0) {
-    marginPct = ((l.newSellPrice - unitCostBeforeTax) / unitCostBeforeTax) * 100;
+    marginPct = markupOnCostPct(l.newSellPrice, unitCostBeforeTax);
   }
   return { ...l, unitCostBeforeTax, lineTotal, marginPct };
 }
@@ -140,6 +150,7 @@ export interface PurchaseTotals {
   total: number;
 }
 
+/** Mirrors `computePurchaseTotals` via src/lib/money.ts — see `recomputeLine`. */
 export function computeTotals(p: {
   lines: PurchaseLine[];
   orderDiscountType: 'flat' | 'percent';
@@ -148,31 +159,14 @@ export function computeTotals(p: {
   shipping: number;
   other: number;
 }): PurchaseTotals {
-  let gross = 0;
-  let afterLine = 0;
-  for (const l of p.lines) {
-    const ll = recomputeLine(l);
-    gross += ll.unitCostBeforeDisc * ll.qty;
-    afterLine += ll.unitCostBeforeTax * ll.qty;
-  }
-  const totalLineDiscount = gross - afterLine;
-  const orderDiscount =
-    p.orderDiscountType === 'percent'
-      ? afterLine * (p.orderDiscountValue / 100)
-      : p.orderDiscountValue;
-  const taxableBase = Math.max(0, afterLine - orderDiscount);
-  const tax = taxableBase * (p.taxPct / 100);
-  const total = taxableBase + tax + (p.shipping || 0) + (p.other || 0);
-  return {
-    subtotal: gross,
-    totalLineDiscount,
-    orderDiscount,
-    taxableBase,
-    tax,
-    shipping: p.shipping || 0,
-    other: p.other || 0,
-    total,
-  };
+  return purchaseTotals({
+    lines: p.lines,
+    orderDiscountType: p.orderDiscountType,
+    orderDiscountValue: p.orderDiscountValue,
+    taxPct: p.taxPct,
+    shipping: p.shipping,
+    other: p.other,
+  });
 }
 
 // ---- Counters ----

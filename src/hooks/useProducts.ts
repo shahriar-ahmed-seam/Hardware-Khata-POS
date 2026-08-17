@@ -221,12 +221,26 @@ export function useProductsPage(params: ProductsPageParams) {
 export function useCreateProduct() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (p: Product & { openingStock?: number; branchId?: string; userId?: string }) =>
+    mutationFn: (
+      p: Product & {
+        openingStock?: number;
+        branchId?: string;
+        userId?: string;
+        /**
+         * Pass FALSE when the product is being created inside a purchase that is
+         * about to record the same buying price on its own line — otherwise the
+         * price is counted twice and the product's average is wrong for ever.
+         * See ProductInput.recordOpeningCost in backend/services/catalog.ts.
+         */
+        recordOpeningCost?: boolean;
+      },
+    ) =>
       api<{ id: string }>('products.create', {
         ...fromProduct(p),
         openingStock: p.openingStock,
         branchId: p.branchId,
         userId: p.userId,
+        recordOpeningCost: p.recordOpeningCost,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY] }),
   });

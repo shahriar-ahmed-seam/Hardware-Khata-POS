@@ -63,6 +63,15 @@ export function NewProductDrawer({
         ...p,
         // 0 in lockStock mode — see the note above.
         openingStock: lockStock ? 0 : p.stock,
+        // ...and for the SAME reason, don't open the buying-price history either.
+        // The cost typed here pre-fills the purchase line that is about to record
+        // it, so writing both counted one delivery's price twice and skewed the
+        // product's average buying price permanently:
+        //   created at 120 -> [120], received at 120 -> [120,120],
+        //   next purchase at 124 -> avg 121.33 instead of 122.
+        // The product still shows 120 as its buying price straight away; it is
+        // just not a second observation.
+        recordOpeningCost: lockStock ? false : undefined,
         branchId,
         userId: userId ?? undefined,
       });

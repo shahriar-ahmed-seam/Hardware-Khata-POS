@@ -46,6 +46,7 @@ import { ProductImage } from '@/components/products/ProductImage';
 import { CustomerPicker } from '@/components/pos/CustomerPicker';
 import { DateTimeField, DateField } from '@/components/ui/DateTimeField';
 import { toLocalInput, fromLocalInput, localDateInputPlusDays } from '@/lib/datetime';
+import { round2, saleLineSubtotal, saleTotals } from '@/lib/money';
 import type { Product } from '@/types/domain';
 
 export default function AddSale() {
@@ -207,17 +208,39 @@ export default function AddSale() {
     setLines((ls) => ls.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
   const removeLine = (idx: number) => setLines((ls) => ls.filter((_, i) => i !== idx));
 
-  // Totals
-  const subtotal = lines.reduce((s, l) => s + l.unitPrice * l.qty, 0);
-  const totalLineDiscount = lines.reduce(
-    (s, l) => s + l.unitPrice * l.qty * (l.discountPct / 100) + l.discountFlat,
-    0,
-  );
-  const afterLine = Math.max(0, subtotal - totalLineDiscount);
-  const orderDiscount = afterLine * (orderDiscPct / 100) + orderDiscFlat;
-  const taxableBase = Math.max(0, afterLine - orderDiscount);
-  const tax = taxableBase * (taxPct / 100);
-  const total = taxableBase + tax + shipping + other;
+  /**
+   * TOTALS — from the shared money core, not recomputed here.
+   *
+   * This used to pool every line's discount into one number and clamp the POOL:
+   *
+   *   const totalLineDiscount = lines.reduce((s, l) => s + gross*pct + flat, 0);
+   *   const afterLine = Math.max(0, subtotal - totalLineDiscount);
+   *
+   * The backend clamps EACH LINE (`computeSaleLine`), so an over-discounted line
+   * could eat into the others. Two lines — ৳100 discounted 150%, and ৳1,000 —
+   * showed a ৳950 total here while the backend stored ৳1,000. Since the form
+   * sends raw lines and the backend recomputes, the operator collected 950 and
+   * the invoice kept a ৳50 due nobody knew about. There is no cart-vs-backend
+   * warning on this screen the way there is in POS, so nothing caught it.
+   *
+   * It was also unrounded throughout, which is its own source of phantom paisa.
+   */
+  const totals = saleTotals({
+    lines,
+    orderDiscountPct: orderDiscPct,
+    orderDiscountFlat: orderDiscFlat,
+    taxPct,
+    shipping,
+    other,
+  });
+  // `subtotal` on screen is the GROSS, matching the "Line discounts" row beneath
+  // it; `totals.subtotal` is the net figure the invoice stores.
+  const subtotal = totals.gross;
+  const totalLineDiscount = totals.totalLineDiscount;
+  const orderDiscount = totals.orderDiscount;
+  const taxableBase = totals.taxableBase;
+  const tax = totals.tax;
+  const total = totals.total;
 
   /**
    * Payments worth sending. A zero-amount row is a half-finished edit, not a
@@ -260,6 +283,26 @@ export default function AddSale() {
   const save = async (newStatus: SaleStatus = status) => {
     if (lines.length === 0) {
       toast.warning('Add at least one item');
+      return;
+    }
+
+    /**
+     * বাকি NEEDS A NAME — the same rule the POS payment screen enforces.
+     *
+     * `customerDue()` in the backend sums by `customer_id`, and a walk-in sale is
+     * stored with NO customer. So a finalized sale left partly unpaid against a
+     * walk-in put money owing on the invoice that belongs to nobody: it shows as
+     * unpaid in the Sales list but appears in no khata, on no Customer Dues
+     * screen, and in no receivables figure. The shop's own money quietly leaves
+     * the books. Drafts and quotations are exempt — nothing is owed yet.
+     */
+    const owingOnSave = round2(total - (editing ? paidTotal : 0));
+    const isNamedCustomer = !!customer && customerId.startsWith('cu_');
+    if (newStatus === 'final' && owingOnSave > 0.004 && !isNamedCustomer) {
+      toast.error('Choose a customer before leaving money owing', {
+        description:
+          'Money on khata has to be against a name, or it is in nobody’s account and you will never be able to collect it. Pick the customer, or record the full payment.',
+      });
       return;
     }
 
@@ -535,7 +578,12 @@ export default function AddSale() {
                 </thead>
                 <tbody>
                   {lines.map((l, i) => {
-                    const sub = l.unitPrice * l.qty - l.discountFlat - l.unitPrice * l.qty * (l.discountPct / 100);
+                    // The shared helper, not inline arithmetic. The version here
+                    // omitted the `max(0, …)` clamp, so a discount larger than
+                    // the line printed a NEGATIVE subtotal in this cell while the
+                    // stored line was 0 — the same bug that was fixed in the
+                    // printed receipt.
+                    const sub = saleLineSubtotal(l);
                     // Looked up live from the catalogue rather than copied onto the
                     // line: a stored cost would go stale the moment a new buying
                     // price is recorded. Unknown product renders '—', never 0,

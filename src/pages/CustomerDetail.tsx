@@ -16,6 +16,7 @@ import {
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
+import { SettlementBadge } from '@/components/ui/SettlementBadge';
 import { Card } from '@/components/ui/Card';
 import { Drawer } from '@/components/ui/Drawer';
 import { useCustomers } from '@/stores/contacts';
@@ -531,25 +532,11 @@ export default function CustomerDetail() {
                           )}
                         </td>
                         <td className="px-2 py-2">
-                          <Badge
-                            variant={
-                              s.status === 'void'
-                                ? 'destructive'
-                                : s.due === 0
-                                  ? 'success'
-                                  : s.paid > 0
-                                    ? 'warning'
-                                    : 'destructive'
-                            }
-                          >
-                            {s.status === 'void'
-                              ? 'voided'
-                              : s.due === 0
-                                ? 'paid'
-                                : s.paid > 0
-                                  ? 'partial'
-                                  : 'due'}
-                          </Badge>
+                          {s.status === 'void' ? (
+                            <Badge variant="destructive">Voided</Badge>
+                          ) : (
+                            <SettlementBadge paid={s.paid} due={s.due} />
+                          )}
                         </td>
                       </tr>
                     ))
