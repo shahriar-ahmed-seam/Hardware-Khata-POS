@@ -4,6 +4,7 @@ import { usePromptStore } from '@/stores/prompt';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { cn } from '@/lib/utils';
+import { useOverlayLayer } from './overlayStack';
 
 /**
  * Global text-prompt dialog. Mount once near the app root, next to
@@ -14,6 +15,8 @@ import { cn } from '@/lib/utils';
  */
 export function PromptDialog() {
   const { open, options, respond } = usePromptStore();
+  // Registered as a layer so the modal underneath ignores this Esc/Enter.
+  useOverlayLayer(open);
   const [value, setValue] = useState('');
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
 
@@ -64,9 +67,13 @@ export function PromptDialog() {
       className="fixed inset-0 z-[110] flex items-center justify-center p-6 animate-fade-in"
     >
       <button
-        className="absolute inset-0 bg-black/50"
-        onClick={() => respond(null)}
+        className="absolute inset-0 bg-black/50 cursor-default"
+        // A typed reason is not thrown away by a stray click; Cancel/Esc still close.
+        onClick={() => {
+          if (!value.trim()) respond(null);
+        }}
         aria-label="Cancel"
+        tabIndex={-1}
       />
       <div className="relative bg-card text-card-foreground border border-border rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-scale-in">
         <div className="p-5 flex items-start gap-3">

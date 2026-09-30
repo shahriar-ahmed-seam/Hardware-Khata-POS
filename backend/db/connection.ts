@@ -79,91 +79,238 @@ export function openDatabase(filePath: string, opts: { readonly?: boolean } = {}
  *       balance and the invoice contradicted each other and the invoice could
  *       never reach zero. Additive with a default of 0, and back-filled from the
  *       returns already on record — see `addSaleCreditedColumn`.
+ *  v10 — add `purchases.credited`, the supplier-side twin of v8, back-filled from
+ *       the CreditAdjust purchase returns on record. See `addPurchaseCreditedColumn`.
  *  v9 — add `purchase_lines.unit_factor`, so a purchase can be entered in the
  *       unit the SUPPLIER quoted (a dozen, a box, a bundle) while stock still
  *       moves in the base unit the shop sells. Defaults to 1, which is what every
  *       existing line already means. See `addPurchaseUnitFactor`.
+ *  v11 — `account_payments` (money paid on account: opening balances and
+ *       advances), `cash_shifts.closed_by`, and the missing lookup indexes.
+ *       See `addV11`.
+ */
+/** The newest schema this build understands. Bump with every new migration step. */
+export const CURRENT_SCHEMA_VERSION = 11;
+
+/** The highest migration recorded in a database (0 for a brand-new file). */
+export function schemaVersionOf(db: DB): number {
+  const hasTable = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'")
+    .get();
+  if (!hasTable) return 0;
+  const row = db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get() as { v: number | null };
+  return row?.v ?? 0;
+}
+
+/** The refusal shown when a database is newer than this build. */
+export function newerSchemaMessage(found: number): string {
+  return (
+    `This data was saved by a newer version of the app (data version ${found}; ` +
+    `this version understands up to ${CURRENT_SCHEMA_VERSION}). ` +
+    'Install the newer version to open it. Opening it here could write figures the newer version does not expect.'
+  );
+}
+
+interface MigrationStep {
+  version: number;
+  name: string;
+  run: (db: DB) => void;
+}
+
+/**
+ * Every schema step, in order. A step's changes and its `schema_migrations`
+ * row are written in ONE transaction (see `migrate`), so a step either lands
+ * completely or not at all.
+ */
+const MIGRATIONS: MigrationStep[] = [
+  { version: 1, name: 'initial schema', run: () => {} },
+  {
+    version: 2,
+    name: 'price_groups: default_credit_limit, default_discount_pct, tax_exempt',
+    run: addPriceGroupColumns,
+  },
+  { version: 3, name: 'shipments table', run: addShipmentColumns },
+  {
+    version: 4,
+    name: 'product cost history: products.avg_cost / cost_updated_at + product_cost_history',
+    run: addCostHistoryColumns,
+  },
+  { version: 5, name: 'products.archived_at (retire a product that has documents)', run: addProductArchiveColumn },
+  { version: 6, name: 'clear dead blob: image URLs (product photos + shop logo)', run: clearEphemeralImageUrls },
+  {
+    version: 7,
+    name: 'product_cost_history: ref_type/ref_id + retracted_at/retract_reason',
+    run: addCostRetractionColumns,
+  },
+  {
+    version: 8,
+    name: 'sales.credited (CreditAdjust returns settle the invoice they came from)',
+    run: (d) => {
+      addSaleCreditedColumn(d);
+      backfillSaleCredited(d);
+    },
+  },
+  { version: 9, name: 'purchase_lines.unit_factor (buy by the dozen, sell by the piece)', run: addPurchaseUnitFactor },
+  {
+    version: 10,
+    name: 'purchases.credited (CreditAdjust purchase returns settle the bill they came from)',
+    run: (d) => {
+      addPurchaseCreditedColumn(d);
+      backfillPurchaseCredited(d);
+    },
+  },
+  {
+    version: 11,
+    name: 'account_payments, cash_shifts.closed_by, indexes for the hot lookups',
+    run: addV11,
+  },
+];
+
+/**
+ * Bring a database up to CURRENT_SCHEMA_VERSION.
+ *
+ * SAFETY (audit R33–R35):
+ *  - A database NEWER than this build is refused with a clear message, before
+ *    anything is written. An older build used to open it and write figures
+ *    (e.g. `due` ignoring `credited`) the newer schema does not expect.
+ *  - Each step runs in its own transaction together with its version row. A
+ *    step that fails rolls back completely and the error is thrown; the
+ *    database stays at the last step that succeeded, and the next start
+ *    retries from there. Backfills no longer swallow their errors: recording a
+ *    version whose data change did not happen is how books go quietly wrong.
+ *  - Steps are applied by what is MISSING from `schema_migrations`, not by
+ *    comparing with the highest version. The v10 step used to run on
+ *    `applied < CURRENT_VERSION`, which would have re-run it on every v10
+ *    database the moment the constant became 11.
+ *  - Before upgrading an existing file database, a copy is taken beside it
+ *    (`<file>.pre-v<N>-<time>.sqlite3`) with VACUUM INTO.
  */
 export function migrate(db: DB): void {
+  const found = schemaVersionOf(db);
+  if (found > CURRENT_SCHEMA_VERSION) throw new Error(newerSchemaMessage(found));
+
   db.exec(SCHEMA_SQL);
   db.exec(FTS_SQL);
 
-  const CURRENT_VERSION = 9;
-  const row = db
-    .prepare('SELECT MAX(version) AS v FROM schema_migrations')
-    .get() as { v: number | null };
-  const applied = row?.v ?? 0;
+  const done = new Set(
+    (db.prepare('SELECT version FROM schema_migrations').all() as { version: number }[]).map((r) => r.version),
+  );
+  const pending = MIGRATIONS.filter((m) => !done.has(m.version));
+  if (pending.length === 0) return;
 
-  if (applied < 1) {
-    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (?, ?)').run(
-      1,
-      'initial schema',
-    );
+  if (found > 0) copyBeforeUpgrade(db, found);
+
+  const record = db.prepare('INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (?, ?)');
+  for (const step of pending) {
+    db.transaction(() => {
+      step.run(db);
+      record.run(step.version, step.name);
+    })();
   }
+}
 
-  if (applied < 2) {
-    addPriceGroupColumns(db);
-    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (?, ?)').run(
-      2,
-      'price_groups: default_credit_limit, default_discount_pct, tax_exempt',
-    );
+/**
+ * A copy of the database as it was before an upgrade, next to the file.
+ * Best effort: the per-step transactions already keep each step atomic, so a
+ * failed copy (a full disk, a read-only folder) is reported, not fatal.
+ */
+function copyBeforeUpgrade(db: DB, fromVersion: number): void {
+  const file = db.name;
+  if (!file || file === ':memory:' || db.memory) return;
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const dest = `${file}.pre-v${fromVersion}-${stamp}.sqlite3`;
+  try {
+    db.prepare('VACUUM INTO ?').run(dest);
+  } catch (e) {
+    console.warn(`[migrate] could not copy the database before upgrading: ${e instanceof Error ? e.message : e}`);
   }
+}
 
-  if (applied < 3) {
-    addShipmentColumns(db);
-    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (?, ?)').run(
-      3,
-      'shipments table',
-    );
+/**
+ * v11.
+ *  - `account_payments` (created by SCHEMA_SQL): money paid on account — an
+ *    opening balance settled, or an advance — which used to have nowhere to go,
+ *    so the Receive Payment screen dropped it (audit R30).
+ *  - `cash_shifts.closed_by`: who counted and closed the drawer (R27).
+ *  - Indexes for the lookups that scanned whole tables (R65).
+ */
+function addV11(db: DB): void {
+  const shiftCols = new Set(
+    (db.prepare('PRAGMA table_info(cash_shifts)').all() as { name: string }[]).map((c) => c.name),
+  );
+  if (!shiftCols.has('closed_by')) db.exec('ALTER TABLE cash_shifts ADD COLUMN closed_by TEXT');
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_account_payments_party ON account_payments(party_type, party_id);
+    CREATE INDEX IF NOT EXISTS idx_account_payments_paid_at ON account_payments(paid_at);
+    CREATE INDEX IF NOT EXISTS idx_purchase_payments_purchase ON purchase_payments(purchase_id);
+    CREATE INDEX IF NOT EXISTS idx_sale_payments_paid_at ON sale_payments(paid_at);
+    CREATE INDEX IF NOT EXISTS idx_purchase_payments_paid_at ON purchase_payments(paid_at);
+    CREATE INDEX IF NOT EXISTS idx_sale_audit_sale ON sale_audit(sale_id);
+    CREATE INDEX IF NOT EXISTS idx_purchase_audit_purchase ON purchase_audit(purchase_id);
+    CREATE INDEX IF NOT EXISTS idx_sell_returns_customer ON sell_returns(customer_id);
+    CREATE INDEX IF NOT EXISTS idx_sell_return_lines_return ON sell_return_lines(return_id);
+    CREATE INDEX IF NOT EXISTS idx_purchase_returns_purchase ON purchase_returns(purchase_id);
+    CREATE INDEX IF NOT EXISTS idx_purchase_returns_supplier ON purchase_returns(supplier_id);
+    CREATE INDEX IF NOT EXISTS idx_purchase_returns_date ON purchase_returns(date);
+    CREATE INDEX IF NOT EXISTS idx_purchase_return_lines_return ON purchase_return_lines(return_id);
+    CREATE INDEX IF NOT EXISTS idx_stock_mov_ref_no ON stock_movements(ref_no);
+    CREATE INDEX IF NOT EXISTS idx_stock_mov_ref_id ON stock_movements(ref_id);
+    CREATE INDEX IF NOT EXISTS idx_stock_mov_branch_prod ON stock_movements(branch_id, product_id);
+    CREATE INDEX IF NOT EXISTS idx_transfer_lines_transfer ON stock_transfer_lines(transfer_id);
+    CREATE INDEX IF NOT EXISTS idx_adjustment_lines_adjustment ON stock_adjustment_lines(adjustment_id);
+    CREATE INDEX IF NOT EXISTS idx_stock_adjustments_date ON stock_adjustments(date);
+    CREATE INDEX IF NOT EXISTS idx_customers_created ON customers(created_at);
+    CREATE INDEX IF NOT EXISTS idx_sales_agent ON sales(agent_id);
+    CREATE INDEX IF NOT EXISTS idx_expenses_branch ON expenses(branch_id);
+    CREATE INDEX IF NOT EXISTS idx_activity_branch_at ON activity_log(branch_id, at);
+    CREATE INDEX IF NOT EXISTS idx_sales_status_date ON sales(status, date);
+    CREATE INDEX IF NOT EXISTS idx_sales_branch_date ON sales(branch_id, date);
+  `);
+}
+
+/**
+ * v10 — `purchases.credited`, the supplier-side twin of v8's `sales.credited`.
+ *
+ * A CreditAdjust purchase return is a credit note from the supplier: it writes
+ * down what the shop owes without any money moving. `supplierDue` always deducted
+ * those returns, but the BILL kept its original `due`, so the supplier's payable
+ * and the bills behind it disagreed — and `paySupplier`, which allocates against
+ * the bills, would pay the credited amount a second time.
+ *
+ * Additive with a default of 0, and back-filled from the returns already on
+ * record (only against bills that were not cancelled, the same scope
+ * `supplierDue` uses). Like v8, this is a migration that writes existing data,
+ * because not doing so would leave those bills permanently overpayable.
+ */
+function addPurchaseCreditedColumn(db: DB): void {
+  const cols = new Set(
+    (db.prepare('PRAGMA table_info(purchases)').all() as { name: string }[]).map((c) => c.name),
+  );
+  if (cols.has('credited')) return;
+  try {
+    db.exec('ALTER TABLE purchases ADD COLUMN credited REAL NOT NULL DEFAULT 0');
+  } catch {
+    // "duplicate column name" — already present; ignore to stay idempotent.
   }
+}
 
-  if (applied < 4) {
-    addCostHistoryColumns(db);
-    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (?, ?)').run(
-      4,
-      'product cost history: products.avg_cost / cost_updated_at + product_cost_history',
-    );
-  }
-
-  if (applied < 5) {
-    addProductArchiveColumn(db);
-    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (?, ?)').run(
-      5,
-      'products.archived_at (retire a product that has documents)',
-    );
-  }
-
-  if (applied < 6) {
-    clearEphemeralImageUrls(db);
-    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (?, ?)').run(
-      6,
-      'clear dead blob: image URLs (product photos + shop logo)',
-    );
-  }
-
-  if (applied < 7) {
-    addCostRetractionColumns(db);
-    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (?, ?)').run(
-      7,
-      'product_cost_history: ref_type/ref_id + retracted_at/retract_reason',
-    );
-  }
-
-  if (applied < 8) {
-    addSaleCreditedColumn(db);
-    backfillSaleCredited(db);
-    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (?, ?)').run(
-      8,
-      'sales.credited (CreditAdjust returns settle the invoice they came from)',
-    );
-  }
-
-  if (applied < CURRENT_VERSION) {
-    addPurchaseUnitFactor(db);
-    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (?, ?)').run(
-      9,
-      'purchase_lines.unit_factor (buy by the dozen, sell by the piece)',
-    );
+function backfillPurchaseCredited(db: DB): void {
+  // No try/catch: SCHEMA_SQL has already created purchase_returns, so a failure
+  // here is real and must stop the step (it used to be swallowed while the
+  // version was still recorded).
+  {
+    db.exec(`
+      UPDATE purchases SET credited = (
+        SELECT COALESCE(SUM(r.total), 0) FROM purchase_returns r
+         WHERE r.purchase_id = purchases.id AND r.refund_method = 'CreditAdjust'
+      )
+      WHERE status != 'cancelled' AND EXISTS (
+        SELECT 1 FROM purchase_returns r
+         WHERE r.purchase_id = purchases.id AND r.refund_method = 'CreditAdjust'
+      );
+      UPDATE purchases SET due = MAX(0, ROUND(total - paid - credited, 2))
+       WHERE status != 'cancelled' AND credited > 0;
+    `);
   }
 }
 
@@ -229,7 +376,9 @@ function addSaleCreditedColumn(db: DB): void {
  * numbers from the same source rows.
  */
 function backfillSaleCredited(db: DB): void {
-  try {
+  // No try/catch: SCHEMA_SQL has already created sell_returns (see the note on
+  // backfillPurchaseCredited).
+  {
     db.exec(`
       UPDATE sales SET credited = (
         SELECT COALESCE(SUM(r.total), 0) FROM sell_returns r
@@ -242,8 +391,6 @@ function backfillSaleCredited(db: DB): void {
       UPDATE sales SET due = MAX(0, ROUND(total - paid - credited, 2))
        WHERE status = 'final' AND credited > 0;
     `);
-  } catch {
-    // A database predating sell_returns has nothing to back-fill.
   }
 }
 

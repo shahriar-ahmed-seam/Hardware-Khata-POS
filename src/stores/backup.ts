@@ -35,7 +35,11 @@ export interface BackupConfig {
   lastUsbLabel?: string;
 }
 
-/** A plugged-in removable drive (pendrive, SD card, portable disk). */
+/**
+ * A plugged-in removable drive (pendrive, SD card, portable disk). Mirrors
+ * electron/drives.ts. `root` is 'E:\\' on Windows and the mount point on Linux;
+ * `letter` is empty on Linux.
+ */
 export interface UsbDrive {
   root: string;
   letter: string;
@@ -49,8 +53,8 @@ export interface UsbBackupResult {
   ok: boolean;
   error?: string;
   /**
-   * 'unavailable' means the app could NOT ask Windows which drives are removable
-   * (PowerShell blocked by policy, for instance) — which is a different fact from
+   * 'unavailable' means the app could NOT ask the system which drives are removable
+   * (PowerShell blocked by policy on Windows, lsblk missing on Linux) — a different fact from
    * "no pendrive is plugged in". The UI offers the pick-the-folder-yourself route
    * in that case instead of telling the owner there is no stick.
    */
@@ -71,6 +75,10 @@ export interface UsbProbe {
   drives: UsbDrive[];
   detection: 'ok' | 'unavailable';
   detail?: string;
+  /** Linux: removable filesystems plugged in but not mounted yet. */
+  unmounted?: number;
+  /** Linux: removable drives mounted read-only. */
+  readOnly?: number;
 }
 
 export interface SnapshotInfo {
@@ -108,7 +116,8 @@ export type ExportKind =
   | 'products'
   | 'customers'
   | 'suppliers'
-  | 'stock';
+  | 'stock'
+  | 'expenses';
 
 const EMPTY_CONFIG: BackupConfig = {
   folder: '',
@@ -148,7 +157,7 @@ interface State {
   exportCsv: (kind: ExportKind) => Promise<void>;
   /**
    * Removable drives currently plugged in, PLUS whether detection worked at all.
-   * An empty list with `detection: 'unavailable'` means we could not ask Windows —
+   * An empty list with `detection: 'unavailable'` means we could not ask the system —
    * never report that as "no pendrive found".
    */
   listUsbDrives: () => Promise<UsbProbe>;

@@ -31,6 +31,7 @@ import { CustomerForm } from '@/components/contacts/CustomerForm';
 import { ReceivePaymentModal } from '@/components/contacts/ReceivePaymentModal';
 import { SaleDetail } from '@/components/sales/SaleDetail';
 import { formatBDT, cn } from '@/lib/utils';
+import { useKhata } from '@/hooks/useKhata';
 
 type Tab = 'overview' | 'ledger' | 'sales' | 'returns' | 'notes';
 
@@ -99,10 +100,12 @@ export default function CustomerDetail() {
    * merged into the local copy (the Notes textarea is a controlled input, so it
    * needs this to stay editable).
    */
-  const savePatch = (patch: Partial<Customer>) => {
-    if (!customer) return;
-    update(customer.id, patch);
-    setFetched((prev) => (prev ? { ...prev, ...patch } : prev));
+  // Resolves true once saved; the local copy is only changed when it was.
+  const savePatch = async (patch: Partial<Customer>) => {
+    if (!customer) return false;
+    const ok = await update(customer.id, patch);
+    if (ok) setFetched((prev) => (prev ? { ...prev, ...patch } : prev));
+    return ok;
   };
 
   const [tab, setTab] = useState<Tab>('overview');
@@ -135,6 +138,9 @@ export default function CustomerDetail() {
             page,
             pageSize: 200,
             customerId: id,
+            // Sales that happened (and voids, which are part of the record) —
+            // not drafts or quotations, which never touched the khata.
+            statuses: ['final', 'void'],
           });
           rows.push(...res.rows);
           if (res.rows.length === 0 || rows.length >= res.total) break;
@@ -155,86 +161,19 @@ export default function CustomerDetail() {
     [returns, customer],
   );
 
-  // Build ledger
-  const ledger = useMemo(() => {
-    if (!customer) return [];
-    const entries: {
-      id: string;
-      date: string;
-      type: 'opening' | 'sale' | 'return' | 'payment';
-      reference: string;
-      debit: number;
-      credit: number;
-      saleId?: string;
-    }[] = [];
-
-    // `!== 0`, not `> 0`: a NEGATIVE opening balance is a customer advance, and
-    // `customerDue` counts it unconditionally — skipping it here made the ledger
-    // start from a different number than the stat.
-    if (customer.openingBalance && customer.openingBalance !== 0) {
-      entries.push({
-        id: 'open',
-        date: customer.joined,
-        type: 'opening',
-        reference: 'Opening balance',
-        debit: customer.openingBalance,
-        credit: 0,
-      });
-    }
-    customerSales
-      .filter((s) => s.status === 'final')
-      .forEach((s) => {
-        entries.push({
-          id: s.id + '-sale',
-          date: s.date,
-          type: 'sale',
-          reference: s.invoiceNo,
-          debit: s.total,
-          credit: 0,
-          saleId: s.id,
-        });
-        s.payments.forEach((p) => {
-          entries.push({
-            id: s.id + '-pay-' + p.id,
-            date: p.paidAt,
-            type: 'payment',
-            reference: `${s.invoiceNo} · ${p.method}`,
-            debit: 0,
-            credit: p.amount,
-            saleId: s.id,
-          });
-        });
-      });
-    /**
-     * ONLY CreditAdjust returns belong in the ledger.
-     *
-     * This credited EVERY return, so a customer refunded ৳6,000 in cash had that
-     * ৳6,000 taken off their running balance as well as out of the drawer — the
-     * ledger tab's closing balance then disagreed with the "Outstanding Due" stat
-     * three inches above it. A cash/bKash/card refund hands the money back; it
-     * does not reduce what they owe. `customerDue` in the backend has always
-     * scoped this to `refund_method = 'CreditAdjust'`; this is the same rule.
-     */
-    customerReturns
-      .filter((r) => r.refundMethod === 'CreditAdjust')
-      .forEach((r) => {
-        entries.push({
-          id: r.id,
-          date: r.date,
-          type: 'return',
-          reference: `${r.refNo} · against ${r.saleInvoiceNo}`,
-          debit: 0,
-          credit: r.total,
-        });
-      });
-
-    entries.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    let running = 0;
-    return entries.map((e) => {
-      running += e.debit - e.credit;
-      return { ...e, balance: running };
-    });
-  }, [customer, customerSales, customerReturns]);
+  // The khata, as the backend keeps it — its last balance IS the due above.
+  // It used to be rebuilt here from the loaded sales and returns, which left
+  // out held credits and money paid on account.
+  const khata = useKhata('customer', id, `${reloadKey}:${customer?.due ?? ''}:${customer?.totalPaid ?? ''}`);
+  const ledger = useMemo(
+    () =>
+      khata.rows.map((e) => ({
+        ...e,
+        // Rows that belong to an invoice open it when clicked.
+        saleId: e.type === 'sale' || e.type === 'payment' || e.type === 'return' ? e.docId : undefined,
+      })),
+    [khata.rows],
+  );
 
   if (!customer) {
     // Loading and "not found" are DISTINCT states: the fetch above resolves
@@ -310,7 +249,7 @@ export default function CustomerDetail() {
                 {(customer.tags ?? []).map((t) => (
                   <span
                     key={t}
-                    className="text-[10px] px-1.5 py-0 rounded bg-primary/10 text-primary font-medium"
+                    className="text-xs px-1.5 py-0 rounded bg-primary/10 text-primary font-medium"
                   >
                     {t}
                   </span>
@@ -350,11 +289,11 @@ export default function CustomerDetail() {
 
           {customer.creditLimit && customer.creditLimit > 0 && (
             <div className="mt-4">
-              <div className="flex items-center justify-between text-[11px] text-muted-foreground mb-1">
+              <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
                 <span>
                   Credit usage{overLimit && <span className="text-destructive font-medium ml-2">over limit!</span>}
                 </span>
-                <span className="font-mono tabular">
+                <span className="tabular">
                   {formatBDT(customer.due, { withSymbol: false })} / {formatBDT(customer.creditLimit, { withSymbol: false })} ({usagePct}%)
                 </span>
               </div>
@@ -386,12 +325,12 @@ export default function CustomerDetail() {
             >
               {t === 'sales' ? 'Sales History' : t}
               {t === 'sales' && customerSales.length > 0 && (
-                <span className="ml-1.5 text-[10px] tabular text-muted-foreground">
+                <span className="ml-1.5 text-xs tabular text-muted-foreground">
                   ({customerSales.length})
                 </span>
               )}
               {t === 'returns' && customerReturns.length > 0 && (
-                <span className="ml-1.5 text-[10px] tabular text-muted-foreground">
+                <span className="ml-1.5 text-xs tabular text-muted-foreground">
                   ({customerReturns.length})
                 </span>
               )}
@@ -416,7 +355,7 @@ export default function CustomerDetail() {
                       </div>
                       <span
                         className={cn(
-                          'font-mono tabular',
+                          'tabular',
                           e.debit > 0 ? 'text-destructive' : 'text-success',
                         )}
                       >
@@ -424,7 +363,7 @@ export default function CustomerDetail() {
                           ? '+' + formatBDT(e.debit, { withSymbol: false })
                           : '−' + formatBDT(e.credit, { withSymbol: false })}
                       </span>
-                      <span className="text-[11px] text-muted-foreground">
+                      <span className="text-xs text-muted-foreground">
                         {new Date(e.date).toLocaleDateString('en-GB')}
                       </span>
                     </div>
@@ -444,7 +383,7 @@ export default function CustomerDetail() {
         {tab === 'ledger' && (
           <Card className="overflow-hidden">
             <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50">
+              <thead className="text-xs text-muted-foreground bg-secondary/50">
                 <tr>
                   <th className="text-left px-4 py-2.5 font-medium">Date</th>
                   <th className="text-left px-2 py-2.5 font-medium">Type</th>
@@ -481,13 +420,13 @@ export default function CustomerDetail() {
                       </span>
                     </td>
                     <td className="px-2 py-2 text-xs">{e.reference}</td>
-                    <td className="px-2 py-2 text-right font-mono tabular text-destructive">
+                    <td className="px-2 py-2 text-right tabular text-destructive">
                       {e.debit > 0 ? formatBDT(e.debit, { withSymbol: false }) : '—'}
                     </td>
-                    <td className="px-2 py-2 text-right font-mono tabular text-success">
+                    <td className="px-2 py-2 text-right tabular text-success">
                       {e.credit > 0 ? formatBDT(e.credit, { withSymbol: false }) : '—'}
                     </td>
-                    <td className="px-4 py-2 text-right font-mono tabular font-semibold">
+                    <td className="px-4 py-2 text-right tabular font-semibold">
                       {formatBDT(e.balance, { withSymbol: false })}
                     </td>
                   </tr>
@@ -500,7 +439,7 @@ export default function CustomerDetail() {
         {tab === 'sales' && (
           <Card className="overflow-hidden">
             <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50">
+              <thead className="text-xs text-muted-foreground bg-secondary/50">
                 <tr>
                   <th className="text-left px-4 py-2.5 font-medium">Date</th>
                   <th className="text-left px-2 py-2.5 font-medium">Invoice</th>
@@ -531,13 +470,13 @@ export default function CustomerDetail() {
                           {new Date(s.date).toLocaleDateString('en-GB')}
                         </td>
                         <td className="px-2 py-2 font-mono text-xs">{s.invoiceNo}</td>
-                        <td className="px-2 py-2 text-right font-mono tabular font-semibold">
+                        <td className="px-2 py-2 text-right tabular font-semibold">
                           {formatBDT(s.total, { withSymbol: false })}
                         </td>
-                        <td className="px-2 py-2 text-right font-mono tabular text-success">
+                        <td className="px-2 py-2 text-right tabular text-success">
                           {formatBDT(s.paid, { withSymbol: false })}
                         </td>
-                        <td className="px-2 py-2 text-right font-mono tabular">
+                        <td className="px-2 py-2 text-right tabular">
                           {s.due > 0 ? (
                             <span className="text-destructive">
                               {formatBDT(s.due, { withSymbol: false })}
@@ -565,7 +504,7 @@ export default function CustomerDetail() {
         {tab === 'returns' && (
           <Card className="overflow-hidden">
             <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50">
+              <thead className="text-xs text-muted-foreground bg-secondary/50">
                 <tr>
                   <th className="text-left px-4 py-2.5 font-medium">Date</th>
                   <th className="text-left px-2 py-2.5 font-medium">Return #</th>
@@ -589,7 +528,7 @@ export default function CustomerDetail() {
                       </td>
                       <td className="px-2 py-2 font-mono text-xs">{r.refNo}</td>
                       <td className="px-2 py-2 font-mono text-xs">{r.saleInvoiceNo}</td>
-                      <td className="px-2 py-2 text-right font-mono tabular text-warning">
+                      <td className="px-2 py-2 text-right tabular text-warning">
                         {formatBDT(r.total)}
                       </td>
                       <td className="px-2 py-2 text-xs capitalize">{r.reason}</td>
@@ -624,15 +563,13 @@ export default function CustomerDetail() {
         <CustomerForm
           asDrawer
           initial={customer}
-          onSave={(c) => {
-            savePatch(c);
-            setEditOpen(false);
+          onSave={async (c) => {
+            if (await savePatch(c)) setEditOpen(false);
           }}
           onCancel={() => setEditOpen(false)}
           onDelete={async () => {
             if (await confirm({ title: `Delete "${customer.name}"?`, variant: 'destructive' })) {
-              remove(customer.id);
-              nav('/contacts/customers');
+              if (await remove(customer.id)) nav('/contacts/customers');
             }
           }}
         />
@@ -663,10 +600,10 @@ function Stat({
 }) {
   return (
     <div>
-      <div className="text-[10px] uppercase text-muted-foreground font-medium">{label}</div>
+      <div className="text-xs text-muted-foreground font-medium">{label}</div>
       <div
         className={cn(
-          'text-base font-bold mt-0.5 font-mono tabular',
+          'text-base font-bold mt-0.5 tabular',
           tone === 'success' && 'text-success',
           tone === 'destructive' && 'text-destructive',
         )}

@@ -125,7 +125,7 @@ export default function StockAdjustments() {
           ) : (
           <>
           <table className="w-full text-sm">
-            <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50">
+            <thead className="text-xs text-muted-foreground bg-secondary/50">
               <tr>
                 <th className="text-left px-4 py-2.5 font-medium">Ref</th>
                 <th className="text-left px-2 py-2.5 font-medium">Date</th>
@@ -156,7 +156,7 @@ export default function StockAdjustments() {
                     <td className="px-2 py-2.5 text-right tabular">{a.lines.length}</td>
                     <td
                       className={cn(
-                        'px-2 py-2.5 text-right font-mono tabular',
+                        'px-2 py-2.5 text-right tabular',
                         netQty < 0 ? 'text-destructive' : netQty > 0 ? 'text-success' : '',
                       )}
                     >
@@ -165,7 +165,7 @@ export default function StockAdjustments() {
                     </td>
                     <td
                       className={cn(
-                        'px-2 py-2.5 text-right font-mono tabular',
+                        'px-2 py-2.5 text-right tabular',
                         netValue < 0 ? 'text-destructive' : netValue > 0 ? 'text-success' : '',
                       )}
                     >

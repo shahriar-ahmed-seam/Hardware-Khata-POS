@@ -2,10 +2,46 @@ import type { DB } from '../db/connection.ts';
 import { round2 } from '../core/money.ts';
 import { resolveRange, type RangeInput } from '../core/dates.ts';
 import { stockLevels, stockValuation } from './stock.ts';
+import { HELD_ON_VOIDED_SALES, LIVE_CREDIT_SELL_RETURNS } from './ledger.ts';
 
 function bclause(branchId?: string, alias = ''): string {
   const col = alias ? `${alias}.branch_id` : 'branch_id';
   return branchId && branchId !== 'all' ? ` AND ${col} = @branchId` : '';
+}
+
+/**
+ * Sell returns in a date range that COUNT, and what they did to profit.
+ *
+ *  - `refunds`      — what was given back to customers (the return totals)
+ *  - `returnedCost` — what the returned goods cost the shop, read from the
+ *                     return's own stock movements (base units × the cost they
+ *                     came back at), so pack sizes cannot skew it
+ *
+ * Only returns against a FINAL sale, or entered with no sale, count. A return
+ * against a sale voided later is already undone by the void; counting it too
+ * took the refund off profit twice. (Returns on dead documents are refused now;
+ * this keeps older books right.) Shared by the P&L and the dashboard.
+ */
+export function sellReturnsEffect(db: DB, from: string, to: string, branchId?: string) {
+  const p = { from, to, branchId };
+  const live = `(r.sale_id IS NULL OR rs.status = 'final')`;
+  const refunds = db
+    .prepare(
+      `SELECT COALESCE(SUM(r.total),0) AS s
+         FROM sell_returns r LEFT JOIN sales rs ON rs.id = r.sale_id
+        WHERE ${live} AND r.date >= @from AND r.date <= @to ${bclause(branchId, 'r')}`,
+    )
+    .get(p) as { s: number };
+  const cost = db
+    .prepare(
+      `SELECT COALESCE(SUM(m.qty * m.unit_cost),0) AS v
+         FROM sell_returns r
+         LEFT JOIN sales rs ON rs.id = r.sale_id
+         JOIN stock_movements m ON m.ref_no = r.ref_no AND m.reason = 'sale_return'
+        WHERE ${live} AND r.date >= @from AND r.date <= @to ${bclause(branchId, 'r')}`,
+    )
+    .get(p) as { v: number };
+  return { refunds: round2(refunds.s), returnedCost: round2(cost.v) };
 }
 
 // ---------- Profit / Loss ----------
@@ -29,9 +65,7 @@ export function profitLoss(db: DB, rangeInput: RangeInput, branchId?: string) {
     )
     .get(p) as { total: number; tax: number };
 
-  const sellReturns = db
-    .prepare(`SELECT COALESCE(SUM(total),0) AS s FROM sell_returns WHERE date >= @from AND date <= @to ${bclause(branchId)}`)
-    .get(p) as { s: number };
+  const { refunds: sellReturnRefunds, returnedCost } = sellReturnsEffect(db, range.from, range.to, branchId);
   const purchaseReturns = db
     .prepare(`SELECT COALESCE(SUM(total),0) AS s FROM purchase_returns WHERE date >= @from AND date <= @to ${bclause(branchId)}`)
     .get(p) as { s: number };
@@ -46,12 +80,29 @@ export function profitLoss(db: DB, rangeInput: RangeInput, branchId?: string) {
     )
     .get(p) as { v: number };
 
-  const grossProfit = round2(sales.net - sales.cogs - sellReturns.s);
+  /**
+   * GROSS PROFIT = revenue − (cost of goods sold − cost of goods returned) − refunds.
+   *
+   * It used to be `revenue − COGS − refunds`: the refund came off, but the goods
+   * that came back onto the shelf were still counted as sold. Sell 10 at 100
+   * that cost 60, take 2 back for 200: the real gross profit is 800 − 480 = 320;
+   * the old formula said 200, understating it by the cost of the two returned.
+   */
+  const grossProfit = round2(sales.net - sales.cogs + returnedCost - sellReturnRefunds);
   const marginPct = sales.net > 0 ? round2((grossProfit / sales.net) * 100) : 0;
-  // adjustments.v is signed: negative = loss. Subtracting it (when negative) reduces profit.
-  const netProfit = round2(
-    grossProfit + sales.shipping + sales.other + purchaseReturns.s - expenses.s + adjustments.v,
-  );
+  /**
+   * NET PROFIT no longer adds supplier refunds.
+   *
+   * This P&L is COGS-based: a purchase is not an expense, it becomes one when the
+   * goods are SOLD. Sending goods back to the supplier takes them off the shelf
+   * at cost and brings the money back — no profit either way. Adding the refund
+   * counted it as income, so every purchase return inflated net profit by its
+   * full value. It is still reported (`moneyIn.purchaseReturns`) as cash that
+   * came back, but it is not part of profit.
+   *
+   * adjustments.v is signed: negative = loss, so adding it reduces profit.
+   */
+  const netProfit = round2(grossProfit + sales.shipping + sales.other - expenses.s + adjustments.v);
 
   return {
     range,
@@ -59,11 +110,15 @@ export function profitLoss(db: DB, rangeInput: RangeInput, branchId?: string) {
       totalSalesExclTaxDisc: round2(sales.net),
       sellShipping: round2(sales.shipping),
       sellOther: round2(sales.other),
+      /** Cash back from suppliers. Reported for information; NOT part of profit. */
       purchaseReturns: round2(purchaseReturns.s),
     },
     moneyOut: {
+      /** COGS as recorded on the sales (gross, before returns). */
       cogs: round2(sales.cogs),
-      sellReturns: round2(sellReturns.s),
+      /** The cost of goods customers brought back — comes OFF the cost of goods sold. */
+      returnedCost: round2(returnedCost),
+      sellReturns: round2(sellReturnRefunds),
       expenses: round2(expenses.s),
       stockAdjustment: round2(adjustments.v),
     },
@@ -152,10 +207,17 @@ export function sellPayments(db: DB, rangeInput: RangeInput, branchId?: string) 
   const range = resolveRange(rangeInput);
   const byMethod = db
     .prepare(
-      `SELECT p.method, COALESCE(SUM(p.amount),0) AS amount, COUNT(*) AS cnt
-         FROM sale_payments p JOIN sales s ON s.id = p.sale_id
-        WHERE s.status='final' AND p.paid_at >= @from AND p.paid_at <= @to ${bclause(branchId, 's')}
-        GROUP BY p.method ORDER BY amount DESC`,
+      // Money a customer paid ON ACCOUNT (opening balance, advance) is money
+      // received too, so it is counted with the invoice payments.
+      `SELECT method, COALESCE(SUM(amount),0) AS amount, COUNT(*) AS cnt FROM (
+         SELECT p.method AS method, p.amount AS amount
+           FROM sale_payments p JOIN sales s ON s.id = p.sale_id
+          WHERE s.status='final' AND p.paid_at >= @from AND p.paid_at <= @to ${bclause(branchId, 's')}
+         UNION ALL
+         SELECT a.method, a.amount FROM account_payments a
+          WHERE a.party_type = 'customer' AND a.paid_at >= @from AND a.paid_at <= @to ${bclause(branchId, 'a')}
+       )
+        GROUP BY method ORDER BY amount DESC`,
     )
     .all({ from: range.from, to: range.to, branchId }) as { method: string; amount: number; cnt: number }[];
   const total = round2(byMethod.reduce((a, m) => a + m.amount, 0));
@@ -166,10 +228,16 @@ export function purchasePayments(db: DB, rangeInput: RangeInput, branchId?: stri
   const range = resolveRange(rangeInput);
   const byMethod = db
     .prepare(
-      `SELECT p.method, COALESCE(SUM(p.amount),0) AS amount, COUNT(*) AS cnt
-         FROM purchase_payments p JOIN purchases pu ON pu.id = p.purchase_id
-        WHERE pu.status != 'cancelled' AND p.paid_at >= @from AND p.paid_at <= @to ${bclause(branchId, 'pu')}
-        GROUP BY p.method ORDER BY amount DESC`,
+      // Money paid to a supplier ON ACCOUNT counts as paid out too.
+      `SELECT method, COALESCE(SUM(amount),0) AS amount, COUNT(*) AS cnt FROM (
+         SELECT p.method AS method, p.amount AS amount
+           FROM purchase_payments p JOIN purchases pu ON pu.id = p.purchase_id
+          WHERE pu.status != 'cancelled' AND p.paid_at >= @from AND p.paid_at <= @to ${bclause(branchId, 'pu')}
+         UNION ALL
+         SELECT a.method, a.amount FROM account_payments a
+          WHERE a.party_type = 'supplier' AND a.paid_at >= @from AND a.paid_at <= @to ${bclause(branchId, 'a')}
+       )
+        GROUP BY method ORDER BY amount DESC`,
     )
     .all({ from: range.from, to: range.to, branchId }) as { method: string; amount: number; cnt: number }[];
   const total = round2(byMethod.reduce((a, m) => a + m.amount, 0));
@@ -208,15 +276,25 @@ export function sellPaymentRows(
   const cap = Math.min(Math.max(1, limit), 20000);
   const rows = db
     .prepare(
-      `SELECT p.id, p.sale_id, s.invoice_no, p.paid_at, p.method, p.amount, p.reference,
-              COALESCE(c.name, 'Walk-in Customer') AS customer_name,
-              COALESCE(u.name, p.by_user) AS user_name
-         FROM sale_payments p
-         JOIN sales s ON s.id = p.sale_id
-         LEFT JOIN customers c ON c.id = s.customer_id
-         LEFT JOIN users u ON u.id = p.by_user
-        WHERE s.status='final' AND p.paid_at >= @from AND p.paid_at <= @to ${bclause(branchId, 's')}
-        ORDER BY p.paid_at DESC, p.rowid DESC
+      `SELECT * FROM (
+         SELECT p.id AS id, p.sale_id AS sale_id, s.invoice_no AS invoice_no, p.paid_at AS paid_at,
+                p.method AS method, p.amount AS amount, p.reference AS reference,
+                COALESCE(c.name, 'Walk-in Customer') AS customer_name,
+                COALESCE(u.name, p.by_user) AS user_name
+           FROM sale_payments p
+           JOIN sales s ON s.id = p.sale_id
+           LEFT JOIN customers c ON c.id = s.customer_id
+           LEFT JOIN users u ON u.id = p.by_user
+          WHERE s.status='final' AND p.paid_at >= @from AND p.paid_at <= @to ${bclause(branchId, 's')}
+         UNION ALL
+         SELECT a.id, '', COALESCE(a.ref_no, 'On account'), a.paid_at, a.method, a.amount, a.reference,
+                COALESCE(c.name, '—'), COALESCE(u.name, a.by_user)
+           FROM account_payments a
+           LEFT JOIN customers c ON c.id = a.party_id
+           LEFT JOIN users u ON u.id = a.by_user
+          WHERE a.party_type = 'customer' AND a.paid_at >= @from AND a.paid_at <= @to ${bclause(branchId, 'a')}
+       )
+        ORDER BY paid_at DESC, id DESC
         LIMIT @cap`,
     )
     .all({ from: range.from, to: range.to, branchId, cap }) as {
@@ -233,8 +311,11 @@ export function sellPaymentRows(
   const counted = (
     db
       .prepare(
-        `SELECT COUNT(*) AS n FROM sale_payments p JOIN sales s ON s.id = p.sale_id
-          WHERE s.status='final' AND p.paid_at >= @from AND p.paid_at <= @to ${bclause(branchId, 's')}`,
+        `SELECT
+           (SELECT COUNT(*) FROM sale_payments p JOIN sales s ON s.id = p.sale_id
+             WHERE s.status='final' AND p.paid_at >= @from AND p.paid_at <= @to ${bclause(branchId, 's')})
+         + (SELECT COUNT(*) FROM account_payments a
+             WHERE a.party_type = 'customer' AND a.paid_at >= @from AND a.paid_at <= @to ${bclause(branchId, 'a')}) AS n`,
       )
       .get({ from: range.from, to: range.to, branchId }) as { n: number }
   ).n;
@@ -261,15 +342,25 @@ export function purchasePaymentRows(
   const cap = Math.min(Math.max(1, limit), 20000);
   const rows = db
     .prepare(
-      `SELECT p.id, p.purchase_id, pu.ref_no, p.paid_at, p.method, p.amount, p.reference,
-              COALESCE(sup.name, '—') AS supplier_name,
-              COALESCE(u.name, p.by_user) AS user_name
-         FROM purchase_payments p
-         JOIN purchases pu ON pu.id = p.purchase_id
-         LEFT JOIN suppliers sup ON sup.id = pu.supplier_id
-         LEFT JOIN users u ON u.id = p.by_user
-        WHERE pu.status != 'cancelled' AND p.paid_at >= @from AND p.paid_at <= @to ${bclause(branchId, 'pu')}
-        ORDER BY p.paid_at DESC, p.rowid DESC
+      `SELECT * FROM (
+         SELECT p.id AS id, p.purchase_id AS purchase_id, pu.ref_no AS ref_no, p.paid_at AS paid_at,
+                p.method AS method, p.amount AS amount, p.reference AS reference,
+                COALESCE(sup.name, '—') AS supplier_name,
+                COALESCE(u.name, p.by_user) AS user_name
+           FROM purchase_payments p
+           JOIN purchases pu ON pu.id = p.purchase_id
+           LEFT JOIN suppliers sup ON sup.id = pu.supplier_id
+           LEFT JOIN users u ON u.id = p.by_user
+          WHERE pu.status != 'cancelled' AND p.paid_at >= @from AND p.paid_at <= @to ${bclause(branchId, 'pu')}
+         UNION ALL
+         SELECT a.id, '', COALESCE(a.ref_no, 'On account'), a.paid_at, a.method, a.amount, a.reference,
+                COALESCE(sup.name, '—'), COALESCE(u.name, a.by_user)
+           FROM account_payments a
+           LEFT JOIN suppliers sup ON sup.id = a.party_id
+           LEFT JOIN users u ON u.id = a.by_user
+          WHERE a.party_type = 'supplier' AND a.paid_at >= @from AND a.paid_at <= @to ${bclause(branchId, 'a')}
+       )
+        ORDER BY paid_at DESC, id DESC
         LIMIT @cap`,
     )
     .all({ from: range.from, to: range.to, branchId, cap }) as {
@@ -286,8 +377,11 @@ export function purchasePaymentRows(
   const counted = (
     db
       .prepare(
-        `SELECT COUNT(*) AS n FROM purchase_payments p JOIN purchases pu ON pu.id = p.purchase_id
-          WHERE pu.status != 'cancelled' AND p.paid_at >= @from AND p.paid_at <= @to ${bclause(branchId, 'pu')}`,
+        `SELECT
+           (SELECT COUNT(*) FROM purchase_payments p JOIN purchases pu ON pu.id = p.purchase_id
+             WHERE pu.status != 'cancelled' AND p.paid_at >= @from AND p.paid_at <= @to ${bclause(branchId, 'pu')})
+         + (SELECT COUNT(*) FROM account_payments a
+             WHERE a.party_type = 'supplier' AND a.paid_at >= @from AND a.paid_at <= @to ${bclause(branchId, 'a')}) AS n`,
       )
       .get({ from: range.from, to: range.to, branchId }) as { n: number }
   ).n;
@@ -443,7 +537,8 @@ function customerGroup(db: DB, rangeInput: RangeInput, branchId?: string) {
 
   // Head-count + derived due per group, in ONE pass over the contact book.
   // The per-customer expression is exactly `customerDue()` in ledger.ts:
-  //   opening_balance + final sales - sale payments - CreditAdjust returns.
+  //   opening_balance + final sales - sale payments - CreditAdjust returns
+  //   - non-cash money held on voided sales - payments on account (v11).
   // Each customer's due is ROUNDed to 2dp BEFORE summing so the group total
   // equals the sum of the dues shown on the Customers screen to the cent.
   const balances = db
@@ -462,15 +557,25 @@ function customerGroup(db: DB, rangeInput: RangeInput, branchId?: string) {
           WHERE sa.status='final' AND sa.customer_id IS NOT NULL GROUP BY sa.customer_id
        ),
        ret_tot AS (
-         SELECT customer_id AS cid, SUM(total) AS t FROM sell_returns
-          WHERE refund_method='CreditAdjust' AND customer_id IS NOT NULL GROUP BY customer_id
+         SELECT r.customer_id AS cid, SUM(r.total) AS t ${LIVE_CREDIT_SELL_RETURNS}
+            AND r.customer_id IS NOT NULL GROUP BY r.customer_id
+       ),
+       held_tot AS (
+         SELECT sa.customer_id AS cid, SUM(p.amount) AS t ${HELD_ON_VOIDED_SALES}
+            AND sa.customer_id IS NOT NULL GROUP BY sa.customer_id
+       ),
+       acct_tot AS (
+         SELECT party_id AS cid, SUM(amount) AS t FROM account_payments
+          WHERE party_type = 'customer' GROUP BY party_id
        )
        SELECT c.grp AS grp, COUNT(*) AS customers,
-              COALESCE(SUM(ROUND(c.opening + COALESCE(s.t,0) - COALESCE(p.t,0) - COALESCE(r.t,0), 2)),0) AS due
+              COALESCE(SUM(ROUND(c.opening + COALESCE(s.t,0) - COALESCE(p.t,0) - COALESCE(r.t,0) - COALESCE(h.t,0) - COALESCE(a.t,0), 2)),0) AS due
          FROM cust c
          LEFT JOIN sale_tot s ON s.cid = c.id
          LEFT JOIN pay_tot  p ON p.cid = c.id
          LEFT JOIN ret_tot  r ON r.cid = c.id
+         LEFT JOIN held_tot h ON h.cid = c.id
+         LEFT JOIN acct_tot a ON a.cid = c.id
         GROUP BY c.grp`,
     )
     .all() as { grp: string; customers: number; due: number }[];

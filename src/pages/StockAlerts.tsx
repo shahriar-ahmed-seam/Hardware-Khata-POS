@@ -58,16 +58,14 @@ export default function StockAlerts() {
   // Backend wiring: `dashboard.lowStock` returns both low + out items (stock <=
   // reorder_level). We join category/brand/unit/image client-side via
   // products.list. Mirrors StockAlertReportPage.tsx.
+  // Whole-shop stock (no branchId). This pinned the demo fixture's 'br_mp',
+  // which showed no alerts on a shop whose branch has another id.
   const { data: beLowStock, loading, error } = useReport<BackendLowStock[]>(
     'dashboard.lowStock',
-    { branchId: 'br_mp', limit: 500 },
+    { limit: 500 },
     [],
   );
-  const { data: beProducts } = useReport<BackendProductRow[]>(
-    'products.list',
-    { branchId: 'br_mp' },
-    [],
-  );
+  const { data: beProducts } = useReport<BackendProductRow[]>('products.list', {}, []);
 
   const allItems: AlertItem[] = useMemo(() => {
     if (!beLowStock) return [];
@@ -149,7 +147,7 @@ export default function StockAlerts() {
           <>
             {selected.size > 0 && (
               <span className="text-xs text-muted-foreground">
-                Estimated cost: <span className="font-mono tabular">{formatBDT(totalSelectedValue)}</span>
+                Estimated cost: <span className="tabular">{formatBDT(totalSelectedValue)}</span>
               </span>
             )}
             <Button
@@ -183,7 +181,7 @@ export default function StockAlerts() {
 
         <Card className="overflow-hidden">
           <table className="w-full text-sm">
-            <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50">
+            <thead className="text-xs text-muted-foreground bg-secondary/50">
               <tr>
                 <th className="w-10 px-3 py-2.5">
                   <input type="checkbox" checked={allSelected} onChange={toggleAll} />
@@ -218,7 +216,7 @@ export default function StockAlerts() {
                         <ProductImage url={p.image} categoryId={p.categoryId} size={32} />
                         <div>
                           <div className="font-medium">{p.name}</div>
-                          <div className="text-[11px] text-muted-foreground font-mono">{p.sku}</div>
+                          <div className="text-xs text-muted-foreground font-mono">{p.sku}</div>
                         </div>
                       </div>
                     </td>
@@ -232,10 +230,10 @@ export default function StockAlerts() {
                     <td className="px-2 py-2.5 text-right text-muted-foreground tabular">
                       {p.reorderLevel}
                     </td>
-                    <td className="px-2 py-2.5 text-right font-mono tabular font-semibold text-primary">
+                    <td className="px-2 py-2.5 text-right tabular font-semibold text-primary">
                       {formatNumber(sug)} {p.unit}
                     </td>
-                    <td className="px-4 py-2.5 text-right font-mono tabular">
+                    <td className="px-4 py-2.5 text-right tabular">
                       {formatBDT(sug * p.cost)}
                     </td>
                   </tr>

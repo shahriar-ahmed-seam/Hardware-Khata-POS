@@ -17,7 +17,8 @@ export type DocType =
   | 'shipment'
   | 'transfer'
   | 'adjustment'
-  | 'expense';
+  | 'expense'
+  | 'account_payment';
 
 // Fallback prefixes when a scheme row doesn't exist for a docType.
 const FALLBACK: Record<DocType, { prefix: string; pad: number }> = {
@@ -32,6 +33,8 @@ const FALLBACK: Record<DocType, { prefix: string; pad: number }> = {
   transfer: { prefix: 'TRF', pad: 4 },
   adjustment: { prefix: 'ADJ', pad: 4 },
   expense: { prefix: 'EXP', pad: 4 },
+  // Money paid on account (opening balance / advance), customer or supplier.
+  account_payment: { prefix: 'ACP', pad: 4 },
 };
 
 export function nextRef(db: DB, docType: DocType, date = new Date()): string {

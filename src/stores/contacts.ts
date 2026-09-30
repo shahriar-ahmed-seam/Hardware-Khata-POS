@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { currentUserId } from '@/lib/actor';
 import { api } from '@/lib/api';
 import { toast } from '@/stores/toast';
 import {
@@ -8,6 +9,8 @@ import {
   type BackendSupplier,
 } from '@/hooks/contactAdapter';
 import { usePurchases } from './purchases';
+import { useSales } from './sales';
+import { useCashRegister } from './cashRegister';
 import { todayLocalDateInput } from '@/lib/datetime';
 import type { Customer, Supplier } from '@/types/domain';
 
@@ -25,7 +28,6 @@ import type { Customer, Supplier } from '@/types/domain';
  * truncate it to one page, so pickers must read `options` + call `loadOptions()`.
  */
 
-const CURRENT_USER = 'u_admin';
 
 /** Minimal shape for dropdowns — id + display name only. */
 export interface ContactOption {
@@ -39,6 +41,23 @@ interface PageResponse<T> {
   total: number;
   page: number;
   pageSize: number;
+}
+
+/** What `customers.pay` / `suppliers.pay` return (backend/services/accounts.ts). */
+export interface AccountPaymentResult {
+  amount: number;
+  toDocuments: { id: string; ref: string; amount: number }[];
+  allocated: number;
+  toOpening: number;
+  advance: number;
+  accountPaymentId: string | null;
+  refNo: string | null;
+}
+
+/** Picked mode: how much of the payment goes to one invoice or bill. */
+export interface AccountAllocation {
+  docId: string;
+  amount: number;
 }
 
 // ---- Customer ledger entry ----
@@ -81,15 +100,19 @@ interface CustomersState {
   /** Load the unpaged id+name list for dropdowns. */
   loadOptions: () => Promise<void>;
   hydrate: () => Promise<void>;
-  add: (data: Omit<Customer, 'id'>) => Customer;
-  update: (id: string, patch: Partial<Customer>) => void;
-  remove: (id: string) => void;
+  /** Resolves the REAL backend id, or null when refused. */
+  add: (data: Omit<Customer, 'id'>) => Promise<string | null>;
+  /** Resolves true once the backend accepted it. */
+  update: (id: string, patch: Partial<Customer>) => Promise<boolean>;
+  remove: (id: string) => Promise<boolean>;
+  /** Resolves where the money went, or null when refused (a toast says why). */
   receivePayment: (
     customerId: string,
     amount: number,
     method: 'Cash' | 'bKash' | 'Nagad' | 'Card' | 'Bank',
     reference?: string,
-  ) => void;
+    allocations?: AccountAllocation[],
+  ) => Promise<AccountPaymentResult | null>;
 }
 
 export const useCustomers = create<CustomersState>((set, get) => ({
@@ -147,68 +170,61 @@ export const useCustomers = create<CustomersState>((set, get) => ({
     await get().loadPage();
   },
 
-  add: (data) => {
-    // Optimistic local object — also used as the synchronous return value so
-    // existing callers (CustomerPicker inline add) keep working.
-    const item: Customer = {
-      id: 'cu_' + Date.now(),
-      ...data,
-      due: data.due ?? data.openingBalance ?? 0,
-      totalPurchase: data.totalPurchase ?? 0,
-      totalPaid: data.totalPaid ?? 0,
-      // The shop's calendar day, not the UTC one.
-      joined: data.joined ?? todayLocalDateInput(),
-    };
-    // NOTE: the real backend id only arrives after rehydrate, so we cannot
-    // return it synchronously. Consumers needing the real id should re-select
-    // the customer (by phone/name) after hydrate completes.
-    void api('customers.create', {
-      name: data.name,
-      phone: data.phone,
-      altPhone: data.altPhone,
-      email: data.email,
-      address: data.address,
-      group: data.group,
-      openingBalance: data.openingBalance,
-      creditLimit: data.creditLimit,
-      dob: data.dob,
-      tags: data.tags,
-      notes: data.notes,
-      joined: data.joined,
-      userId: CURRENT_USER,
-    })
-      .then(() => get().hydrate())
-      .catch((e: unknown) => {
-        toast.error(e instanceof Error ? e.message : 'Failed to save customer');
-        void get().hydrate();
-      });
-    return item;
+  // Every write waits for the backend. `add` used to return a made-up
+  // 'cu_' + Date.now() id at once, which is not a row in the database.
+  add: async (data) => {
+    const res = await settleContact(
+      get,
+      api<{ id: string }>('customers.create', {
+        name: data.name,
+        phone: data.phone,
+        altPhone: data.altPhone,
+        email: data.email,
+        address: data.address,
+        group: data.group,
+        openingBalance: data.openingBalance,
+        creditLimit: data.creditLimit,
+        dob: data.dob,
+        tags: data.tags,
+        notes: data.notes,
+        // The shop's calendar day, not the UTC one.
+        joined: data.joined ?? todayLocalDateInput(),
+        userId: currentUserId(),
+      }),
+      'Failed to save customer',
+    );
+    return res?.id ?? null;
   },
 
-  update: (id, patch) => {
-    void api('customers.update', { id, patch })
-      .then(() => get().hydrate())
-      .catch((e: unknown) => {
-        toast.error(e instanceof Error ? e.message : 'Failed to update customer');
-        void get().hydrate();
-      });
-  },
+  update: async (id, patch) =>
+    !!(await settleContact(get, api('customers.update', { id, patch }), 'Failed to update customer')),
 
-  remove: (id) => {
-    void api('customers.delete', { id })
-      .then(() => get().hydrate())
-      .catch((e: unknown) => {
-        toast.error(e instanceof Error ? e.message : 'Failed to delete customer');
-        void get().hydrate();
-      });
-  },
+  remove: async (id) =>
+    !!(await settleContact(get, api('customers.delete', { id }), 'Failed to delete customer')),
 
-  receivePayment: () => {
-    // CRITICAL: this is REHYDRATE-ONLY. ReceivePaymentModal already calls
-    // useSales().addPayment per invoice, which persists the real payment via
-    // sales.addPayment; the customer due is then DERIVED in ledger.ts. Calling any
-    // payment API here would double-count. So we only refresh the derived dues.
-    void get().hydrate();
+  // ONE backend call places the whole payment (services/accounts.ts): the
+  // opening balance, then the oldest invoices (or the picked ones), and the rest
+  // as an advance — in one transaction. The screen used to loop one un-awaited
+  // sales.addPayment per invoice and save nothing for the rest.
+  receivePayment: async (customerId, amount, method, reference, allocations) => {
+    try {
+      const res = await api<AccountPaymentResult>('customers.pay', {
+        partyId: customerId,
+        amount,
+        method,
+        reference,
+        allocations,
+        userId: currentUserId(),
+      });
+      void get().hydrate();
+      void useSales.getState().hydrate();
+      if (method === 'Cash') void useCashRegister.getState().hydrate();
+      return res;
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to record the payment');
+      void get().hydrate();
+      return null;
+    }
   },
 }));
 
@@ -239,15 +255,19 @@ interface SuppliersState {
   /** Load the unpaged id+name list for dropdowns. */
   loadOptions: () => Promise<void>;
   hydrate: () => Promise<void>;
-  add: (data: Omit<Supplier, 'id'>) => Supplier;
-  update: (id: string, patch: Partial<Supplier>) => void;
-  remove: (id: string) => void;
+  /** Resolves the REAL backend id, or null when refused. */
+  add: (data: Omit<Supplier, 'id'>) => Promise<string | null>;
+  /** Resolves true once the backend accepted it. */
+  update: (id: string, patch: Partial<Supplier>) => Promise<boolean>;
+  remove: (id: string) => Promise<boolean>;
+  /** Resolves where the money went, or null when refused (a toast says why). */
   paySupplier: (
     supplierId: string,
     amount: number,
-    method?: 'Cash' | 'bKash' | 'Nagad' | 'Card' | 'Bank',
+    method?: 'Cash' | 'bKash' | 'Nagad' | 'Card' | 'Bank' | 'Cheque',
     reference?: string,
-  ) => void;
+    allocations?: AccountAllocation[],
+  ) => Promise<AccountPaymentResult | null>;
 }
 
 export const useSuppliers = create<SuppliersState>((set, get) => ({
@@ -297,81 +317,82 @@ export const useSuppliers = create<SuppliersState>((set, get) => ({
     await get().loadPage();
   },
 
-  add: (data) => {
-    const item: Supplier = {
-      id: 'sp_' + Date.now(),
-      ...data,
-      due: data.due ?? data.openingBalance ?? 0,
-      totalPurchase: data.totalPurchase ?? 0,
-      totalPaid: data.totalPaid ?? 0,
-    };
-    // NOTE: the real backend id only arrives after rehydrate. NewSupplierModal's
-    // onCreated(id) currently gets this optimistic id; threading the real id
-    // back into the AddPurchase create-form is a follow-up (see deferrals).
-    void api('suppliers.create', {
-      name: data.name,
-      company: data.company,
-      contactPerson: data.contactPerson,
-      phone: data.phone,
-      altPhone: data.altPhone,
-      email: data.email,
-      address: data.address,
-      taxId: data.taxId,
-      bankAccount: data.bankAccount,
-      leadTimeDays: data.leadTimeDays,
-      paymentTerms: data.paymentTerms,
-      openingBalance: data.openingBalance,
-      tags: data.tags,
-      notes: data.notes,
-      userId: CURRENT_USER,
-    })
-      .then(() => get().hydrate())
-      .catch((e: unknown) => {
-        toast.error(e instanceof Error ? e.message : 'Failed to save supplier');
-        void get().hydrate();
-      });
-    return item;
+  // Every write waits for the backend. `add` used to return 'sp_' + Date.now(),
+  // which NewSupplierModal handed to purchases.create as the supplier id.
+  add: async (data) => {
+    const res = await settleContact(
+      get,
+      api<{ id: string }>('suppliers.create', {
+        name: data.name,
+        company: data.company,
+        contactPerson: data.contactPerson,
+        phone: data.phone,
+        altPhone: data.altPhone,
+        email: data.email,
+        address: data.address,
+        taxId: data.taxId,
+        bankAccount: data.bankAccount,
+        leadTimeDays: data.leadTimeDays,
+        paymentTerms: data.paymentTerms,
+        openingBalance: data.openingBalance,
+        tags: data.tags,
+        notes: data.notes,
+        userId: currentUserId(),
+      }),
+      'Failed to save supplier',
+    );
+    if (res) void get().loadOptions();
+    return res?.id ?? null;
   },
 
-  update: (id, patch) => {
-    void api('suppliers.update', { id, patch })
-      .then(() => get().hydrate())
-      .catch((e: unknown) => {
-        toast.error(e instanceof Error ? e.message : 'Failed to update supplier');
-        void get().hydrate();
-      });
-  },
+  update: async (id, patch) =>
+    !!(await settleContact(get, api('suppliers.update', { id, patch }), 'Failed to update supplier')),
 
-  remove: (id) => {
-    void api('suppliers.delete', { id })
-      .then(() => get().hydrate())
-      .catch((e: unknown) => {
-        toast.error(e instanceof Error ? e.message : 'Failed to delete supplier');
-        void get().hydrate();
-      });
-  },
+  remove: async (id) =>
+    !!(await settleContact(get, api('suppliers.delete', { id }), 'Failed to delete supplier')),
 
-  paySupplier: (supplierId, amount, method = 'Cash', reference) => {
-    // PaySupplierModal does NOT allocate itself, so this is the real persistence
-    // path (unlike the customer side). Auto-allocate oldest-first on the backend,
-    // then rehydrate BOTH suppliers (derived due) and purchases (so the Purchases
-    // list reflects the new per-bill payments).
-    void api('suppliers.pay', {
-      supplierId,
-      amount,
-      method,
-      reference,
-      userId: CURRENT_USER,
-      branchId: 'br_mp',
-    })
-      .then(() => {
-        void get().hydrate();
-        void usePurchases.getState().hydrate();
-      })
-      .catch((e: unknown) => {
-        toast.error(e instanceof Error ? e.message : 'Failed to pay supplier');
-        void get().hydrate();
-        void usePurchases.getState().hydrate();
+  // One backend call, one transaction: the opening balance, then the oldest
+  // bills (or the picked ones), and the rest kept as an advance with the supplier.
+  paySupplier: async (supplierId, amount, method = 'Cash', reference, allocations) => {
+    try {
+      const res = await api<AccountPaymentResult>('suppliers.pay', {
+        supplierId,
+        amount,
+        method,
+        reference,
+        allocations,
+        userId: currentUserId(),
+        // No branchId: the backend uses the shop's default branch.
       });
+      void get().hydrate();
+      void usePurchases.getState().hydrate();
+      if (method === 'Cash') void useCashRegister.getState().hydrate();
+      return res;
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to pay supplier');
+      void get().hydrate();
+      void usePurchases.getState().hydrate();
+      return null;
+    }
   },
 }));
+
+/**
+ * Wait for a contact write, then re-read the page either way. Resolves the
+ * backend's answer (or null when it refused, after showing why).
+ */
+async function settleContact<T>(
+  get: () => { hydrate: () => Promise<void> },
+  write: Promise<T>,
+  failure: string,
+): Promise<T | null> {
+  try {
+    const res = await write;
+    void get().hydrate();
+    return res ?? ({} as T);
+  } catch (e: unknown) {
+    toast.error(e instanceof Error ? e.message : failure);
+    void get().hydrate();
+    return null;
+  }
+}

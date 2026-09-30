@@ -12,6 +12,7 @@ import * as dashboard from './services/dashboard.ts';
 import * as reports from './services/reports.ts';
 import * as catalog from './services/catalog.ts';
 import * as contacts from './services/contacts.ts';
+import * as accounts from './services/accounts.ts';
 import * as settings from './services/settings.ts';
 import * as auth from './services/auth.ts';
 import * as setup from './services/setup.ts';
@@ -50,6 +51,12 @@ export function buildApi(): Record<string, ApiHandler> {
     'purchases.get': (db, p) => q.getPurchase(db, p.id),
     'sellReturns.list': (db, p) => q.listSellReturns(db, p ?? {}),
     'purchaseReturns.list': (db) => q.listPurchaseReturns(db),
+    'sellReturns.get': (db, p) => q.getSellReturn(db, p.id),
+    'purchaseReturns.get': (db, p) => q.getPurchaseReturn(db, p.id),
+    // How much of each item has already come back on one document, so the
+    // return screens offer only what is still returnable.
+    'sellReturns.getReturnedQty': (db, p) => returns.returnedOnSale(db, p.saleId),
+    'purchaseReturns.getReturnedQty': (db, p) => returns.returnedOnPurchase(db, p.purchaseId),
     'shipments.list': (db, p) => q.listShipments(db, p ?? {}),
     'customers.list': (db, p) => q.listCustomers(db, p ?? {}),
     'customers.get': (db, p) => q.getCustomer(db, p.id),
@@ -80,11 +87,19 @@ export function buildApi(): Record<string, ApiHandler> {
     // cash and re-applies the corrected figures in one transaction, keeping the
     // invoice number — see updateSale. Gated behind 'sales.edit' (Admin).
     'sales.update': (db, p) => sales.updateSale(db, p.saleId, p.input),
+    // A draft is finalised in place with a real invoice number; a quotation is
+    // kept and a new final sale is made from it. See convertSale.
+    'sales.convert': (db, p) => sales.convertSale(db, p.saleId, p.input),
     'sales.addPayment': (db, p) => sales.addSalePayment(db, p.saleId, p.payment, p.userId),
     'sales.void': (db, p) => sales.voidSale(db, p.saleId, p.userId, p.reason),
     'sales.delete': (db, p) => sales.deleteSale(db, p.saleId),
     'purchases.create': (db, p) => purchases.createPurchase(db, p),
     'purchases.addPayment': (db, p) => purchases.addPurchasePayment(db, p.purchaseId, p.payment, p.userId),
+    // Correct a purchase in place (admin): lines, prices, supplier, status.
+    // Payments are kept; stock and buying prices are re-applied — see updatePurchase.
+    'purchases.update': (db, p) => purchases.updatePurchase(db, p.purchaseId, p.input),
+    // An ordered / in-transit bill arrives: its goods go in, as entered.
+    'purchases.receive': (db, p) => purchases.receivePurchase(db, p.purchaseId, p.userId),
     'purchases.cancel': (db, p) => purchases.cancelPurchase(db, p.purchaseId, p.userId, p.reason),
     'purchases.delete': (db, p) => purchases.deletePurchase(db, p.purchaseId),
     'sellReturns.create': (db, p) => returns.createSellReturn(db, p),
@@ -94,6 +109,9 @@ export function buildApi(): Record<string, ApiHandler> {
     'shipments.delete': (db, p) => shipments.deleteShipment(db, p.id),
     'transfers.create': (db, p) => stockOps.createTransfer(db, p),
     'transfers.receive': (db, p) => stockOps.receiveTransfer(db, p.transferId, p.received, p.userId, p.note),
+    // Send a not-yet-received transfer's goods back to the source (appended
+    // movements, nothing deleted). A received transfer is refused.
+    'transfers.cancel': (db, p) => stockOps.cancelTransfer(db, p.transferId, p.userId, p.reason),
     'adjustments.create': (db, p) => stockOps.createAdjustment(db, p),
     'expenses.create': (db, p) => expenses.createExpense(db, p),
     'expenses.update': (db, p) => expenses.updateExpense(db, p.id, p.patch),
@@ -104,7 +122,11 @@ export function buildApi(): Record<string, ApiHandler> {
     'expenseCategories.delete': (db, p) => expenses.deleteExpenseCategory(db, p.id),
     'cash.openShift': (db, p) => cash.openShift(db, p),
     'cash.closeShift': (db, p) => cash.closeShift(db, p),
-    'cash.move': (db, p) => cash.recordCashMovement(db, p),
+    // Cash In / Cash Out typed at the register. The drawer is resolved in the
+    // backend (it opens itself if none is open); the screen's shiftId is ignored.
+    'cash.move': (db, p) => cash.manualCashMove(db, p),
+    // What the next drawer will start with — the last shift's float or count.
+    'cash.carriedForward': (db, p) => cash.carriedForwardCash(db, p.branchId),
     'cash.openShiftFor': (db, p) => cash.getOpenShift(db, p.branchId),
     'cash.shiftTotals': (db, p) => cash.shiftTotals(db, p.shiftId),
 
@@ -147,6 +169,9 @@ export function buildApi(): Record<string, ApiHandler> {
     'customers.create': (db, p) => contacts.createCustomer(db, p),
     'customers.update': (db, p) => contacts.updateCustomer(db, p.id, p.patch),
     'customers.delete': (db, p) => contacts.deleteCustomer(db, p.id),
+    // One transaction: opening balance, then oldest invoices, the rest as an
+    // advance (services/accounts.ts). Replaces the screen's per-invoice loop.
+    'customers.pay': (db, p) => accounts.receiveCustomerPayment(db, p),
     'suppliers.create': (db, p) => contacts.createSupplier(db, p),
     'suppliers.update': (db, p) => contacts.updateSupplier(db, p.id, p.patch),
     'suppliers.delete': (db, p) => contacts.deleteSupplier(db, p.id),
@@ -201,7 +226,8 @@ export function buildApi(): Record<string, ApiHandler> {
     // relaunch (folder picker, RESTORE) lives in electron/backup.ts instead,
     // because those cannot run in the Node verify harness.
     'backup.status': (db) => backup.backupStatus(db),
-    'backup.configure': (db, p) => backup.setBackupConfig(db, p ?? {}),
+    // Only the schedule and the keep count — see userBackupPatch.
+    'backup.configure': (db, p) => backup.setBackupConfig(db, backup.userBackupPatch(p)),
     'backup.run': (db, p) => backup.runBackup(db, p ?? {}),
     'backup.verify': (_db, p) => backup.verifySnapshot(p.file),
     'backup.export': (db, p) => backup.exportCsvFile(db, p),

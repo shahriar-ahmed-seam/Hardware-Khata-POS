@@ -103,7 +103,7 @@ export default function ImportProducts() {
               <div className="rounded-xl border-2 border-dashed border-border p-10 text-center hover:border-primary transition">
                 <Upload className="size-10 mx-auto opacity-50" />
                 <div className="mt-3 text-sm font-medium">Click to choose a CSV file</div>
-                <div className="text-[11px] text-muted-foreground mt-1">or drag and drop</div>
+                <div className="text-xs text-muted-foreground mt-1">or drag and drop</div>
               </div>
             </label>
           )}
@@ -114,7 +114,7 @@ export default function ImportProducts() {
                 <FileText className="size-5 text-primary" />
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium truncate">{fileName}</div>
-                  <div className="text-[11px] text-muted-foreground">
+                  <div className="text-xs text-muted-foreground">
                     {stats.rows} rows · {stats.valid} valid · {stats.errors} errors
                   </div>
                 </div>
@@ -125,7 +125,7 @@ export default function ImportProducts() {
 
               <Card className="overflow-hidden">
                 <table className="w-full text-sm">
-                  <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50">
+                  <thead className="text-xs text-muted-foreground bg-secondary/50">
                     <tr>
                       <th className="text-left font-medium px-3 py-2">Row</th>
                       <th className="text-left font-medium px-2 py-2">Product</th>
@@ -189,7 +189,7 @@ function Step({
   return (
     <li className="flex items-start gap-3">
       <div
-        className={`size-6 rounded-full grid place-items-center text-[11px] font-bold shrink-0 ${
+        className={`size-6 rounded-full grid place-items-center text-xs font-bold shrink-0 ${
           done ? 'bg-success text-success-foreground' : 'bg-secondary text-muted-foreground'
         }`}
       >

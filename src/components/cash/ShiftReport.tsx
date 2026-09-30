@@ -97,7 +97,7 @@ export function ShiftReport({ open, onClose, shift, variant = 'X' }: Props) {
               <span className="text-sm font-semibold">Variance</span>
               <span
                 className={cn(
-                  'font-mono tabular text-lg font-bold',
+                  'tabular text-lg font-bold',
                   shift.variance === 0
                     ? 'text-success'
                     : Math.abs(shift.variance) >= 100
@@ -113,7 +113,7 @@ export function ShiftReport({ open, onClose, shift, variant = 'X' }: Props) {
 
           {/* Breakdown */}
           <div className="rounded-lg border border-border overflow-hidden">
-            <div className="px-3 py-2 border-b border-border bg-secondary/40 text-[11px] uppercase font-semibold text-muted-foreground">
+            <div className="px-3 py-2 border-b border-border bg-secondary/40 text-xs font-semibold text-muted-foreground">
               Movement breakdown
             </div>
             <table className="w-full text-sm">
@@ -121,7 +121,7 @@ export function ShiftReport({ open, onClose, shift, variant = 'X' }: Props) {
                 {Object.entries(byType).map(([type, amt]) => (
                   <tr key={type} className="border-t border-border first:border-t-0">
                     <td className="px-3 py-1.5">{MOVEMENT_LABEL[type as keyof typeof MOVEMENT_LABEL]}</td>
-                    <td className="px-3 py-1.5 text-right font-mono tabular">
+                    <td className="px-3 py-1.5 text-right tabular">
                       {MOVEMENT_DIRECTION[type as keyof typeof MOVEMENT_DIRECTION] === 'in'
                         ? '+'
                         : '−'}
@@ -153,7 +153,7 @@ export function ShiftReport({ open, onClose, shift, variant = 'X' }: Props) {
               )}
               {shift.closingNote && (
                 <div className="col-span-2 border-t border-border pt-3">
-                  <div className="text-[10px] uppercase font-semibold text-muted-foreground">Note</div>
+                  <div className="text-xs font-semibold text-muted-foreground">Note</div>
                   <div className="whitespace-pre-wrap text-sm">{shift.closingNote}</div>
                 </div>
               )}
@@ -206,7 +206,7 @@ function ShiftReportSheet({
   byType: Record<string, number>;
 }) {
   return (
-    <div className="bg-white text-black w-full max-w-[820px] mx-auto p-[4mm] font-[Inter,sans-serif] text-[9pt] leading-snug">
+    <div className="print-doc bg-white text-black w-full max-w-[820px] mx-auto p-[4mm] font-[Inter,sans-serif] text-[9pt] leading-snug">
       <div className="text-center mb-[2mm]">
         {/* Omitted entirely when the shop has not filled in its name. */}
         {shopName && <div className="text-[13pt] font-bold tracking-tight break-words">{shopName}</div>}
@@ -317,7 +317,7 @@ function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between text-sm">
       <span className="text-muted-foreground">{label}</span>
-      <span className="font-mono tabular">{value}</span>
+      <span className="tabular">{value}</span>
     </div>
   );
 }
@@ -335,10 +335,10 @@ function Stat({
 }) {
   return (
     <div className="rounded-lg border border-border p-3">
-      <div className="text-[10px] uppercase text-muted-foreground">{label}</div>
+      <div className="text-xs text-muted-foreground">{label}</div>
       <div
         className={cn(
-          'font-mono tabular font-bold mt-0.5',
+          'tabular font-bold mt-0.5',
           big ? 'text-xl' : 'text-base',
           tone === 'primary' && 'text-primary',
           tone === 'success' && 'text-success',

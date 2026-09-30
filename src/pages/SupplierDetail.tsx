@@ -27,6 +27,7 @@ import { SupplierForm } from '@/components/contacts/SupplierForm';
 import { confirm } from '@/stores/confirm';
 import { PaySupplierModal } from '@/components/contacts/PaySupplierModal';
 import { formatBDT, cn } from '@/lib/utils';
+import { useKhata } from '@/hooks/useKhata';
 
 type Tab = 'overview' | 'ledger' | 'purchases' | 'notes';
 
@@ -39,7 +40,6 @@ export default function SupplierDetail() {
   // Purchase RETURNS come from the purchases store (that list is NOT paged), so
   // hydrate it on mount. `purchases` there IS one page, which is why this
   // supplier's bills are fetched separately below.
-  const purchaseReturns = usePurchases((s) => s.returns);
   useEffect(() => {
     void usePurchases.getState().hydrate();
   }, []);
@@ -94,10 +94,12 @@ export default function SupplierDetail() {
    * on the store's page, so the same patch is merged locally (the Notes textarea
    * is a controlled input and needs this to stay editable).
    */
-  const savePatch = (patch: Partial<Supplier>) => {
-    if (!supplier) return;
-    update(supplier.id, patch);
-    setFetched((prev) => (prev ? { ...prev, ...patch } : prev));
+  // Resolves true once saved; the local copy is only changed when it was.
+  const savePatch = async (patch: Partial<Supplier>) => {
+    if (!supplier) return false;
+    const ok = await update(supplier.id, patch);
+    if (ok) setFetched((prev) => (prev ? { ...prev, ...patch } : prev));
+    return ok;
   };
 
   const [tab, setTab] = useState<Tab>('overview');
@@ -157,91 +159,11 @@ export default function SupplierDetail() {
     [supplierBills, supplier],
   );
 
-  const supplierReturns = useMemo(
-    () => (supplier ? purchaseReturns.filter((r) => r.supplierId === supplier.id) : []),
-    [purchaseReturns, supplier],
-  );
-
-  /**
-   * Supplier ledger built from the available purchase data — mirrors the
-   * CustomerDetail ledger structure (debit/credit/running balance) but from the
-   * supplier's side of the books:
-   *   - opening balance      → debit (we owe the supplier)
-   *   - purchase (received)  → debit (increases payable)
-   *   - payment              → credit (reduces payable)
-   *   - credit purchase return (CreditAdjust) → credit (reduces payable)
-   *
-   * LIMITATION: there is no dedicated supplier-ledger backend channel, so this
-   * is reconstructed from `purchases.list`/`purchases.get` (+ their nested
-   * payments) and `purchaseReturns.list`. Non-credit refund methods (e.g. a
-   * cash refund) do NOT reduce the payable, so only `CreditAdjust` returns post
-   * to the ledger here. Opening balance is taken from the supplier record.
-   */
-  const ledger = useMemo(() => {
-    if (!supplier) return [];
-    const entries: {
-      id: string;
-      date: string;
-      type: 'opening' | 'purchase' | 'return' | 'payment';
-      reference: string;
-      debit: number;
-      credit: number;
-    }[] = [];
-
-    if (supplier.openingBalance && supplier.openingBalance > 0) {
-      entries.push({
-        id: 'open',
-        date: supplierPurchases[supplierPurchases.length - 1]?.date ?? new Date().toISOString(),
-        type: 'opening',
-        reference: 'Opening balance',
-        debit: supplier.openingBalance,
-        credit: 0,
-      });
-    }
-
-    supplierPurchases
-      .filter((p) => p.status !== 'cancelled')
-      .forEach((p) => {
-        entries.push({
-          id: p.id + '-po',
-          date: p.date,
-          type: 'purchase',
-          reference: p.refNo,
-          debit: p.total,
-          credit: 0,
-        });
-        p.payments.forEach((pay) => {
-          entries.push({
-            id: p.id + '-pay-' + pay.id,
-            date: pay.paidAt,
-            type: 'payment',
-            reference: `${p.refNo} · ${pay.method}`,
-            debit: 0,
-            credit: pay.amount,
-          });
-        });
-      });
-
-    supplierReturns
-      .filter((r) => r.refundMethod === 'CreditAdjust')
-      .forEach((r) => {
-        entries.push({
-          id: r.id,
-          date: r.date,
-          type: 'return',
-          reference: `${r.refNo} · against ${r.purchaseRefNo}`,
-          debit: 0,
-          credit: r.total,
-        });
-      });
-
-    entries.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    let running = 0;
-    return entries.map((e) => {
-      running += e.debit - e.credit;
-      return { ...e, balance: running };
-    });
-  }, [supplier, supplierPurchases, supplierReturns]);
+  // The supplier's khata, as the backend keeps it (supplierLedger) — its last
+  // balance IS the payable above. It used to be rebuilt here from the loaded
+  // bills and returns, which left out held credits and money paid on account.
+  const khata = useKhata('supplier', id, `${reloadKey}:${supplier?.due ?? ''}:${supplier?.totalPaid ?? ''}`);
+  const ledger = khata.rows;
 
   if (!supplier) {
     // Loading and "not found" are DISTINCT states — the single-record fetch
@@ -317,7 +239,7 @@ export default function SupplierDetail() {
                 )}
               </div>
               {supplier.taxId && (
-                <div className="text-[11px] text-muted-foreground mt-1">
+                <div className="text-xs text-muted-foreground mt-1">
                   Tax ID: <span className="font-mono">{supplier.taxId}</span>
                 </div>
               )}
@@ -369,7 +291,7 @@ export default function SupplierDetail() {
         {tab === 'ledger' && (
           <Card className="overflow-hidden">
             <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50">
+              <thead className="text-xs text-muted-foreground bg-secondary/50">
                 <tr>
                   <th className="text-left px-4 py-2.5 font-medium">Date</th>
                   <th className="text-left px-2 py-2.5 font-medium">Type</th>
@@ -399,13 +321,13 @@ export default function SupplierDetail() {
                       </span>
                     </td>
                     <td className="px-2 py-2 text-xs">{e.reference}</td>
-                    <td className="px-2 py-2 text-right font-mono tabular text-destructive">
+                    <td className="px-2 py-2 text-right tabular text-destructive">
                       {e.debit > 0 ? formatBDT(e.debit, { withSymbol: false }) : '—'}
                     </td>
-                    <td className="px-2 py-2 text-right font-mono tabular text-success">
+                    <td className="px-2 py-2 text-right tabular text-success">
                       {e.credit > 0 ? formatBDT(e.credit, { withSymbol: false }) : '—'}
                     </td>
-                    <td className="px-4 py-2 text-right font-mono tabular font-semibold">
+                    <td className="px-4 py-2 text-right tabular font-semibold">
                       {formatBDT(e.balance, { withSymbol: false })}
                     </td>
                   </tr>
@@ -418,7 +340,7 @@ export default function SupplierDetail() {
         {tab === 'purchases' && (
           <Card className="overflow-hidden">
             <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50">
+              <thead className="text-xs text-muted-foreground bg-secondary/50">
                 <tr>
                   <th className="text-left px-4 py-2.5 font-medium">Date</th>
                   <th className="text-left px-2 py-2.5 font-medium">Reference</th>
@@ -450,16 +372,16 @@ export default function SupplierDetail() {
                         {new Date(p.date).toLocaleDateString('en-GB')}
                       </td>
                       <td className="px-2 py-2 font-mono text-xs">{p.refNo}</td>
-                      <td className="px-2 py-2 text-right font-mono tabular">
+                      <td className="px-2 py-2 text-right tabular">
                         {p.lines.reduce((n, l) => n + l.qty, 0)}
                       </td>
-                      <td className="px-2 py-2 text-right font-mono tabular font-semibold">
+                      <td className="px-2 py-2 text-right tabular font-semibold">
                         {formatBDT(p.total, { withSymbol: false })}
                       </td>
-                      <td className="px-2 py-2 text-right font-mono tabular text-success">
+                      <td className="px-2 py-2 text-right tabular text-success">
                         {formatBDT(p.paid, { withSymbol: false })}
                       </td>
-                      <td className="px-2 py-2 text-right font-mono tabular">
+                      <td className="px-2 py-2 text-right tabular">
                         {p.due > 0 ? (
                           <span className="text-destructive">
                             {formatBDT(p.due, { withSymbol: false })}
@@ -512,15 +434,13 @@ export default function SupplierDetail() {
         <SupplierForm
           asDrawer
           initial={supplier}
-          onSave={(s) => {
-            savePatch(s);
-            setEditOpen(false);
+          onSave={async (s) => {
+            if (await savePatch(s)) setEditOpen(false);
           }}
           onCancel={() => setEditOpen(false)}
           onDelete={async () => {
             if (await confirm({ title: `Delete "${supplier.name}"?`, variant: 'destructive' })) {
-              remove(supplier.id);
-              nav('/contacts/suppliers');
+              if (await remove(supplier.id)) nav('/contacts/suppliers');
             }
           }}
         />
@@ -549,10 +469,10 @@ function Stat({
 }) {
   return (
     <div>
-      <div className="text-[10px] uppercase text-muted-foreground font-medium">{label}</div>
+      <div className="text-xs text-muted-foreground font-medium">{label}</div>
       <div
         className={cn(
-          'text-base font-bold mt-0.5 font-mono tabular',
+          'text-base font-bold mt-0.5 tabular',
           tone === 'success' && 'text-success',
           tone === 'destructive' && 'text-destructive',
         )}

@@ -74,7 +74,7 @@ export default function ImportCustomers() {
       <div className="p-6 max-w-3xl space-y-4">
         <Card className="p-6 text-sm space-y-2">
           <div className="font-semibold">CSV format</div>
-          <code className="block bg-secondary px-3 py-2 rounded font-mono text-[11px] overflow-x-auto whitespace-nowrap">
+          <code className="block bg-secondary px-3 py-2 rounded font-mono text-xs overflow-x-auto whitespace-nowrap">
             {HEADER.join(', ')}
           </code>
           <ul className="text-xs text-muted-foreground space-y-1 list-disc pl-5">
@@ -104,7 +104,7 @@ export default function ImportCustomers() {
                 <FileText className="size-5 text-primary" />
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium truncate">{fileName}</div>
-                  <div className="text-[11px] text-muted-foreground">
+                  <div className="text-xs text-muted-foreground">
                     {stats.rows} rows · {stats.valid} valid · {stats.errors} errors
                   </div>
                 </div>

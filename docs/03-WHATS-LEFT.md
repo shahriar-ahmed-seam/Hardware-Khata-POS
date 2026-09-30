@@ -332,11 +332,56 @@ became paginated (one 50-row page) the report silently under-counted every shop 
   SmartScreen warn on a new PC) and a **per-machine install** (currently per-user, which is why
   it needs no elevation).
 
+## 🟢 Fix pass — September 2026 — DONE (uncommitted)
+
+A Linux run plus a whole-repo audit produced 21 items, all closed; the list with checkboxes is
+the "Fix pass — September 2026" section of `TASKS.md`, and the rules it added are §5 rules
+29–36 of `07-CONTINUE-HERE.md`. In short:
+
+- **Security:** `auth.*` is internal-only (the renderer could reset the admin PIN with no
+  session); login is refused before first-run setup; wrong PINs are throttled; `settings.set`
+  takes only UI preference keys; the lock screen locks the main-process session; `openPdf`,
+  `openExternal` and in-window navigation are fenced; no default menu in production; the
+  person a write is recorded against comes from the session, not the renderer. All in the
+  pure `electron/guard.ts`, tested by `backend/verify/security.ts`.
+- **Stock and money:** returns only against final sales / received purchases, never more than
+  is still returnable, refunds capped at what was paid, pack sizes converted; no void or cancel
+  after a return; no payment on a dead document; balances count only returns against live
+  documents; purchases get `credited` (schema **v10**) so a credit note reduces a bill's due;
+  transfers are received once and can be cancelled (`transfers.cancel`).
+- **Screens:** Close Shift gate is real; return windows compute refunds through `lib/money.ts`;
+  `/sales/:id/edit` loads by id; purchase editing is explained rather than faked; return lists
+  show real names, load, and open a detail drawer; drafts and quotations convert for real and
+  print as what they are.
+- **Reports:** P&L treats returns (gross = net − COGS + returned cost − refunds; purchase
+  returns are not profit); the weighted average ignores cancelled purchases; dashboard buckets
+  use shop-local time; search tolerates punctuation; a delta with nothing to compare shows `—`.
+- **Electron + Linux:** single-instance lock really stops the second instance; DB-init failure
+  is shown; restore is atomic and reopens on failure; first auto-backup check a minute after
+  launch; pendrive detection via `lsblk`; window icon; `npm run build:linux` (AppImage + deb).
+
+Checks went **1,161 → 1,433** across nine suites (two new: `security.ts`, and `chain.ts`
+inside `all.ts`).
+
+## 🔴 Needs an owner decision (found in the fix pass, not started)
+
+- **Non-cash refunds** (Bank / bKash / Nagad / Card) move no drawer cash and reduce no due, and
+  nothing records them. Add a ledger for them, or stop offering them as refund methods.
+- **Store credit** (`customers.store_credit`) accumulates from StoreCredit returns and is never
+  spent or shown.
+- **`purchases.update`** — editing a received purchase in place. Today the answer is "cancel and
+  re-enter, or return some items", and `/purchases/:id/edit` says so.
+- **Linux updates** — the in-app update check on a Linux build finds no `latest-linux.yml` on the
+  release (only Windows artifacts are published) and reports an error. Publish Linux artifacts
+  with the release, or turn update checks off for Linux builds.
+- Unchanged from before: multi-branch writes (`'br_mp'`), SMS gateway, thermal printing, code
+  signing.
+
 ## 🔴 The one remaining item: the manual GUI smoke test
 
 `docs/06-E2E-AND-SMOKE-TEST.md`. A script cannot click, and it cannot judge whether a receipt
 reads correctly on a 58mm roll or whether the Bangla layout still fits. Everything a script
-*can* prove is proven — 1,161 checks.
+*can* prove is proven — 1,605 checks (after the September 2026 P0 pass; see docs/07 §3i).
 
 ## ✅ Final rigorous end-to-end test (DONE)
 
@@ -349,11 +394,10 @@ the manual GUI smoke test in `docs/06-E2E-AND-SMOKE-TEST.md`.
 
 ## 🟡 Smaller follow-ups (nice-to-have before or after packaging)
 
-- **Sell-return / purchase-return detail lines**: list channels are header-only; add a
-  `get`-with-lines if the return detail view needs line breakdown.
-- **Transfer cancel/reversal**: no backend handler — `cancelTransfer` refuses under backend
-  (it will NOT fake a status that would desync stock). Add a reversing handler if needed
-  (must reverse the stock movements safely).
+- ~~Sell-return / purchase-return detail lines~~ — done in the fix pass
+  (`sellReturns.get` / `purchaseReturns.get`, `ReturnDetail` drawer).
+- ~~Transfer cancel/reversal~~ — done in the fix pass (`transfers.cancel` puts the goods back at
+  the sending branch with a `transfer_cancel` movement).
 - **Commission payout ledger**: Sales-Rep report shows real earned commission; "paid" is 0
   and the full amount is "pending" until a payout-entry table + channel exist.
 
@@ -402,3 +446,9 @@ the manual GUI smoke test in `docs/06-E2E-AND-SMOKE-TEST.md`.
   restored file.
 - **Retention reads filenames, not mtimes** — a cloud sync client rewrites mtime. Don't
   "simplify" it back to `fs.stat`.
+- **Packaging switches the native ABI.** electron-builder's `npmRebuild` rebuilds
+  `better-sqlite3` for Electron, so run `npm run rebuild:node` before the suites afterwards.
+- **A Linux AppImage needs `--no-sandbox`** on Ubuntu 23.10+ (AppArmor blocks the user-namespace
+  sandbox, and an AppImage cannot ship a root-owned `chrome-sandbox`).
+  `scripts/linux-after-pack.cjs` adds it only when `$APPIMAGE` is set; the `.deb` keeps the full
+  sandbox. Don't remove the hook.

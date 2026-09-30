@@ -78,7 +78,7 @@ function PurchaseSheet({ purchase: p }: { purchase: PurchaseRecord }) {
   return (
     /* pt/mm on purpose, as in Receipt.tsx: absolute units keep the printed page
        identical regardless of the in-app font-scale setting. */
-    <div className="bg-white text-black w-full max-w-[820px] mx-auto p-[4mm] font-[Inter,sans-serif] text-[9pt] leading-snug">
+    <div className="print-doc bg-white text-black w-full max-w-[820px] mx-auto p-[4mm] font-[Inter,sans-serif] text-[9pt] leading-snug">
       <div className="text-center mb-[2mm]">
         {business.name && (
           <div className="text-[13pt] font-bold tracking-tight break-words">{business.name}</div>

@@ -13,6 +13,10 @@ import {
   MOVEMENT_DIRECTION,
 } from '@/stores/cashRegister';
 import { cn, formatBDT } from '@/lib/utils';
+import { round2, sum2 } from '@/lib/money';
+import { useSettings } from '@/stores/settings';
+import { confirm } from '@/stores/confirm';
+import { useCan } from '@/hooks/useCan';
 
 interface Props {
   open: boolean;
@@ -24,29 +28,38 @@ interface Props {
 const STEPS = ['Count', 'Variance', 'Notes', 'Confirm'] as const;
 type Step = (typeof STEPS)[number];
 
-export function CloseShiftModal({ open, onClose, shift, cashier = 'Seam' }: Props) {
+export function CloseShiftModal({ open, onClose, shift, cashier = '' }: Props) {
   const movements = useCashRegister((s) => s.movements.filter((m) => m.shiftId === shift.id));
   const closeShift = useCashRegister((s) => s.closeShift);
-  const warnTh = useCashRegister((s) => s.varianceWarnThreshold);
-  const blockTh = useCashRegister((s) => s.varianceBlockThreshold);
+  // The limits the owner set in Settings → Cash Register. This screen used to
+  // read two constants in the cash store (100 / 1000) that nothing ever changed,
+  // so moving the sliders in Settings did nothing here.
+  const prefs = useSettings((s) => s.cashRegister);
+  const warnTh = prefs.varianceWarn;
+  const blockTh = prefs.varianceBlock;
+  const needsApproval = prefs.requireManagerPinOnVariance;
+  // Owner/manager approval = the void permission (see VARIANCE_OVERRIDE_PERMISSION
+  // in electron/guard.ts, which enforces the same rule in the main process).
+  const canApprove = useCan('sales.void');
 
-  const cashIn = movements
-    .filter((m) => MOVEMENT_DIRECTION[m.type] === 'in')
-    .reduce((s, m) => s + m.amount, 0);
-  const cashOut = movements
-    .filter((m) => MOVEMENT_DIRECTION[m.type] === 'out')
-    .reduce((s, m) => s + m.amount, 0);
-  const expected = shift.openingCash + cashIn - cashOut;
+  const cashIn = sum2(movements.filter((m) => MOVEMENT_DIRECTION[m.type] === 'in').map((m) => m.amount));
+  const cashOut = sum2(movements.filter((m) => MOVEMENT_DIRECTION[m.type] === 'out').map((m) => m.amount));
+  const expected = round2(shift.openingCash + cashIn - cashOut);
 
   const [step, setStep] = useState<Step>('Count');
   const [d, setD] = useState<DenominationCount>({});
   const [carriedFloat, setCarriedFloat] = useState(5000);
   const [note, setNote] = useState('');
+  const [closing, setClosing] = useState(false);
 
   const counted = useMemo(() => denominationsTotal(d), [d]);
-  const variance = counted - expected;
+  const variance = round2(counted - expected);
   const overWarn = Math.abs(variance) >= warnTh;
   const overBlock = Math.abs(variance) >= blockTh;
+  // Past the hard limit, a cashier cannot close alone.
+  const blocked = overBlock && needsApproval && !canApprove;
+  // The Notes step says a variance needs an explanation; now it is enforced.
+  const noteMissing = variance !== 0 && !note.trim();
 
   // Mirror Purchases.tsx: load this (possibly closed/historical) shift's
   // movements on demand so the variance math has the real cash-in/out. No-op
@@ -73,29 +86,34 @@ export function CloseShiftModal({ open, onClose, shift, cashier = 'Seam' }: Prop
     if (idx > 0) setStep(STEPS[idx - 1]);
   };
 
-  const canConfirm =
-    !overBlock || // Block-threshold breached requires manager override (not implemented yet)
-    confirm; // simplified for mock
+  // The gate used to read `!overBlock || confirm` — `confirm` was the browser's
+  // own function, always truthy, so nothing was ever blocked.
+  const canConfirm = !blocked && !noteMissing && !closing;
 
-  const submit = () => {
-    if (overBlock) {
-      if (!window.confirm(
-        `Variance of ${formatBDT(variance)} exceeds the hard block threshold of ${formatBDT(blockTh)}. Manager override required. Continue?`,
-      ))
-        return;
-    } else if (overWarn) {
-      if (!window.confirm(
-        `Variance of ${formatBDT(variance)} exceeds the warn threshold of ${formatBDT(warnTh)}. Continue?`,
-      ))
-        return;
+  const submit = async () => {
+    if (!canConfirm) return;
+    // In-app confirmations only: the native window.confirm cost the Electron
+    // window its keyboard focus on Windows (rule 9).
+    if (overWarn) {
+      const ok = await confirm({
+        title: overBlock ? 'Close with a large variance?' : 'Close with a variance?',
+        message: `The drawer is ${formatBDT(Math.abs(variance))} ${variance > 0 ? 'over' : 'short'}. This is recorded on the Z-report with your note.`,
+        confirmLabel: 'Close shift',
+        cancelLabel: 'Count again',
+        variant: 'destructive',
+      });
+      if (!ok) return;
     }
-    closeShift(shift.id, {
+    setClosing(true);
+    const done = await closeShift(shift.id, {
       countedDenominations: d,
       carriedFloat,
-      note: note || undefined,
+      note: note.trim() || undefined,
       closedBy: cashier,
     });
-    onClose();
+    setClosing(false);
+    // Stays open on a refusal so the count is not lost.
+    if (done) onClose();
   };
 
   const StepBadge = ({ label, idx }: { label: string; idx: number }) => {
@@ -106,7 +124,7 @@ export function CloseShiftModal({ open, onClose, shift, cashier = 'Seam' }: Prop
       <div className="flex items-center gap-1.5">
         <div
           className={cn(
-            'size-5 rounded-full grid place-items-center text-[10px] font-bold',
+            'size-5 rounded-full grid place-items-center text-xs font-bold',
             done
               ? 'bg-success text-success-foreground'
               : active
@@ -118,7 +136,7 @@ export function CloseShiftModal({ open, onClose, shift, cashier = 'Seam' }: Prop
         </div>
         <span
           className={cn(
-            'text-[11px] font-medium',
+            'text-xs font-medium',
             active ? 'text-foreground' : 'text-muted-foreground',
           )}
         >
@@ -153,7 +171,7 @@ export function CloseShiftModal({ open, onClose, shift, cashier = 'Seam' }: Prop
                 Next <ArrowRight className="size-4" />
               </Button>
             ) : (
-              <Button onClick={submit} disabled={!canConfirm}>
+              <Button onClick={() => void submit()} disabled={!canConfirm}>
                 <Lock className="size-4" /> Close & Lock
               </Button>
             )}
@@ -168,7 +186,7 @@ export function CloseShiftModal({ open, onClose, shift, cashier = 'Seam' }: Prop
               <div className="text-sm font-semibold mb-1">Count physical cash</div>
               <div className="rounded-lg border border-border overflow-hidden">
                 <table className="w-full text-sm">
-                  <thead className="text-[10px] uppercase text-muted-foreground bg-secondary/40">
+                  <thead className="text-xs text-muted-foreground bg-secondary/40">
                     <tr>
                       <th className="text-left px-3 py-1.5 font-medium">Note</th>
                       <th className="text-right px-2 py-1.5 font-medium">Count</th>
@@ -181,7 +199,7 @@ export function CloseShiftModal({ open, onClose, shift, cashier = 'Seam' }: Prop
                       const cur = (d[key] ?? 0) as number;
                       return (
                         <tr key={v} className="border-t border-border">
-                          <td className="px-3 py-1.5 font-mono">৳ {v}</td>
+                          <td className="px-3 py-1.5 tabular">৳ {v}</td>
                           <td className="px-2 py-1.5 text-right">
                             <NumberField
                               value={cur}
@@ -190,7 +208,7 @@ export function CloseShiftModal({ open, onClose, shift, cashier = 'Seam' }: Prop
                               className="h-7 w-20 px-2 text-right text-xs ml-auto"
                             />
                           </td>
-                          <td className="px-3 py-1.5 text-right font-mono tabular text-muted-foreground">
+                          <td className="px-3 py-1.5 text-right tabular text-muted-foreground">
                             {cur > 0 ? formatBDT(cur * v, { withSymbol: false }) : '—'}
                           </td>
                         </tr>
@@ -226,13 +244,13 @@ export function CloseShiftModal({ open, onClose, shift, cashier = 'Seam' }: Prop
         {step === 'Variance' && (
           <div className="space-y-4">
             <div className="rounded-xl border border-border bg-card p-5">
-              <div className="text-[10px] uppercase font-semibold text-muted-foreground mb-2">
+              <div className="text-xs font-semibold text-muted-foreground mb-2">
                 Variance check
               </div>
               <div className="flex items-baseline gap-3">
                 <div
                   className={cn(
-                    'text-4xl font-bold font-mono tabular',
+                    'text-4xl font-bold tabular',
                     variance === 0
                       ? 'text-success'
                       : overBlock
@@ -255,8 +273,12 @@ export function CloseShiftModal({ open, onClose, shift, cashier = 'Seam' }: Prop
                 <div className="mt-3 rounded-md bg-destructive/10 text-destructive px-3 py-2 text-sm flex items-start gap-2">
                   <AlertTriangle className="size-4 mt-0.5" />
                   <div>
-                    Variance exceeds hard block threshold of {formatBDT(blockTh)}. Manager override
-                    required.
+                    <div>Variance is over the limit of {formatBDT(blockTh)}.</div>
+                    {blocked ? (
+                      <div>Count again, or ask the owner or a manager to sign in and close this shift.</div>
+                    ) : (
+                      <div>Explain it in the note before closing.</div>
+                    )}
                   </div>
                 </div>
               )}
@@ -289,7 +311,7 @@ export function CloseShiftModal({ open, onClose, shift, cashier = 'Seam' }: Prop
         {step === 'Notes' && (
           <div className="space-y-3">
             <div>
-              <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+              <label className="text-xs font-semibold text-muted-foreground">
                 Closing note {variance !== 0 && <span className="text-destructive">*</span>}
               </label>
               <textarea
@@ -305,7 +327,7 @@ export function CloseShiftModal({ open, onClose, shift, cashier = 'Seam' }: Prop
               />
             </div>
             <div>
-              <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+              <label className="text-xs font-semibold text-muted-foreground">
                 Carry over as next shift's opening (৳)
               </label>
               <NumberField
@@ -313,7 +335,7 @@ export function CloseShiftModal({ open, onClose, shift, cashier = 'Seam' }: Prop
                 onChangeNumber={setCarriedFloat}
                 className="text-right"
               />
-              <div className="text-[11px] text-muted-foreground mt-1">
+              <div className="text-xs text-muted-foreground mt-1">
                 Remainder ({formatBDT(Math.max(0, counted - carriedFloat))}) will be marked for bank
                 deposit.
               </div>
@@ -347,11 +369,22 @@ export function CloseShiftModal({ open, onClose, shift, cashier = 'Seam' }: Prop
               <Row label="To bank deposit" value={formatBDT(Math.max(0, counted - carriedFloat))} />
               {note && (
                 <div className="border-t border-border pt-2">
-                  <div className="text-[10px] uppercase font-semibold text-muted-foreground">Note</div>
+                  <div className="text-xs font-semibold text-muted-foreground">Note</div>
                   <div className="whitespace-pre-wrap">{note}</div>
                 </div>
               )}
             </div>
+            {/* A disabled button with no reason reads as broken. */}
+            {noteMissing && (
+              <div className="rounded-md bg-warning/10 text-warning px-3 py-2 text-sm">
+                Go back to Notes and explain the variance before closing.
+              </div>
+            )}
+            {blocked && (
+              <div className="rounded-md bg-destructive/10 text-destructive px-3 py-2 text-sm">
+                The count is over the variance limit. Only the owner or a manager can close this shift.
+              </div>
+            )}
             <div className="text-xs text-muted-foreground">
               Closing the shift is final. A Z-Report will be generated and the drawer will be
               ready for a new shift.
@@ -376,10 +409,10 @@ function SummaryStat({
 }) {
   return (
     <div className="rounded-lg border border-border p-3">
-      <div className="text-[10px] uppercase text-muted-foreground">{label}</div>
+      <div className="text-xs text-muted-foreground">{label}</div>
       <div
         className={cn(
-          'font-mono tabular font-bold mt-0.5',
+          'tabular font-bold mt-0.5',
           big ? 'text-xl' : 'text-base',
           tone === 'primary' && 'text-primary',
           tone === 'success' && 'text-success',
@@ -409,7 +442,7 @@ function Row({
       <span className="text-muted-foreground">{label}</span>
       <span
         className={cn(
-          'font-mono tabular',
+          'tabular',
           bold && 'font-semibold',
           tone === 'success' && 'text-success',
           tone === 'warning' && 'text-warning',

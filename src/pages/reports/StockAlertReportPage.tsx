@@ -124,31 +124,31 @@ export default function StockAlertReportPage() {
       <div className="p-6 space-y-4 max-w-5xl">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <Card className="p-4 border-l-4 border-warning">
-            <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+            <div className="text-xs font-semibold text-muted-foreground">
               Low stock
             </div>
             <div className="tabular font-bold text-2xl mt-1 text-warning">
               {formatNumber(lowItems.length)}
             </div>
-            <div className="text-[11px] text-muted-foreground">items at or below reorder level</div>
+            <div className="text-xs text-muted-foreground">items at or below reorder level</div>
           </Card>
           <Card className="p-4 border-l-4 border-destructive">
-            <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+            <div className="text-xs font-semibold text-muted-foreground">
               Out of stock
             </div>
             <div className="tabular font-bold text-2xl mt-1 text-destructive">
               {formatNumber(outItems.length)}
             </div>
-            <div className="text-[11px] text-muted-foreground">need restock immediately</div>
+            <div className="text-xs text-muted-foreground">need restock immediately</div>
           </Card>
           <Card className="p-4 border-l-4 border-primary">
-            <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+            <div className="text-xs font-semibold text-muted-foreground">
               Estimated reorder spend
             </div>
             <div className="tabular font-bold text-2xl mt-1 text-primary">
               {formatBDT(totalSuggestedSpend)}
             </div>
-            <div className="text-[11px] text-muted-foreground">to bring all to 2× reorder level</div>
+            <div className="text-xs text-muted-foreground">to bring all to 2× reorder level</div>
           </Card>
         </div>
 
@@ -197,7 +197,7 @@ export default function StockAlertReportPage() {
         </Card>
 
         <Card className="overflow-hidden">
-          <div className="grid grid-cols-[2fr_1fr_0.7fr_0.7fr_0.9fr_0.9fr_1fr] gap-2 px-4 py-2.5 border-b border-border bg-secondary/40 text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+          <div className="grid grid-cols-[2fr_1fr_0.7fr_0.7fr_0.9fr_0.9fr_1fr] gap-2 px-4 py-2.5 border-b border-border bg-secondary/40 text-xs font-semibold text-muted-foreground">
             <div>Product</div>
             <div>Category</div>
             <div className="text-right">Stock</div>
@@ -222,7 +222,7 @@ export default function StockAlertReportPage() {
               >
                 <div className="min-w-0">
                   <div className="font-medium truncate">{p.name}</div>
-                  <div className="text-[11px] font-mono text-muted-foreground">{p.sku}</div>
+                  <div className="text-xs font-mono text-muted-foreground">{p.sku}</div>
                 </div>
                 <div className="text-muted-foreground">
                   {p.categoryEmoji} {p.categoryName}

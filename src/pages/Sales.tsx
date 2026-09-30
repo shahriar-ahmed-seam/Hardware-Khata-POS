@@ -4,7 +4,6 @@ import {
   Search,
   Filter,
   Download,
-  Upload,
   Plus,
   Settings2,
   Calendar,
@@ -230,9 +229,7 @@ export default function Sales() {
             <IconBtn title="Customize columns" onClick={() => setColsOpen(true)}>
               <Settings2 className="size-4" />
             </IconBtn>
-            <Button variant="outline" size="sm" onClick={() => nav('/sales/import')}>
-              <Upload className="size-4" /> Import
-            </Button>
+            {/* Import is switched off until real importers exist (see /import). */}
             {/* Was a button with no handler. Writes the accountant-friendly CSV
                 through the same `backup.export` channel Settings uses, into the
                 configured backup folder. Deliberately labelled "all": it is the
@@ -257,7 +254,7 @@ export default function Sales() {
         {/* KPI strip — PAGE-SCOPED. Only the current page is in memory, so these
             are explicitly labelled instead of masquerading as range totals. */}
         <div>
-          <div className="text-[11px] text-muted-foreground mb-1.5">
+          <div className="text-xs text-muted-foreground mb-1.5">
             Totals for this page only. Use Reports for full-range figures.
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
@@ -288,7 +285,7 @@ export default function Sales() {
               setDate(preset);
               void loadPage(presetToRange(preset));
             }}
-            className="h-9 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
+            className="h-10 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="all">All dates</option>
             <option value="today">Today</option>
@@ -302,7 +299,7 @@ export default function Sales() {
               setCustomerId(e.target.value);
               void loadPage({ customerId: e.target.value });
             }}
-            className="h-9 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
+            className="h-10 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="all">All customers</option>
             {customers.map((c) => (
@@ -317,7 +314,7 @@ export default function Sales() {
               setCashier(e.target.value);
               void loadPage({ userId: e.target.value });
             }}
-            className="h-9 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
+            className="h-10 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="all">All users</option>
             {users.map((u) => (
@@ -332,7 +329,7 @@ export default function Sales() {
               setMethod(e.target.value);
               void loadPage({ method: e.target.value });
             }}
-            className="h-9 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
+            className="h-10 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="all">All methods</option>
             {['Cash', 'bKash', 'Nagad', 'Card', 'Bank', 'Credit'].map((m) => (
@@ -406,7 +403,7 @@ export default function Sales() {
         <Card className="overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50 sticky top-0">
+              <thead className="text-xs text-muted-foreground bg-secondary/50 sticky top-0">
                 <tr>
                   {columns.map((c) => (
                     <th
@@ -528,7 +525,7 @@ export default function Sales() {
 }
 
 function Cell({ c, s }: { c: SalesColumn; s: SaleRecord }) {
-  const align = SALES_COLUMN_META[c].align === 'right' ? 'text-right font-mono tabular' : '';
+  const align = SALES_COLUMN_META[c].align === 'right' ? 'text-right tabular' : '';
   switch (c) {
     case 'date': {
       const d = new Date(s.date);
@@ -595,7 +592,7 @@ function Stat({
 }) {
   return (
     <Card className="p-4">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="text-xs text-muted-foreground">{label}</div>
       <div
         className={cn(
           'text-lg font-bold mt-0.5 tabular',
@@ -623,7 +620,7 @@ function IconBtn({
     <button
       onClick={onClick}
       title={title}
-      className="h-9 w-9 grid place-items-center rounded-md border border-border hover:bg-secondary text-muted-foreground hover:text-foreground transition"
+      className="h-10 w-10 grid place-items-center rounded-md border border-border hover:bg-secondary text-muted-foreground hover:text-foreground transition"
     >
       {children}
     </button>

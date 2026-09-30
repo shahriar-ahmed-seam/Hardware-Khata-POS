@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { currentUserId } from '@/lib/actor';
 import { api } from '@/lib/api';
 import { toast } from '@/stores/toast';
 import { toSaleRecord, toSellReturnRecord, toShipment, type BackendSale } from '@/hooks/saleAdapter';
@@ -12,6 +13,55 @@ import { requireBranchId } from '@/lib/branch';
  * unrecognised name to `br_mp`.
  */
 const resolveBranchToId = requireBranchId;
+
+/**
+ * The id to send as a sale's customer: any real customer, never the walk-in.
+ *
+ * This used to be `id.startsWith('cu_')`, the prefix of customers created in the
+ * app — which silently dropped every other real customer (the sample year's
+ * `cu2`…, or anything imported), so correcting their invoice turned it into a
+ * walk-in sale and its due vanished from their khata. The walk-in is `cu1` (see
+ * backend/seed/master.ts) and is stored as "no customer".
+ */
+export function realCustomerId(id: string | undefined | null): string | undefined {
+  return id && id !== 'cu1' ? id : undefined;
+}
+
+/**
+ * One place that turns a SaleRecord into the backend's sale input, so create,
+ * correct and convert cannot drift apart in what they send.
+ */
+function saleInputOf(s: SaleRecord) {
+  return {
+    status: s.status,
+    date: s.date,
+    customerId: realCustomerId(s.customerId),
+    branchId: resolveBranchToId(s.branch),
+    userId: currentUserId(),
+    lines: s.lines.map((l) => ({
+      productId: l.productId,
+      qty: l.qty,
+      unitUsed: l.unit,
+      spr: l.unitPrice,
+      discountPct: l.discountPct,
+      discountFlat: l.discountFlat,
+      taxPct: l.taxPct,
+    })),
+    orderDiscountPct: s.orderDiscountPct,
+    orderDiscountFlat: s.orderDiscountFlat,
+    taxPct: s.taxPct,
+    shipping: s.shipping,
+    other: s.other,
+    payments: s.payments.map((pay) => ({
+      method: pay.method,
+      amount: pay.amount,
+      reference: pay.reference,
+      paidAt: pay.paidAt,
+    })),
+    validUntil: s.validUntil,
+    notes: s.notes,
+  };
+}
 
 /**
  * Sale lifecycle status:
@@ -160,24 +210,32 @@ interface SalesState {
   /** Re-run the last query (used after a write). Also refreshes returns/shipments. */
   hydrate: () => Promise<void>;
   // Sales CRUD
-  addSale: (s: SaleRecord) => void;
+  //
+  // Every write below RESOLVES ONLY ONCE THE BACKEND HAS ANSWERED, so a screen
+  // can stay open (with what was typed) when a write is refused, and never
+  // announces success for a sale the database does not have. They used to be
+  // fire-and-forget: AddSale navigated to the list straight away, and a refused
+  // sale (a stock shortfall, a walk-in left owing) vanished along with the form.
+  /** Resolves the new sale's id and invoice number, or null when refused. */
+  addSale: (s: SaleRecord) => Promise<{ id: string; invoiceNo: string } | null>;
   /**
    * Correct an existing sale IN PLACE via `sales.update`, keeping its invoice
    * number. `reason` is mandatory — it is written to the sale's audit trail.
    * Resolves true on success so the caller can navigate only when it worked.
    */
   updateSale: (id: string, next: SaleRecord, reason: string) => Promise<boolean>;
-  voidSale: (id: string, by: string, reason?: string) => void;
-  deleteSale: (id: string) => void; // only for drafts/quotations
-  addPayment: (saleId: string, p: Omit<SalePayment, 'id'>) => void;
+  /** Draft → finalised in place; quotation → a new sale. Resolves the invoice number. */
+  convertSale: (id: string, next: SaleRecord) => Promise<string | null>;
+  voidSale: (id: string, by: string, reason?: string) => Promise<boolean>;
+  deleteSale: (id: string) => Promise<boolean>; // only for drafts/quotations
+  addPayment: (saleId: string, p: Omit<SalePayment, 'id'>) => Promise<boolean>;
   // Returns
-  addReturn: (r: SellReturn) => void;
+  addReturn: (r: SellReturn) => Promise<boolean>;
   // Shipments
-  addShipment: (s: Shipment) => void;
-  updateShipment: (id: string, patch: Partial<Shipment>) => void;
+  addShipment: (s: Shipment) => Promise<boolean>;
+  updateShipment: (id: string, patch: Partial<Shipment>) => Promise<boolean>;
 }
 
-const CURRENT_USER = 'u_admin';
 
 /** Server-side query for the sales list. Mirrors `PageQuery` in backend/services/paged.ts. */
 export interface SalesQuery {
@@ -319,48 +377,24 @@ export const useSales = create<SalesState>((set, get) => ({
     }
   },
 
-  addSale: (s) => {
-    {
-      // Resolve branch name -> id via the branches store (AddSale still uses
-      // branch names); falls back to the default branch only if unresolvable.
-      const branchId = resolveBranchToId(s.branch);
-      // Only pass a customerId when it looks like a real backend id; a
-      // walk-in/unsaved selection must persist as "no customer".
-      const customerId = s.customerId?.startsWith('cu_') ? s.customerId : undefined;
-      void api('sales.create', {
-        status: s.status,
-        date: s.date,
-        customerId,
-        branchId,
-        userId: CURRENT_USER,
-        lines: s.lines.map((l) => ({
-          productId: l.productId,
-          qty: l.qty,
-          unitUsed: l.unit,
-          spr: l.unitPrice,
-          discountPct: l.discountPct,
-          discountFlat: l.discountFlat,
-          taxPct: l.taxPct,
-        })),
-        orderDiscountPct: s.orderDiscountPct,
-        orderDiscountFlat: s.orderDiscountFlat,
-        taxPct: s.taxPct,
-        shipping: s.shipping,
-        other: s.other,
-        payments: s.payments.map((pay) => ({
-          method: pay.method,
-          amount: pay.amount,
-          reference: pay.reference,
-          paidAt: pay.paidAt,
-        })),
-        validUntil: s.validUntil,
-        notes: s.notes,
-      })
-        .then(() => get().hydrate())
-        .catch((e: unknown) => {
-          toast.error(e instanceof Error ? e.message : 'Failed to save sale');
-          void get().hydrate();
-        });
+  addSale: async (s) => {
+    // The branch NAME resolves to its id (requireBranchId throws rather than
+    // guess), and the walk-in is sent as "no customer" — see saleInputOf.
+    let input: ReturnType<typeof saleInputOf>;
+    try {
+      input = saleInputOf(s);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'No branch is available yet');
+      return null;
+    }
+    try {
+      const res = await api<{ id: string; invoiceNo: string }>('sales.create', input);
+      void get().hydrate();
+      return { id: res.id, invoiceNo: res.invoiceNo };
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save sale');
+      void get().hydrate();
+      return null;
     }
   },
   /**
@@ -378,44 +412,8 @@ export const useSales = create<SalesState>((set, get) => ({
    * caller surfaces it.
    */
   updateSale: async (id, next, reason) => {
-    const branchId = resolveBranchToId(next.branch);
-    const customerId = next.customerId?.startsWith('cu_') ? next.customerId : undefined;
     try {
-      await api('sales.update', {
-        saleId: id,
-        input: {
-          status: next.status,
-          date: next.date,
-          customerId,
-          branchId,
-          userId: CURRENT_USER,
-          lines: next.lines.map((l) => ({
-            productId: l.productId,
-            qty: l.qty,
-            unitUsed: l.unit,
-            spr: l.unitPrice,
-            discountPct: l.discountPct,
-            discountFlat: l.discountFlat,
-            taxPct: l.taxPct,
-          })),
-          orderDiscountPct: next.orderDiscountPct,
-          orderDiscountFlat: next.orderDiscountFlat,
-          taxPct: next.taxPct,
-          shipping: next.shipping,
-          other: next.other,
-          // Payments already recorded against the invoice are preserved as-is;
-          // the edit is about what was sold and for how much.
-          payments: next.payments.map((pay) => ({
-            method: pay.method,
-            amount: pay.amount,
-            reference: pay.reference,
-            paidAt: pay.paidAt,
-          })),
-          validUntil: next.validUntil,
-          notes: next.notes,
-          reason,
-        },
-      });
+      await api('sales.update', { saleId: id, input: { ...saleInputOf(next), reason } });
       await get().hydrate();
       return true;
     } catch (e: unknown) {
@@ -424,58 +422,72 @@ export const useSales = create<SalesState>((set, get) => ({
       return false;
     }
   },
-  voidSale: (id, _by, reason) => {
-    void api('sales.void', { saleId: id, userId: CURRENT_USER, reason })
-      .then(() => get().hydrate())
-      .catch((e: unknown) => {
-        toast.error(e instanceof Error ? e.message : 'Failed to void sale');
-        void get().hydrate();
+  /**
+   * Finalise a draft (in place, with a real invoice number) or make a sale from a
+   * quotation (the quotation is kept). See convertSale in backend/services/sales.ts.
+   * Resolves the new invoice number, or null when refused.
+   */
+  convertSale: async (id, next) => {
+    try {
+      const { status: _drop, ...input } = saleInputOf(next);
+      void _drop;
+      const res = await api<{ id: string; invoiceNo: string; from: string }>('sales.convert', {
+        saleId: id,
+        input,
       });
+      await get().hydrate();
+      return res.invoiceNo;
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to convert to a sale');
+      await get().hydrate();
+      return null;
+    }
   },
+  voidSale: (id, _by, reason) =>
+    settle(get, api('sales.void', { saleId: id, userId: currentUserId(), reason }), 'Failed to void sale'),
   // Only drafts/quotations are deletable — the backend enforces that rule (a
   // final sale must be voided instead, so stock and dues are reversed).
-  deleteSale: (id) => {
-    void api('sales.delete', { saleId: id })
-      .then(() => get().hydrate())
-      .catch((e: unknown) => {
-        toast.error(e instanceof Error ? e.message : 'Failed to delete sale');
-        void get().hydrate();
+  deleteSale: (id) => settle(get, api('sales.delete', { saleId: id }), 'Failed to delete sale'),
+  addPayment: (saleId, p) =>
+    settle(
+      get,
+      api('sales.addPayment', {
+        saleId,
+        payment: { method: p.method, amount: p.amount, reference: p.reference, paidAt: p.paidAt },
+        userId: currentUserId(),
+      }),
+      'Failed to record payment',
+    ),
+  // Resolves true only once the backend has accepted the return, so the screen
+  // can stay open (with what the user typed) when it is refused.
+  addReturn: async (r) => {
+    try {
+      await api('sellReturns.create', {
+        saleId: r.saleId || undefined,
+        // The backend inherits the customer from the sale; a return with no
+        // sale needs the real id (never the walk-in).
+        customerId: realCustomerId(r.customerId),
+        // No branchId: the goods come back to the branch the sale was made at.
+        userId: currentUserId(),
+        reason: r.reason,
+        refundMethod: r.refundMethod,
+        lines: r.lines.map((l) => ({
+          productId: l.productId,
+          qty: l.qty,
+          unit: l.unit,
+          unitPrice: l.unitPrice,
+          refundAmount: l.refundAmount,
+        })),
+        notes: r.notes,
       });
-  },
-  addPayment: (saleId, p) => {
-    void api('sales.addPayment', {
-      saleId,
-      payment: { method: p.method, amount: p.amount, reference: p.reference, paidAt: p.paidAt },
-      userId: CURRENT_USER,
-    })
-      .then(() => get().hydrate())
-      .catch((e: unknown) => {
-        toast.error(e instanceof Error ? e.message : 'Failed to record payment');
-        void get().hydrate();
-      });
-  },
-  addReturn: (r) => {
-    void api('sellReturns.create', {
-      saleId: r.saleId || undefined,
-      customerId: r.customerId?.startsWith('cu_') ? r.customerId : undefined,
-      branchId: 'br_mp',
-      userId: CURRENT_USER,
-      reason: r.reason,
-      refundMethod: r.refundMethod,
-      lines: r.lines.map((l) => ({
-        productId: l.productId,
-        qty: l.qty,
-        unit: l.unit,
-        unitPrice: l.unitPrice,
-        refundAmount: l.refundAmount,
-      })),
-      notes: r.notes,
-    })
-      .then(() => get().hydrate())
-      .catch((e: unknown) => {
-        toast.error(e instanceof Error ? e.message : 'Failed to save return');
-        void get().hydrate();
-      });
+      await get().hydrate();
+      toast.success('Return saved');
+      return true;
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save return');
+      void get().hydrate();
+      return false;
+    }
   },
   // ----- Shipments (logistics tracking) -----
   // Backed by the `shipments` table + service under Electron. A shipment is a
@@ -487,44 +499,60 @@ export const useSales = create<SalesState>((set, get) => ({
   // under backend we do NOT mutate the sale locally and just rehydrate. The
   // SaleDetail "Create Shipment" button guard (`!sale.shipmentId`) stays as a
   // soft client-side hint only (it won't reflect server state after rehydrate).
-  addShipment: (s) => {
-    void api('shipments.create', {
-      saleId: s.saleId || undefined,
-      saleInvoiceNo: s.saleInvoiceNo || undefined,
-      customerName: s.customerName || undefined,
-      driver: s.driver,
-      vehicleNo: s.vehicleNo,
-      trackingNo: s.trackingNo,
-      status: s.status,
-      address: s.address,
-      targetDate: s.targetDate,
-      notes: s.notes,
-      branchId: 'br_mp',
-      userId: CURRENT_USER,
-    })
-      .then(() => get().hydrate())
-      .catch((e: unknown) => {
-        toast.error(e instanceof Error ? e.message : 'Failed to save shipment');
-        void get().hydrate();
-      });
-  },
-  updateShipment: (id, patch) => {
-    void api('shipments.update', {
-      id,
-      patch: {
-        status: patch.status,
-        driver: patch.driver,
-        vehicleNo: patch.vehicleNo,
-        trackingNo: patch.trackingNo,
-        address: patch.address,
-        targetDate: patch.targetDate,
-        notes: patch.notes,
-      },
-    })
-      .then(() => get().hydrate())
-      .catch((e: unknown) => {
-        toast.error(e instanceof Error ? e.message : 'Failed to update shipment');
-        void get().hydrate();
-      });
-  },
+  addShipment: (s) =>
+    settle(
+      get,
+      api('shipments.create', {
+        saleId: s.saleId || undefined,
+        saleInvoiceNo: s.saleInvoiceNo || undefined,
+        customerName: s.customerName || undefined,
+        driver: s.driver,
+        vehicleNo: s.vehicleNo,
+        trackingNo: s.trackingNo,
+        status: s.status,
+        address: s.address,
+        targetDate: s.targetDate,
+        notes: s.notes,
+        // No branchId: the shipment goes out from the sale's branch.
+        userId: currentUserId(),
+      }),
+      'Failed to save shipment',
+    ),
+  updateShipment: (id, patch) =>
+    settle(
+      get,
+      api('shipments.update', {
+        id,
+        patch: {
+          status: patch.status,
+          driver: patch.driver,
+          vehicleNo: patch.vehicleNo,
+          trackingNo: patch.trackingNo,
+          address: patch.address,
+          targetDate: patch.targetDate,
+          notes: patch.notes,
+        },
+      }),
+      'Failed to update shipment',
+    ),
 }));
+
+/**
+ * Wait for a write, then re-read from the database either way. Resolves true
+ * only when the backend accepted it; a refusal is shown as a toast.
+ */
+async function settle(
+  get: () => { hydrate: () => Promise<void> },
+  write: Promise<unknown>,
+  failure: string,
+): Promise<boolean> {
+  try {
+    await write;
+    void get().hydrate();
+    return true;
+  } catch (e: unknown) {
+    toast.error(e instanceof Error ? e.message : failure);
+    void get().hydrate();
+    return false;
+  }
+}

@@ -60,7 +60,7 @@ export function CustomizePanel({ onClose }: { onClose: () => void }) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium">{m.label}</div>
-                    <div className="text-[11px] text-muted-foreground">{m.description}</div>
+                    <div className="text-xs text-muted-foreground">{m.description}</div>
                   </div>
                   <div
                     className={cn(
@@ -92,7 +92,7 @@ export function CustomizePanel({ onClose }: { onClose: () => void }) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium">{m.label}</div>
-                    <div className="text-[11px] text-muted-foreground">{m.description}</div>
+                    <div className="text-xs text-muted-foreground">{m.description}</div>
                   </div>
                   <div
                     className={cn(
@@ -113,7 +113,7 @@ export function CustomizePanel({ onClose }: { onClose: () => void }) {
                 checked={showDeltas}
                 onChange={setShowDeltas}
               />
-              <div className="text-[11px] text-muted-foreground">
+              <div className="text-xs text-muted-foreground">
                 Reorder is available in the dashboard itself — when "Customize" mode is on, use the up/down
                 buttons on each card.
               </div>

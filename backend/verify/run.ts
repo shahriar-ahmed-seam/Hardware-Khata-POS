@@ -10,7 +10,7 @@ import { simulate } from '../seed/simulate.ts';
 import { Suite } from './assert.ts';
 import { EPSILON, round2 } from '../core/money.ts';
 import { recordMovement, stockOnHand, stockLevels, weightedAvgCost } from '../services/stock.ts';
-import { customerDue, supplierDue } from '../services/ledger.ts';
+import { customerDue, supplierDue, customerLedger, supplierLedger } from '../services/ledger.ts';
 import {
   computeSaleLine,
   computeSaleTotals,
@@ -291,7 +291,8 @@ function main() {
         c.id,
       ).s;
       const cr = row<{ s: number }>(db, "SELECT COALESCE(SUM(total),0) AS s FROM sell_returns WHERE customer_id=? AND refund_method='CreditAdjust'", c.id).s;
-      const expected = round2(open + sales - pays - cr);
+      const acct = row<{ s: number }>(db, "SELECT COALESCE(SUM(amount),0) AS s FROM account_payments WHERE party_type='customer' AND party_id=?", c.id).s;
+      const expected = round2(open + sales - pays - cr - acct);
       if (Math.abs(expected - due) > EPSILON) ledgerMismatch++;
     }
     s.ok('customer due formula consistent', ledgerMismatch === 0, `${ledgerMismatch} bad`);
@@ -308,10 +309,23 @@ function main() {
         "SELECT COALESCE(SUM(p.amount),0) AS s FROM purchase_payments p JOIN purchases pu ON pu.id=p.purchase_id WHERE pu.supplier_id=? AND pu.status!='cancelled'",
         sp.id,
       ).s;
-      const expected = round2(open + pur - pays);
+      const acct = row<{ s: number }>(db, "SELECT COALESCE(SUM(amount),0) AS s FROM account_payments WHERE party_type='supplier' AND party_id=?", sp.id).s;
+      const expected = round2(open + pur - pays - acct);
       if (Math.abs(expected - due) > EPSILON) supMismatch++;
     }
     s.ok('supplier due formula consistent', supMismatch === 0, `${supMismatch} bad`);
+
+    // The khata a screen shows must END at the balance it states, for everyone.
+    let khataMismatch = 0;
+    for (const c of custs) {
+      const l = customerLedger(db, c.id);
+      if (Math.abs((l[l.length - 1]?.balance ?? 0) - customerDue(db, c.id)) > EPSILON) khataMismatch++;
+    }
+    for (const sp of sups) {
+      const l = supplierLedger(db, sp.id);
+      if (Math.abs((l[l.length - 1]?.balance ?? 0) - supplierDue(db, sp.id)) > EPSILON) khataMismatch++;
+    }
+    s.ok('every khata ends at the stated balance', khataMismatch === 0, `${khataMismatch} bad`);
   }
 
   // ============================================================
@@ -437,8 +451,18 @@ function main() {
     const raw = row<{ s: number }>(db, "SELECT COALESCE(SUM(total),0) AS s FROM sales WHERE status='final' AND date>=? AND date<=?", resolved.from, resolved.to).s;
     s.money('dashboard sales total == raw', stats.sales.total, round2(raw));
 
-    // gross profit == revenue - cogs
-    s.money('dashboard gross profit identity', stats.profit.grossProfit, round2(stats.profit.revenue - stats.profit.cogs));
+    // gross profit == revenue − (COGS − cost of goods returned) − refunds
+    // (it ignored returns entirely, so it disagreed with the P&L on any day with one)
+    s.money(
+      'dashboard gross profit identity (returns counted)',
+      stats.profit.grossProfit,
+      round2(stats.profit.revenue - stats.profit.cogs + stats.profit.returnedCost - stats.profit.refunds),
+    );
+    s.money(
+      'dashboard and P&L agree on gross profit for the same range',
+      stats.profit.grossProfit,
+      profitLoss(db, yearRange).grossProfit,
+    );
     // net profit == gross - expenses
     s.money('dashboard net profit identity', stats.profit.netProfit, round2(stats.profit.grossProfit - stats.profit.expenses));
 
@@ -552,8 +576,37 @@ function main() {
 
     // profit/loss net profit components
     const pl = profitLoss(db, yearRange);
-    const recomputedGross = round2(pl.moneyIn.totalSalesExclTaxDisc - pl.moneyOut.cogs - pl.moneyOut.sellReturns);
-    s.money('P/L gross profit identity', pl.grossProfit, recomputedGross);
+    const recomputedGross = round2(
+      pl.moneyIn.totalSalesExclTaxDisc - pl.moneyOut.cogs + pl.moneyOut.returnedCost - pl.moneyOut.sellReturns,
+    );
+    s.money('P/L gross profit identity (returned goods come off COGS)', pl.grossProfit, recomputedGross);
+
+    // The cost of returned goods, recomputed from raw rows: every live sell
+    // return's own stock movements, base units × the cost they came back at.
+    const plRange = resolveRange(yearRange);
+    const rawReturnedCost = row<{ v: number }>(
+      db,
+      `SELECT COALESCE(SUM(m.qty * m.unit_cost),0) AS v
+         FROM sell_returns r LEFT JOIN sales sa ON sa.id = r.sale_id
+         JOIN stock_movements m ON m.ref_no = r.ref_no AND m.reason = 'sale_return'
+        WHERE (r.sale_id IS NULL OR sa.status = 'final') AND r.date >= ? AND r.date <= ?`,
+      plRange.from,
+      plRange.to,
+    ).v;
+    s.money('P/L returned-goods cost == raw movement sum', pl.moneyOut.returnedCost, round2(rawReturnedCost));
+    s.ok(
+      'the simulated year really has returns (so the check above is not vacuous)',
+      pl.moneyOut.sellReturns > 0 && pl.moneyOut.returnedCost > 0,
+    );
+    // Net profit carries no supplier refunds: purchases are not an expense in a
+    // COGS-based P&L, so sending goods back is not income either.
+    s.money(
+      'P/L net profit identity (no purchase returns in profit)',
+      pl.netProfit,
+      round2(
+        pl.grossProfit + pl.moneyIn.sellShipping + pl.moneyIn.sellOther - pl.moneyOut.expenses + pl.moneyOut.stockAdjustment,
+      ),
+    );
   }
 
   // ============================================================

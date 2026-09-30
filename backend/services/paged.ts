@@ -80,7 +80,7 @@ function paymentStateSql(
    * How much of the document counts as SETTLED. Sales pass
    * `(s.paid + s.credited)` because a credit note settles an invoice without any
    * money arriving — the filter has to agree with the badge the row renders (see
-   * `settlementOf`). Purchases have no such column and use the default.
+   * `settlementOf`). Purchases pass `(p.paid + p.credited)` since v10.
    */
   settled = `${alias}.paid`,
 ): string | null {
@@ -269,7 +269,9 @@ export function listPurchasesPage(db: DB, query: PageQuery = {}): Page<Record<st
     where.push('(LOWER(p.ref_no) LIKE @q OR LOWER(COALESCE(sup.name, \'\')) LIKE @q)');
     params.q = `%${query.q.toLowerCase()}%`;
   }
-  const purchasePayment = paymentStateSql('p', query.payment);
+  // Purchases have `credited` too since v10, so a bill settled partly by a
+  // supplier credit note is "partial", as its badge says.
+  const purchasePayment = paymentStateSql('p', query.payment, '(p.paid + p.credited)');
   if (purchasePayment) where.push(`(${purchasePayment})`);
 
   const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';

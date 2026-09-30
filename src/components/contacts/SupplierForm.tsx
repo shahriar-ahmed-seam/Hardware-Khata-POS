@@ -113,7 +113,7 @@ export function SupplierForm({ initial, asDrawer, onSave, onDelete, onCancel }: 
                 <select
                   value={s.paymentTerms ?? 'Cash'}
                   onChange={(e) => set('paymentTerms', e.target.value as Supplier['paymentTerms'])}
-                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                  className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
                 >
                   {TERMS.map((t) => (
                     <option key={t} value={t}>
@@ -200,11 +200,11 @@ function Field({
 }) {
   return (
     <div className={className}>
-      <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+      <label className="text-xs font-semibold text-muted-foreground">
         {label} {required && <span className="text-destructive">*</span>}
       </label>
       {children}
-      {hint && <div className="text-[10px] text-muted-foreground mt-0.5">{hint}</div>}
+      {hint && <div className="text-xs text-muted-foreground mt-0.5">{hint}</div>}
     </div>
   );
 }

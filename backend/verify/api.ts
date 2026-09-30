@@ -370,6 +370,19 @@ function main() {
   const search = call('search.global', { query: 'cement' }) as { products: unknown[] };
   s.gt('search.global finds products', search.products.length, 0);
 
+  // The simulated history is anchored on TODAY (simulate() counts back from
+  // Date.now()), so how much p1 is left at the end of it depends on the calendar
+  // — on some days exactly one. The edit below sells TWO, so put a known quantity
+  // on the shelf first, through the API, rather than depending on the date the
+  // suite happens to run.
+  call('adjustments.create', {
+    branchId: 'br_mp',
+    type: 'recount',
+    reason: 'api suite: known stock for the edit test',
+    lines: [{ productId: 'p1', qty: 10 }],
+    createdBy: 'u_admin',
+  });
+
   // a write through the API: create a sale, then read it back
   const created = call('sales.create', {
     branchId: 'br_mp',

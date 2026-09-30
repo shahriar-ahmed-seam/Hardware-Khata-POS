@@ -60,7 +60,8 @@ interface Props {
   branchId?: string;
 }
 
-export function QuickUpdateModal({ product, onClose, branchId = 'br_mp' }: Props) {
+// No branchId → the backend counts it against the shop's default branch.
+export function QuickUpdateModal({ product, onClose, branchId }: Props) {
   const patchProduct = usePatchProduct();
   const correctStock = useCorrectStock();
   const setProductCost = useSetProductCost();
@@ -122,7 +123,7 @@ export function QuickUpdateModal({ product, onClose, branchId = 'br_mp' }: Props
           delta,
           unit: product.unit,
           branchId,
-          userId: currentUserId ?? 'u_admin',
+          userId: currentUserId ?? '',
           reason: `Counted ${formatNumber(count)} ${product.unit} in shop`,
         });
       }
@@ -187,7 +188,7 @@ export function QuickUpdateModal({ product, onClose, branchId = 'br_mp' }: Props
               </div>
               <div className="min-w-0">
                 <div className="text-base font-semibold">Buying price</div>
-                <div className="text-2xs text-muted-foreground">What you pay the supplier</div>
+                <div className="text-xs text-muted-foreground">What you pay the supplier</div>
               </div>
             </div>
 
@@ -197,14 +198,14 @@ export function QuickUpdateModal({ product, onClose, branchId = 'br_mp' }: Props
                 <div className="min-w-0">
                   <div className="text-xs text-muted-foreground">Current buying price</div>
                   <div className="text-lg font-semibold tabular">{formatBDT(product.cost)}</div>
-                  <div className="text-2xs text-muted-foreground mt-0.5">
+                  <div className="text-xs text-muted-foreground mt-0.5">
                     Set on <span className="tabular">{shortDate(product.costUpdatedAt)}</span>
                   </div>
                 </div>
                 <button
                   onClick={() => setHistoryOpen(true)}
                   title="Price history"
-                  className="shrink-0 h-9 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-border bg-card text-xs font-medium hover:bg-secondary hover:border-primary/50 transition"
+                  className="shrink-0 h-10 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-border bg-card text-xs font-medium hover:bg-secondary hover:border-primary/50 transition"
                 >
                   <History className="size-3.5" />
                   <span className="hidden md:inline">History</span>
@@ -236,7 +237,7 @@ export function QuickUpdateModal({ product, onClose, branchId = 'br_mp' }: Props
 
             <Row label="Average buying price" value={formatBDT(product.avgCost ?? product.cost)} />
             {buyChanged && (
-              <div className="text-2xs text-muted-foreground">
+              <div className="text-xs text-muted-foreground">
                 Saving updates the average buying price.
               </div>
             )}
@@ -250,7 +251,7 @@ export function QuickUpdateModal({ product, onClose, branchId = 'br_mp' }: Props
               </div>
               <div className="min-w-0">
                 <div className="text-base font-semibold">Selling price</div>
-                <div className="text-2xs text-muted-foreground">What the customer pays</div>
+                <div className="text-xs text-muted-foreground">What the customer pays</div>
               </div>
             </div>
 
@@ -401,7 +402,7 @@ function CostHistoryPopup({ product, onClose }: { product: Product; onClose: () 
                   <div key={e.id} className="flex items-baseline gap-3 px-3 py-2.5">
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-medium tabular">{shortDate(e.at)}</div>
-                      <div className="text-2xs text-muted-foreground truncate">
+                      <div className="text-xs text-muted-foreground truncate">
                         {/* Static phrases only — the Bangla layer matches whole nodes. */}
                         {e.retractedAt ? (
                           <span>Cancelled — not counted</span>
@@ -417,7 +418,7 @@ function CostHistoryPopup({ product, onClose }: { product: Product; onClose: () 
                         {e.userName && <span className="ml-1">· {e.userName}</span>}
                       </div>
                       {(e.retractReason ?? e.note) && (
-                        <div className="text-2xs text-muted-foreground mt-0.5 break-words">
+                        <div className="text-xs text-muted-foreground mt-0.5 break-words">
                           {e.retractReason ?? e.note}
                         </div>
                       )}
@@ -447,7 +448,7 @@ function CostHistoryPopup({ product, onClose }: { product: Product; onClose: () 
               {formatBDT(product.avgCost ?? product.cost)}
             </span>
           </div>
-          <Button variant="outline" onClick={onClose} className="h-9">
+          <Button variant="outline" onClick={onClose}>
             Close
           </Button>
         </div>

@@ -92,10 +92,10 @@ export default function CustomerGroupPage() {
               <Card key={r.group} className={cn('p-4 border-l-4', groupColor(r.group))}>
                 <div className="flex items-center justify-between">
                   <div className="font-semibold">{r.group}</div>
-                  <div className="text-[11px] tabular text-muted-foreground">{pct.toFixed(0)}%</div>
+                  <div className="text-xs tabular text-muted-foreground">{pct.toFixed(0)}%</div>
                 </div>
                 <div className="tabular font-bold text-xl mt-1">{formatBDT(r.netSales)}</div>
-                <div className="text-[11px] text-muted-foreground">
+                <div className="text-xs text-muted-foreground">
                   {formatNumber(r.saleCount)} sales · avg {formatBDT(r.avgTicket)}
                 </div>
                 <div className="mt-2 h-1 rounded-full bg-secondary overflow-hidden">
@@ -107,7 +107,7 @@ export default function CustomerGroupPage() {
         </div>
 
         <Card className="overflow-hidden">
-          <div className="grid grid-cols-[1.4fr_0.8fr_0.8fr_1fr_1fr_1fr_1fr] gap-2 px-4 py-2.5 border-b border-border bg-secondary/40 text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+          <div className="grid grid-cols-[1.4fr_0.8fr_0.8fr_1fr_1fr_1fr_1fr] gap-2 px-4 py-2.5 border-b border-border bg-secondary/40 text-xs font-semibold text-muted-foreground">
             <div>Group</div>
             <div className="text-right">Customers</div>
             <div className="text-right">Sales</div>
@@ -168,7 +168,7 @@ function Kpi({
 }) {
   return (
     <Card className="p-4">
-      <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+      <div className="text-xs font-semibold text-muted-foreground">
         {label}
       </div>
       <div

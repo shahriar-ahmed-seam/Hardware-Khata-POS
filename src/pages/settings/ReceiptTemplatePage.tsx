@@ -124,7 +124,7 @@ export default function ReceiptTemplatePage() {
               onChange={(v) => set({ showLogo: v })}
             />
             <div>
-              <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+              <label className="text-xs font-semibold text-muted-foreground">
                 Header text (one line per row)
               </label>
               <textarea
@@ -158,7 +158,7 @@ export default function ReceiptTemplatePage() {
           <Card className="p-4 space-y-3">
             <div className="text-sm font-semibold">Footer</div>
             <div>
-              <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+              <label className="text-xs font-semibold text-muted-foreground">
                 Footer text (one line per row)
               </label>
               <textarea
@@ -177,7 +177,7 @@ export default function ReceiptTemplatePage() {
 
         {/* RIGHT — preview */}
         <div>
-          <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em] mb-2">
+          <div className="text-xs font-semibold text-muted-foreground mb-2">
             Live preview
           </div>
           <div className="rounded-xl border border-border bg-muted p-6 overflow-auto">
@@ -185,7 +185,7 @@ export default function ReceiptTemplatePage() {
               <Receipt invoiceNo="INV-2026-0500" cart={SAMPLE_CART} payment={SAMPLE_PAYMENT} />
             </div>
           </div>
-          <div className="text-[11px] text-muted-foreground mt-2">
+          <div className="text-xs text-muted-foreground mt-2">
             The preview always uses the current shop info and settings. Sample data only.
           </div>
         </div>

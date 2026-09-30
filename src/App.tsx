@@ -6,7 +6,7 @@ import { Toaster } from './components/ui/Toaster';
 import { ConfirmDialog } from './components/ui/ConfirmDialog';
 import { PromptDialog } from './components/ui/PromptDialog';
 import { useTheme } from './stores/theme';
-import { useSettings } from './stores/settings';
+import { snapFontScale, useSettings } from './stores/settings';
 import { useUI } from './stores/ui';
 import { useAuth } from './stores/auth';
 import { useFocusRescue } from './hooks/useFocusRescue';
@@ -21,7 +21,6 @@ import Drafts from './pages/Drafts';
 import Quotations from './pages/Quotations';
 import SellReturns from './pages/SellReturns';
 import Shipments from './pages/Shipments';
-import ImportSales from './pages/ImportSales';
 import Products from './pages/Products';
 import ProductEdit from './pages/ProductEdit';
 import Categories from './pages/Categories';
@@ -31,20 +30,15 @@ import Warranties from './pages/Warranties';
 import PriceGroups from './pages/PriceGroups';
 import BulkPriceUpdate from './pages/BulkPriceUpdate';
 import BarcodePrint from './pages/BarcodePrint';
-import ImportProducts from './pages/ImportProducts';
-import ImportOpeningStock from './pages/ImportOpeningStock';
 import Customers from './pages/Customers';
 import CustomerDetail from './pages/CustomerDetail';
 import CustomerDues from './pages/CustomerDues';
 import CustomerGroups from './pages/CustomerGroups';
-import ImportCustomers from './pages/ImportCustomers';
 import Suppliers from './pages/Suppliers';
 import SupplierDetail from './pages/SupplierDetail';
-import ImportSuppliers from './pages/ImportSuppliers';
 import Purchases from './pages/Purchases';
 import AddPurchase from './pages/AddPurchase';
 import PurchaseReturns from './pages/PurchaseReturns';
-import ImportPurchases from './pages/ImportPurchases';
 import Stock from './pages/Stock';
 import StockAlerts from './pages/StockAlerts';
 import StockTransfers from './pages/StockTransfers';
@@ -53,7 +47,6 @@ import StockAdjustments from './pages/StockAdjustments';
 import AddStockAdjustment from './pages/AddStockAdjustment';
 import Expenses from './pages/Expenses';
 import ExpenseCategories from './pages/ExpenseCategories';
-import ImportExpenses from './pages/ImportExpenses';
 import ImportHub from './pages/ImportHub';
 import Reports from './pages/Reports';
 
@@ -164,7 +157,7 @@ export default function App() {
     root.style.setProperty('--primary', `${appearance.accentHue} 75% 58%`);
     root.style.setProperty('--ring', `${appearance.accentHue} 75% 58%`);
     root.style.setProperty('--sidebar-accent', `${appearance.accentHue} 75% 58%`);
-    root.style.fontSize = `${appearance.fontScale * 16}px`;
+    root.style.fontSize = `${snapFontScale(appearance.fontScale) * 16}px`;
     setDensity(appearance.density);
   }, [appearance.accentHue, appearance.fontScale, appearance.density, setDensity]);
 
@@ -181,7 +174,7 @@ export default function App() {
         <Route path="/pos" element={<POS />} />
         <Route path="/sales" element={<Sales />} />
         <Route path="/sales/new" element={<AddSale />} />
-        <Route path="/sales/import" element={<ImportSales />} />
+        <Route path="/sales/import" element={<Navigate to="/import" replace />} />
         <Route path="/sales/drafts" element={<Drafts />} />
         <Route path="/sales/quotations" element={<Quotations />} />
         <Route path="/sales/returns" element={<SellReturns />} />
@@ -189,7 +182,7 @@ export default function App() {
         <Route path="/sales/:id/edit" element={<AddSale />} />
         <Route path="/purchases" element={<Purchases />} />
         <Route path="/purchases/new" element={<AddPurchase />} />
-        <Route path="/purchases/import" element={<ImportPurchases />} />
+        <Route path="/purchases/import" element={<Navigate to="/import" replace />} />
         <Route path="/purchases/returns" element={<PurchaseReturns />} />
         <Route path="/purchases/:id/edit" element={<AddPurchase />} />
         <Route path="/products" element={<Products />} />
@@ -203,8 +196,8 @@ export default function App() {
         <Route path="/products/price-update" element={<BulkPriceUpdate />} />
         <Route path="/products/price-groups" element={<PriceGroups />} />
         <Route path="/products/warranties" element={<Warranties />} />
-        <Route path="/products/import" element={<ImportProducts />} />
-        <Route path="/products/import-stock" element={<ImportOpeningStock />} />
+        <Route path="/products/import" element={<Navigate to="/import" replace />} />
+        <Route path="/products/import-stock" element={<Navigate to="/import" replace />} />
         <Route path="/stock" element={<Stock />} />
         <Route path="/stock/alerts" element={<StockAlerts />} />
         <Route path="/stock/transfers" element={<StockTransfers />} />
@@ -212,18 +205,20 @@ export default function App() {
         <Route path="/stock/adjustments" element={<StockAdjustments />} />
         <Route path="/stock/adjustments/new" element={<AddStockAdjustment />} />
         <Route path="/contacts/customers" element={<Customers />} />
-        <Route path="/contacts/customers/import" element={<ImportCustomers />} />
+        <Route path="/contacts/customers/import" element={<Navigate to="/import" replace />} />
         <Route path="/contacts/customers/:id" element={<CustomerDetail />} />
         <Route path="/contacts/suppliers" element={<Suppliers />} />
-        <Route path="/contacts/suppliers/import" element={<ImportSuppliers />} />
+        <Route path="/contacts/suppliers/import" element={<Navigate to="/import" replace />} />
         <Route path="/contacts/suppliers/:id" element={<SupplierDetail />} />
         <Route path="/contacts/customer-groups" element={<CustomerGroups />} />
         <Route path="/contacts/dues" element={<CustomerDues />} />
         <Route path="/expenses" element={<Expenses />} />
         <Route path="/expenses/categories" element={<ExpenseCategories />} />
-        <Route path="/expenses/import" element={<ImportExpenses />} />
+        <Route path="/expenses/import" element={<Navigate to="/import" replace />} />
 
-        {/* Single hub for every bulk importer (replaces 7 sidebar rows) */}
+        {/* Single hub for every bulk importer (replaces 7 sidebar rows). The seven
+            importers were mock screens that saved nothing, so every import route
+            lands on the hub, which says plainly that importing is not ready yet. */}
         <Route path="/import" element={<ImportHub />} />
         <Route path="/cash-register" element={<CashRegister />} />
         <Route path="/cash-register/report" element={<RegisterReport />} />

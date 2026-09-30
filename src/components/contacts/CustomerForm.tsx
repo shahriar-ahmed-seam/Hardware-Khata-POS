@@ -157,7 +157,7 @@ export function CustomerForm({ initial, asDrawer, onSave, onDelete, onCancel }: 
                 {(c.tags ?? []).map((t) => (
                   <span
                     key={t}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[11px] font-medium"
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/10 text-primary text-xs font-medium"
                   >
                     {t}
                     <button type="button" onClick={() => removeTag(t)} className="hover:text-destructive">
@@ -237,7 +237,7 @@ function Section({
         <div className="text-sm font-semibold">
           {title} {required && <span className="text-destructive">*</span>}
         </div>
-        {subtitle && <div className="text-[11px] text-muted-foreground">{subtitle}</div>}
+        {subtitle && <div className="text-xs text-muted-foreground">{subtitle}</div>}
       </div>
       {children}
     </div>
@@ -259,11 +259,11 @@ function Field({
 }) {
   return (
     <div className={className}>
-      <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+      <label className="text-xs font-semibold text-muted-foreground">
         {label} {required && <span className="text-destructive">*</span>}
       </label>
       {children}
-      {hint && <div className="text-[10px] text-muted-foreground mt-0.5">{hint}</div>}
+      {hint && <div className="text-xs text-muted-foreground mt-0.5">{hint}</div>}
     </div>
   );
 }

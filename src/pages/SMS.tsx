@@ -88,36 +88,36 @@ export default function SMS() {
           <Card className="p-4 border-l-4 border-primary">
             <div className="flex items-center gap-2">
               <Wallet className="size-4 text-primary" />
-              <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+              <div className="text-xs font-semibold text-muted-foreground">
                 Credit balance
               </div>
             </div>
             <div className="tabular font-bold text-xl mt-1.5 text-primary">
               {formatBDT(credit.balance)}
             </div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">
+            <div className="text-xs text-muted-foreground mt-0.5">
               ≈ {formatNumber(remainingMessages)} messages
             </div>
           </Card>
           <Card className="p-4 border-l-4 border-success">
             <div className="flex items-center gap-2">
               <CheckCircle2 className="size-4 text-success" />
-              <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+              <div className="text-xs font-semibold text-muted-foreground">
                 Messages sent
               </div>
             </div>
             <div className="tabular font-bold text-xl mt-1.5">{formatNumber(sentCount)}</div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">all-time</div>
+            <div className="text-xs text-muted-foreground mt-0.5">all-time</div>
           </Card>
           <Card className="p-4 border-l-4 border-warning">
             <div className="flex items-center gap-2">
               <TrendingUp className="size-4 text-warning" />
-              <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+              <div className="text-xs font-semibold text-muted-foreground">
                 Last 7 days
               </div>
             </div>
             <div className="tabular font-bold text-xl mt-1.5">{formatNumber(last7Days)}</div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">
+            <div className="text-xs text-muted-foreground mt-0.5">
               {formatBDT(last7Days * credit.smsRate)} estimated cost
             </div>
           </Card>
@@ -134,7 +134,7 @@ export default function SMS() {
                   failedCount > 0 ? 'text-destructive' : 'text-muted-foreground',
                 )}
               />
-              <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+              <div className="text-xs font-semibold text-muted-foreground">
                 Failed
               </div>
             </div>
@@ -146,7 +146,7 @@ export default function SMS() {
             >
               {formatNumber(failedCount)}
             </div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">
+            <div className="text-xs text-muted-foreground mt-0.5">
               {failedCount > 0 ? (
                 <Link to="/sms/history" className="underline">
                   Review history
@@ -160,7 +160,7 @@ export default function SMS() {
 
         {/* Tiles */}
         <section>
-          <h2 className="text-[11px] uppercase font-semibold text-muted-foreground tracking-[0.06em] mb-2">
+          <h2 className="text-xs font-semibold text-muted-foreground mb-2">
             Sections
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
@@ -185,7 +185,7 @@ export default function SMS() {
                         <div className="flex items-center gap-2">
                           <span className="font-semibold text-sm">{it.label}</span>
                           {count !== undefined && (
-                            <span className="text-[10px] text-muted-foreground bg-secondary px-1.5 rounded">
+                            <span className="text-xs text-muted-foreground bg-secondary px-1.5 rounded">
                               {count}
                             </span>
                           )}

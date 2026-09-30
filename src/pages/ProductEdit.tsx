@@ -16,6 +16,7 @@ import {
 import { useCanAll } from '@/hooks/useCan';
 import { confirm } from '@/stores/confirm';
 import { toast } from '@/stores/toast';
+import { currentUserId } from '@/lib/actor';
 
 export default function ProductEdit() {
   const nav = useNavigate();
@@ -46,8 +47,8 @@ export default function ProductEdit() {
         await createProduct.mutateAsync({
           ...p,
           openingStock: p.stock,
-          branchId: 'br_mp',
-          userId: 'u_admin',
+          // No branchId: opening stock goes to the shop's default branch.
+          userId: currentUserId(),
         });
       } else {
         await updateProduct.mutateAsync(p);

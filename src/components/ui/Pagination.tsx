@@ -62,7 +62,7 @@ export function Pagination({
             <select
               value={pageSize}
               onChange={(e) => onPageSizeChange(Number(e.target.value))}
-              className="h-9 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+              className="h-10 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
             >
               {PAGE_SIZES.map((s) => (
                 <option key={s} value={s}>
@@ -121,11 +121,13 @@ function PagerBtn({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       disabled={disabled}
       title={title}
+      aria-label={title}
       className={cn(
-        'h-9 px-2.5 inline-flex items-center gap-1 rounded-md border border-border bg-card text-sm font-medium transition',
+        'h-10 px-3 inline-flex items-center gap-1 rounded-md border border-border bg-card text-sm font-medium transition',
         'hover:bg-secondary hover:border-primary/50',
         'disabled:opacity-40 disabled:pointer-events-none',
       )}

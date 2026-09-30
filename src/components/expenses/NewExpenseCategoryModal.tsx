@@ -84,7 +84,7 @@ export function NewExpenseCategoryModal({ open, onClose, onCreated, initial }: P
     >
       <div className="p-4 space-y-3">
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">Name *</label>
+          <label className="text-xs font-semibold text-muted-foreground">Name *</label>
           <Input
             autoFocus
             value={name}
@@ -93,7 +93,7 @@ export function NewExpenseCategoryModal({ open, onClose, onCreated, initial }: P
           />
         </div>
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">Icon</label>
+          <label className="text-xs font-semibold text-muted-foreground">Icon</label>
           <div className="flex flex-wrap gap-1 mt-1">
             {EMOJIS.map((e) => (
               <button
@@ -122,13 +122,13 @@ export function NewExpenseCategoryModal({ open, onClose, onCreated, initial }: P
           </div>
         </div>
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+          <label className="text-xs font-semibold text-muted-foreground">
             Parent category
           </label>
           <select
             value={parentId ?? ''}
             onChange={(e) => setParentId(e.target.value || undefined)}
-            className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+            className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="">— Top level —</option>
             {cats
@@ -142,7 +142,7 @@ export function NewExpenseCategoryModal({ open, onClose, onCreated, initial }: P
           </select>
         </div>
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+          <label className="text-xs font-semibold text-muted-foreground">
             Monthly budget (৳, optional)
           </label>
           <NumberField value={budget} onChangeNumber={setBudget} />

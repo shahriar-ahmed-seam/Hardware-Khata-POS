@@ -11,6 +11,7 @@ import { openDatabase, migrate, type DB } from '../db/connection.ts';
 import { simulate } from '../seed/simulate.ts';
 import { Suite } from './assert.ts';
 import { runScenarios } from './scenarios.ts';
+import { runChain } from './chain.ts';
 import { round2, EPSILON } from '../core/money.ts';
 import { stockLevels } from '../services/stock.ts';
 
@@ -99,6 +100,7 @@ function main() {
   const s = new Suite();
   const t0 = Date.now();
   runScenarios(s);
+  runChain(s);
   determinismTest(s);
   persistentSmokeTest(s);
   fullIdentitySuite(s);

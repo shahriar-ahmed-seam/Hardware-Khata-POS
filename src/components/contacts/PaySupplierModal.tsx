@@ -9,6 +9,7 @@ import { useSuppliers } from '@/stores/contacts';
 import { api } from '@/lib/api';
 import { toSupplier, type BackendSupplier } from '@/hooks/contactAdapter';
 import type { Supplier } from '@/types/domain';
+import { toast } from '@/stores/toast';
 
 const METHODS: { id: 'Cash' | 'bKash' | 'Nagad' | 'Card' | 'Bank'; icon: any; label: string; needsRef?: boolean }[] = [
   { id: 'Cash', icon: Banknote, label: 'Cash' },
@@ -68,11 +69,24 @@ export function PaySupplierModal({ open, onClose, supplierId }: Props) {
     }
   }, [open, supplier]);
 
+  // Above the early return (every hook runs on every render).
+  const [saving, setSaving] = useState(false);
+
   if (!supplier) return null;
 
-  const submit = () => {
-    if (amount <= 0) return;
-    paySupplier(supplier.id, amount, method, reference || undefined);
+  // Closes only once the backend has taken it. The backend pays the opening
+  // balance first, then the oldest bills, and keeps anything more as an advance.
+  const submit = async () => {
+    if (amount <= 0 || saving) return;
+    setSaving(true);
+    const res = await paySupplier(supplier.id, amount, method, reference || undefined);
+    setSaving(false);
+    if (!res) return;
+    const parts: string[] = [];
+    if (res.toOpening > 0) parts.push(`Opening balance ${formatBDT(res.toOpening)}`);
+    if (res.allocated > 0) parts.push(`Bills ${formatBDT(res.allocated)}`);
+    if (res.advance > 0) parts.push(`Advance ${formatBDT(res.advance)}`);
+    toast.success('Payment recorded', { description: parts.join(' · ') });
     onClose();
   };
 
@@ -90,7 +104,7 @@ export function PaySupplierModal({ open, onClose, supplierId }: Props) {
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={amount <= 0}>
+          <Button onClick={() => void submit()} disabled={amount <= 0 || saving}>
             <Save className="size-4" /> Save Payment
           </Button>
         </div>
@@ -120,18 +134,18 @@ export function PaySupplierModal({ open, onClose, supplierId }: Props) {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
-            <label className="text-[10px] uppercase font-semibold text-muted-foreground">Amount</label>
+            <label className="text-xs font-semibold text-muted-foreground">Amount</label>
             <NumberField value={amount} onChangeNumber={setAmount} className="text-right" />
             <div className="flex items-center gap-1 mt-1">
               <button
                 onClick={() => setAmount(supplier.due)}
-                className="text-[10px] px-2 h-6 rounded border border-border hover:bg-secondary"
+                className="text-xs px-2 h-6 rounded border border-border hover:bg-secondary"
               >
                 Full payable
               </button>
               <button
                 onClick={() => setAmount(Math.round(supplier.due / 2))}
-                className="text-[10px] px-2 h-6 rounded border border-border hover:bg-secondary"
+                className="text-xs px-2 h-6 rounded border border-border hover:bg-secondary"
               >
                 Half
               </button>
@@ -139,7 +153,7 @@ export function PaySupplierModal({ open, onClose, supplierId }: Props) {
           </div>
           {needsRef && (
             <div>
-              <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+              <label className="text-xs font-semibold text-muted-foreground">
                 Reference / TxID
               </label>
               <Input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="TX1234567" />

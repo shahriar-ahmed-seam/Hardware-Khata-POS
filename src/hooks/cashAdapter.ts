@@ -43,6 +43,9 @@ export interface BackendShift {
   variance: number | null;
   carried_float: number | null;
   close_note: string | null;
+  /** v11: who closed it. Null on shifts closed before v11 (nobody was recorded). */
+  closed_by?: string | null;
+  closed_by_name?: string | null;
 }
 
 /** The shape returned by `cash.shiftTotals`. */
@@ -78,7 +81,9 @@ export function toShift(row: BackendShift, totals?: BackendShiftTotals): Shift {
     openedAt: row.opened_at,
     openingCash: row.opening_cash,
     openingNote: row.open_note ?? undefined,
-    closedBy: row.closed_at ? (row.user_name ?? row.user_id) : undefined,
+    // The person who closed it, not the opener (the opener was shown here for
+    // every close). A shift closed before v11 has nobody on record: '—'.
+    closedBy: row.closed_at ? (row.closed_by_name ?? row.closed_by ?? '—') : undefined,
     closedAt: row.closed_at ?? undefined,
     // Denominations are NOT stored on the backend (only counted_cash total), so
     // the per-note breakdown is unavailable when reading back. See store.closeShift.
@@ -107,6 +112,9 @@ function toMovementType(direction: 'in' | 'out', reason: string): MovementType {
   switch (reason) {
     case 'sale':
       return 'sale_cash';
+    // A customer paying on account (opening balance or advance) — v11.
+    case 'payment_received':
+      return 'payment_received';
     case 'refund':
       return 'refund';
     case 'expense':

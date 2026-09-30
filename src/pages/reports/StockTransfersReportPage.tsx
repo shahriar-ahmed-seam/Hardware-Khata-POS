@@ -149,7 +149,7 @@ export default function StockTransfersReportPage() {
         </div>
 
         <Card className="overflow-hidden">
-          <div className="grid grid-cols-[1fr_1.2fr_2fr_0.6fr_1fr_0.9fr] gap-2 px-4 py-2.5 border-b border-border bg-secondary/40 text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+          <div className="grid grid-cols-[1fr_1.2fr_2fr_0.6fr_1fr_0.9fr] gap-2 px-4 py-2.5 border-b border-border bg-secondary/40 text-xs font-semibold text-muted-foreground">
             <div>Date</div>
             <div>Ref</div>
             <div>From → To</div>
@@ -211,7 +211,7 @@ function Kpi({
 }) {
   return (
     <Card className="p-4">
-      <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+      <div className="text-xs font-semibold text-muted-foreground">
         {label}
       </div>
       <div

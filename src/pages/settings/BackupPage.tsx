@@ -49,6 +49,7 @@ const EXPORTS: { kind: ExportKind; label: string }[] = [
   { kind: 'customers', label: 'Customers' },
   { kind: 'suppliers', label: 'Suppliers' },
   { kind: 'stock', label: 'Stock' },
+  { kind: 'expenses', label: 'Expenses' },
 ];
 
 function formatTime(iso?: string): string {
@@ -135,7 +136,7 @@ export default function BackupPage() {
           </div>
 
           <div className="rounded-md border border-border bg-muted/40 p-3 space-y-2">
-            <div className="text-2xs uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+            <div className="text-xs font-semibold text-muted-foreground">
               Last pendrive backup
             </div>
             {config.lastUsbBackupAt ? (
@@ -184,7 +185,7 @@ export default function BackupPage() {
           </div>
 
           <div className="rounded-md border border-border bg-muted/40 p-3 space-y-2">
-            <div className="text-2xs uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+            <div className="text-xs font-semibold text-muted-foreground">
               Current folder
             </div>
             <div className="font-mono text-xs break-all" data-no-i18n>
@@ -207,7 +208,7 @@ export default function BackupPage() {
 
           {cloudRoots.length > 0 && (
             <div>
-              <div className="text-2xs uppercase font-semibold text-muted-foreground tracking-[0.06em] mb-1">
+              <div className="text-xs font-semibold text-muted-foreground mb-1">
                 Cloud folders found on this computer
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -228,7 +229,7 @@ export default function BackupPage() {
                         <CloudUpload className="size-3.5" /> {o.label}
                       </div>
                       <div
-                        className="text-2xs text-muted-foreground mt-0.5 font-mono break-all"
+                        className="text-xs text-muted-foreground mt-0.5 font-mono break-all"
                         data-no-i18n
                       >
                         {o.path}
@@ -265,7 +266,7 @@ export default function BackupPage() {
           </div>
 
           <div className="rounded-md border border-border bg-muted/40 p-3 space-y-2">
-            <div className="text-2xs uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+            <div className="text-xs font-semibold text-muted-foreground">
               Current PDF folder
             </div>
             <div className="font-mono text-xs break-all" data-no-i18n>
@@ -298,7 +299,7 @@ export default function BackupPage() {
               really accumulating without opening a file manager. */}
           <div className="border-t border-border pt-3">
             <div className="flex items-center justify-between gap-3 mb-2">
-              <div className="text-2xs uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+              <div className="text-xs font-semibold text-muted-foreground">
                 Saved invoice PDFs
               </div>
               <Button variant="outline" onClick={() => void loadInvoicePdfs()} className="h-8">
@@ -318,7 +319,7 @@ export default function BackupPage() {
                       <div className="font-medium truncate" data-no-i18n>
                         {f.name}
                       </div>
-                      <div className="text-2xs text-muted-foreground">{formatTime(f.at)}</div>
+                      <div className="text-xs text-muted-foreground">{formatTime(f.at)}</div>
                     </div>
                     <div className="ml-auto text-xs text-muted-foreground tabular shrink-0">
                       {formatBytes(f.bytes)}
@@ -363,13 +364,13 @@ export default function BackupPage() {
                 )}
               >
                 <div className="text-sm font-semibold">{opt.label}</div>
-                <div className="text-2xs text-muted-foreground mt-0.5">{opt.hint}</div>
+                <div className="text-xs text-muted-foreground mt-0.5">{opt.hint}</div>
               </button>
             ))}
           </div>
 
           <div>
-            <div className="text-2xs uppercase font-semibold text-muted-foreground tracking-[0.06em] mb-1">
+            <div className="text-xs font-semibold text-muted-foreground mb-1">
               How many backups to keep
             </div>
             <div className="flex items-center gap-2">
@@ -395,7 +396,7 @@ export default function BackupPage() {
 
           <div className="border-t border-border pt-3 grid grid-cols-2 gap-3">
             <div>
-              <div className="text-2xs uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+              <div className="text-xs font-semibold text-muted-foreground">
                 Last backup
               </div>
               <div className="text-sm font-medium mt-0.5">{formatTime(config.lastBackupAt)}</div>
@@ -404,7 +405,7 @@ export default function BackupPage() {
               </div>
             </div>
             <div>
-              <div className="text-2xs uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+              <div className="text-xs font-semibold text-muted-foreground">
                 Current database
               </div>
               <div className="text-sm font-medium mt-0.5">{formatBytes(liveBytes)}</div>
@@ -449,7 +450,7 @@ export default function BackupPage() {
                   <CheckCircle2 className="size-4 text-success shrink-0" />
                   <div className="min-w-0">
                     <div className="font-medium">{formatTime(s.at)}</div>
-                    <div className="text-2xs text-muted-foreground font-mono truncate" data-no-i18n>
+                    <div className="text-xs text-muted-foreground font-mono truncate" data-no-i18n>
                       {s.name}
                     </div>
                   </div>
@@ -470,7 +471,7 @@ export default function BackupPage() {
           )}
 
           <div className="border-t border-border pt-3 space-y-2">
-            <div className="text-2xs uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+            <div className="text-xs font-semibold text-muted-foreground">
               Restore from another file
             </div>
             <Button variant="outline" onClick={() => void restore()} disabled={busy}>

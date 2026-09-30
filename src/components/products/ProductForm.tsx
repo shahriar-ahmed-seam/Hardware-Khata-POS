@@ -244,7 +244,7 @@ export function ProductForm({
                         <div className="text-sm">Click to upload</div>
                         {/* The photo is shrunk and stored inside the shop
                             database, so it is kept with every backup. */}
-                        <div className="text-[11px] mt-0.5">PNG or JPG · saved with your data</div>
+                        <div className="text-xs mt-0.5">PNG or JPG · saved with your data</div>
                       </div>
                     )}
                     {imgBusy && (
@@ -256,7 +256,7 @@ export function ProductForm({
                 </label>
                 {imgPreview && (
                   <div className="flex items-center justify-between mt-2">
-                    <div className="text-[11px] text-muted-foreground">Preview</div>
+                    <div className="text-xs text-muted-foreground">Preview</div>
                     <Button
                       type="button"
                       variant="ghost"
@@ -328,7 +328,7 @@ export function ProductForm({
                       <button
                         type="button"
                         onClick={generateSku}
-                        className="text-[11px] inline-flex items-center gap-1 text-primary hover:underline"
+                        className="text-xs inline-flex items-center gap-1 text-primary hover:underline"
                       >
                         <Wand2 className="size-3" /> auto
                       </button>
@@ -342,7 +342,7 @@ export function ProductForm({
                       <button
                         type="button"
                         onClick={generateBarcode}
-                        className="text-[11px] inline-flex items-center gap-1 text-primary hover:underline"
+                        className="text-xs inline-flex items-center gap-1 text-primary hover:underline"
                       >
                         <Wand2 className="size-3" /> auto
                       </button>
@@ -418,11 +418,11 @@ export function ProductForm({
                   </Field>
                 </div>
                 {p.cost > 0 && p.price > 0 && (
-                  <div className="mt-3 px-3 py-2 rounded-md bg-secondary/50 border border-border text-[12px] flex items-center justify-between">
+                  <div className="mt-3 px-3 py-2 rounded-md bg-secondary/50 border border-border text-sm flex items-center justify-between">
                     <span className="text-muted-foreground">Profit margin</span>
                     <span
                       className={cn(
-                        'font-mono tabular font-semibold',
+                        'tabular font-semibold',
                         margin > 0 ? 'text-success' : margin < 0 ? 'text-destructive' : '',
                       )}
                     >
@@ -458,7 +458,7 @@ export function ProductForm({
                 </div>
 
                 <div className="mt-3">
-                  <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em] mb-1.5">
+                  <div className="text-xs font-semibold text-muted-foreground mb-1.5">
                     Alternate units & conversions
                   </div>
                   <UnitsEditor
@@ -497,7 +497,7 @@ export function ProductForm({
                       label="Opening stock"
                       hint="Locked to 0 on purpose. The quantity you are buying is entered on the purchase line, which is what puts it into stock. Typing it here too would count the same goods twice."
                     >
-                      <div className="h-9 flex items-center px-3 rounded-md border border-input bg-muted/40 font-mono tabular text-sm text-muted-foreground">
+                      <div className="h-10 flex items-center px-3 rounded-md border border-input bg-muted/40 tabular text-sm text-muted-foreground">
                         0 {p.unit}
                       </div>
                     </Field>
@@ -506,7 +506,7 @@ export function ProductForm({
                       label="In stock now"
                       hint="To change it, use Update Price & Stock on the Products or Stock screen. That records a stock correction, so your history stays right."
                     >
-                      <div className="h-9 flex items-center px-3 rounded-md border border-input bg-muted/40 font-mono tabular text-sm">
+                      <div className="h-10 flex items-center px-3 rounded-md border border-input bg-muted/40 tabular text-sm">
                         {p.stock} {p.unit}
                       </div>
                     </Field>
@@ -586,7 +586,7 @@ function AddInlineButton({ title, onClick }: { title: string; onClick: () => voi
       onClick={onClick}
       title={title}
       aria-label={title}
-      className="size-9 shrink-0 grid place-items-center rounded-md border border-border text-muted-foreground hover:border-primary hover:bg-primary/10 hover:text-primary transition"
+      className="size-10 shrink-0 grid place-items-center rounded-md border border-border text-muted-foreground hover:border-primary hover:bg-primary/10 hover:text-primary transition"
     >
       <Plus className="size-4" />
     </button>
@@ -613,7 +613,7 @@ function Section({
           <div className="text-sm font-semibold tracking-tight">
             {title} {required && <span className="text-destructive">*</span>}
           </div>
-          {subtitle && <div className="text-[11px] text-muted-foreground">{subtitle}</div>}
+          {subtitle && <div className="text-xs text-muted-foreground">{subtitle}</div>}
         </div>
       </div>
       {children}
@@ -637,13 +637,13 @@ function Field({
   return (
     <div>
       <div className="flex items-center justify-between mb-1">
-        <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+        <label className="text-xs font-semibold text-muted-foreground">
           {label} {required && <span className="text-destructive">*</span>}
         </label>
         {rightAction}
       </div>
       {children}
-      {hint && <div className="text-[10px] text-muted-foreground mt-1">{hint}</div>}
+      {hint && <div className="text-xs text-muted-foreground mt-1">{hint}</div>}
     </div>
   );
 }
@@ -661,7 +661,7 @@ function Select({
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+      className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
     >
       {children}
     </select>
@@ -706,7 +706,7 @@ function Toggle({
     >
       <div className="min-w-0">
         <div className="text-sm font-medium">{label}</div>
-        {desc && <div className="text-[11px] text-muted-foreground">{desc}</div>}
+        {desc && <div className="text-xs text-muted-foreground">{desc}</div>}
       </div>
       <span
         className={cn(
@@ -765,19 +765,19 @@ function UnitsEditor({
           return (
             <div key={u} className="flex items-center gap-2 px-3 py-2">
               <div className="text-sm font-medium w-20">{u}</div>
-              <div className="flex-1 text-[11px] text-muted-foreground">
+              <div className="flex-1 text-xs text-muted-foreground">
                 {isBase ? 'Base unit' : `Conversion to ${base}`}
               </div>
               {!isBase ? (
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] text-muted-foreground">1 {u} =</span>
+                  <span className="text-xs text-muted-foreground">1 {u} =</span>
                   <NumberField
                     value={factor(u)}
                     onChangeNumber={(v) => setFactor(u, v)}
                     placeholder="0"
                     className="h-7 w-20 px-2 text-xs"
                   />
-                  <span className="text-[11px] text-muted-foreground">{base}</span>
+                  <span className="text-xs text-muted-foreground">{base}</span>
                   <button
                     type="button"
                     onClick={() => remove(u)}
@@ -788,7 +788,7 @@ function UnitsEditor({
                   </button>
                 </div>
               ) : (
-                <span className="text-[11px] text-muted-foreground italic">factor 1</span>
+                <span className="text-xs text-muted-foreground italic">factor 1</span>
               )}
             </div>
           );

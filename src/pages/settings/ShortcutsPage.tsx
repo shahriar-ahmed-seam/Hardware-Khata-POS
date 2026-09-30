@@ -124,7 +124,7 @@ export default function ShortcutsPage() {
 
       <div className="p-6 max-w-3xl space-y-3">
         <Card className="p-3">
-          <div className="text-[12px] text-muted-foreground flex items-start gap-2">
+          <div className="text-sm text-muted-foreground flex items-start gap-2">
             <Keyboard className="size-4 mt-0.5" />
             <span>
               Click any row to record a new combo. Press the new key (modifiers + key) to capture
@@ -143,7 +143,7 @@ export default function ShortcutsPage() {
               <div key={row.id} className="flex items-center gap-3 p-3">
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium">{row.label}</div>
-                  <div className="text-[11px] text-muted-foreground">{row.desc}</div>
+                  <div className="text-xs text-muted-foreground">{row.desc}</div>
                 </div>
                 {isRec ? (
                   <div className="flex items-center gap-2">
@@ -189,7 +189,7 @@ export default function ShortcutsPage() {
           })}
         </Card>
 
-        <div className="text-[11px] text-muted-foreground">
+        <div className="text-xs text-muted-foreground">
           Note: F-keys are recommended for one-press actions. For combos, Ctrl/Alt/Shift +
           letter/number works best. Browser-reserved keys (Ctrl+R, Ctrl+W, Ctrl+T) may not be
           rebindable.

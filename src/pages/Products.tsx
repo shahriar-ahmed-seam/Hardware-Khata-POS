@@ -438,7 +438,7 @@ export default function Products() {
         )}
 
         <div>
-          <div className="text-[11px] text-muted-foreground mb-1.5">
+          <div className="text-xs text-muted-foreground mb-1.5">
             Totals for this page only. Use Reports for full-range figures.
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -540,10 +540,10 @@ export default function Products() {
             {() => (
               <div className="p-3 space-y-3">
                 <div>
-                  <div className="text-[10px] uppercase text-muted-foreground font-semibold mb-1">
+                  <div className="text-xs text-muted-foreground font-semibold mb-1">
                     Price range (৳)
                   </div>
-                  <div className="text-[11px] text-muted-foreground mb-1.5">
+                  <div className="text-xs text-muted-foreground mb-1.5">
                     Price filters this page
                   </div>
                   <div className="grid grid-cols-2 gap-2">
@@ -636,7 +636,7 @@ export default function Products() {
           <Card className="overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50 sticky top-0">
+                <thead className="text-xs text-muted-foreground bg-secondary/50 sticky top-0">
                   <tr>
                     <th className="w-10 px-3 py-2.5">
                       <input
@@ -749,19 +749,19 @@ export default function Products() {
                     </div>
                   </div>
                   <div className="p-2.5">
-                    <div className="text-[10px] text-muted-foreground font-mono truncate">{p.sku}</div>
-                    <div className="text-[12px] font-medium leading-tight line-clamp-2 mt-0.5 min-h-[2.2em]">
+                    <div className="text-xs text-muted-foreground font-mono truncate">{p.sku}</div>
+                    <div className="text-sm font-medium leading-tight line-clamp-2 mt-0.5 min-h-[2.2em]">
                       {p.name}
                     </div>
-                    <div className="text-[10px] text-muted-foreground mt-0.5 truncate">
+                    <div className="text-xs text-muted-foreground mt-0.5 truncate">
                       {brandName(p.brandId)} · {categoryName(p.categoryId)}
                     </div>
                     <div className="flex items-center justify-between mt-2">
-                      <div className="text-sm font-bold font-mono tabular">
+                      <div className="text-sm font-bold tabular">
                         ৳ {formatBDT(p.price, { withSymbol: false })}
                       </div>
                       {p.cost > 0 && (
-                        <div className="text-[10px] text-muted-foreground font-mono tabular">
+                        <div className="text-xs text-muted-foreground tabular">
                           cost ৳ {p.cost}
                         </div>
                       )}
@@ -885,7 +885,7 @@ function Cell({
   brandNameFn: (id: string) => string;
 }) {
   const meta = COLUMN_META[col];
-  const align = meta.align === 'right' ? 'text-right font-mono tabular' : '';
+  const align = meta.align === 'right' ? 'text-right tabular' : '';
 
   switch (col) {
     case 'image':
@@ -896,17 +896,17 @@ function Cell({
       );
     case 'sku':
       return (
-        <td className="px-2 py-2.5 text-[11px] text-muted-foreground font-mono">{p.sku}</td>
+        <td className="px-2 py-2.5 text-xs text-muted-foreground font-mono">{p.sku}</td>
       );
     case 'barcode':
       return (
-        <td className="px-2 py-2.5 text-[11px] text-muted-foreground font-mono">{p.barcode}</td>
+        <td className="px-2 py-2.5 text-xs text-muted-foreground font-mono">{p.barcode}</td>
       );
     case 'name':
       return (
         <td className="px-2 py-2.5">
           <div className="font-medium">{p.name}</div>
-          <div className="text-[11px] text-muted-foreground font-mono">{p.sku}</div>
+          <div className="text-xs text-muted-foreground font-mono">{p.sku}</div>
         </td>
       );
     case 'category':
@@ -1143,7 +1143,7 @@ function Stat({
 }) {
   return (
     <Card className="p-4">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="text-xs text-muted-foreground">{label}</div>
       <div
         className={cn(
           'text-xl font-bold mt-0.5',
@@ -1170,7 +1170,7 @@ function Select<T extends string>({
     <select
       value={value}
       onChange={(e) => onChange(e.target.value as T)}
-      className="h-9 px-3 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
+      className="h-10 px-3 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
     >
       {children}
     </select>
@@ -1190,7 +1190,7 @@ function IconBtn({
     <button
       onClick={onClick}
       title={title}
-      className="h-9 w-9 grid place-items-center rounded-md border border-border hover:bg-secondary text-muted-foreground hover:text-foreground transition"
+      className="h-10 w-10 grid place-items-center rounded-md border border-border hover:bg-secondary text-muted-foreground hover:text-foreground transition"
     >
       {children}
     </button>

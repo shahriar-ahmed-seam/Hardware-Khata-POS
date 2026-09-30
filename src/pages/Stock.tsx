@@ -30,9 +30,11 @@ import {
 import { useProductsPage } from '@/hooks/useProducts';
 import { useCategories, useBrands } from '@/hooks/useCatalog';
 import { SkeletonTable } from '@/components/ui/Skeleton';
+import { useBranches } from '@/stores/branches';
 
 export default function Stock() {
   const nav = useNavigate();
+  const multiBranch = useBranches((s) => s.items.length > 1);
   const { columns, toggle, move, reset } = useStockUI();
   const [q, setQ] = useState('');
   const [cat, setCat] = useState<string | 'all'>('all');
@@ -126,9 +128,12 @@ export default function Stock() {
                 )}
               </Button>
             </Link>
-            <Button variant="outline" size="sm" onClick={() => nav('/stock/transfers')}>
-              <ArrowLeftRight className="size-4" /> Transfers
-            </Button>
+            {/* Transfers move stock between branches — hidden with one branch. */}
+            {multiBranch && (
+              <Button variant="outline" size="sm" onClick={() => nav('/stock/transfers')}>
+                <ArrowLeftRight className="size-4" /> Transfers
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={() => nav('/stock/adjustments')}>
               <Sliders className="size-4" /> Adjustments
             </Button>
@@ -143,7 +148,7 @@ export default function Stock() {
         {/* Product count is the real filtered total; everything else is
             PAGE-SCOPED, since only this page is in memory. */}
         <div>
-          <div className="text-[11px] text-muted-foreground mb-1.5">
+          <div className="text-xs text-muted-foreground mb-1.5">
             Totals for this page only. Use Reports for full-range figures.
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
@@ -173,7 +178,7 @@ export default function Stock() {
           <select
             value={cat}
             onChange={(e) => setCat(e.target.value)}
-            className="h-9 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
+            className="h-10 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="all">All categories</option>
             {categories.map((c) => (
@@ -185,7 +190,7 @@ export default function Stock() {
           <select
             value={brand}
             onChange={(e) => setBrand(e.target.value)}
-            className="h-9 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
+            className="h-10 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="all">All brands</option>
             {brands.map((b) => (
@@ -218,7 +223,7 @@ export default function Stock() {
         <Card className="overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50 sticky top-0">
+              <thead className="text-xs text-muted-foreground bg-secondary/50 sticky top-0">
                 <tr>
                   {columns.map((c) => (
                     <th
@@ -315,7 +320,7 @@ function Cell({
   catName: (id: string) => string;
   brandNameFn: (id: string) => string;
 }) {
-  const align = STOCK_COLUMN_META[col].align === 'right' ? 'text-right font-mono tabular' : '';
+  const align = STOCK_COLUMN_META[col].align === 'right' ? 'text-right tabular' : '';
   switch (col) {
     case 'image':
       return (
@@ -331,7 +336,7 @@ function Cell({
       return (
         <td className="px-3 py-2.5">
           <div className="font-medium">{p.name}</div>
-          <div className="text-[11px] text-muted-foreground font-mono">{p.sku}</div>
+          <div className="text-xs text-muted-foreground font-mono">{p.sku}</div>
         </td>
       );
     case 'category':
@@ -389,7 +394,7 @@ function Stat({
 }) {
   return (
     <Card className="p-4">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="text-xs text-muted-foreground">{label}</div>
       <div
         className={cn(
           'text-lg font-bold mt-0.5 tabular',
@@ -417,7 +422,7 @@ function IconBtn({
     <button
       onClick={onClick}
       title={title}
-      className="h-9 w-9 grid place-items-center rounded-md border border-border hover:bg-secondary text-muted-foreground hover:text-foreground transition"
+      className="h-10 w-10 grid place-items-center rounded-md border border-border hover:bg-secondary text-muted-foreground hover:text-foreground transition"
     >
       {children}
     </button>

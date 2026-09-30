@@ -14,12 +14,13 @@
         - it was the app's ONLY outbound request, and it correlated with
           repeated "Network service crashed, restarting service" in the packaged
           build.
-      The font stacks in tailwind.config.js / globals.css already fall back to
-      fonts every Windows machine ships with — system-ui (Segoe UI) for text,
-      Consolas for figures, and Nirmala UI for Bangla — so the app now renders
-      identically with or without a network, and makes no outbound request at
-      all. Inter is still first in the stack, so it is picked up automatically if
-      the shop ever installs it locally.
+      The font stacks in tailwind.config.js / globals.css use fonts every
+      Windows machine ships with — Segoe UI for text, Consolas for codes — plus
+      Noto Sans Bengali for Bangla, which is BUNDLED with the app (imported in
+      src/main.tsx, served from disk) because Windows 7 has no Nirmala UI. So
+      the app renders identically with or without a network, and makes no
+      outbound request at all. Inter is still first in the stack, so it is
+      picked up automatically if the shop ever installs it locally.
     -->
   </head>
   <body>

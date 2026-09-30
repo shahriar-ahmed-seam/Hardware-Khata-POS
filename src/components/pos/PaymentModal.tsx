@@ -239,7 +239,7 @@ export function PaymentModal({
         {/* ---------- THE BILL ---------- */}
         <div className="flex items-baseline justify-between border-b border-border pb-3">
           <span className="text-sm text-muted-foreground">Bill total</span>
-          <span className="text-3xl font-bold font-mono tabular">
+          <span className="text-3xl font-bold tabular">
             ৳ {formatBDT(total, { withSymbol: false })}
           </span>
         </div>
@@ -274,7 +274,7 @@ export function PaymentModal({
                 <button
                   key={v}
                   onClick={() => setSingleAmount(v)}
-                  className="px-3 h-10 rounded-md border border-border bg-card hover:border-primary text-sm font-mono tabular"
+                  className="px-3 h-10 rounded-md border border-border bg-card hover:border-primary text-sm tabular"
                 >
                   ৳ {v.toLocaleString('en-IN')}
                 </button>
@@ -393,7 +393,7 @@ export function PaymentModal({
                   The bill is paid in full.
                 </div>
               </div>
-              <div className="text-3xl font-bold font-mono tabular text-success">
+              <div className="text-3xl font-bold tabular text-success">
                 ৳ {formatBDT(change, { withSymbol: false })}
               </div>
             </div>
@@ -408,7 +408,7 @@ export function PaymentModal({
                     Goes on their khata. You can collect it any time.
                   </div>
                 </div>
-                <div className="text-3xl font-bold font-mono tabular text-warning">
+                <div className="text-3xl font-bold tabular text-warning">
                   ৳ {formatBDT(owing, { withSymbol: false })}
                 </div>
               </div>

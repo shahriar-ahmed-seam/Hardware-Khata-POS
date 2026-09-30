@@ -3,6 +3,7 @@ import { AlertTriangle, HelpCircle } from 'lucide-react';
 import { useConfirmStore } from '@/stores/confirm';
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/utils';
+import { useOverlayLayer } from './overlayStack';
 
 /**
  * Global confirmation dialog. Mount once near the app root. Driven by the
@@ -10,6 +11,8 @@ import { cn } from '@/lib/utils';
  */
 export function ConfirmDialog() {
   const { open, options, respond } = useConfirmStore();
+  // Registered as a layer so the modal underneath ignores this Esc/Enter.
+  useOverlayLayer(open);
 
   useEffect(() => {
     if (!open) return;

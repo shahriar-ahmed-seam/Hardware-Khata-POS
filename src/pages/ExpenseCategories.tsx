@@ -193,14 +193,14 @@ function Row({
       </div>
       <div className="flex-1 min-w-0">
         <div className="text-sm font-medium">{cat.name}</div>
-        <div className="text-[11px] text-muted-foreground">
+        <div className="text-xs text-muted-foreground">
           {count} expense{count === 1 ? '' : 's'}{' '}
           {cat.monthlyBudget ? (
             <>
               · this month{' '}
               <span
                 className={cn(
-                  'font-mono tabular',
+                  'tabular',
                   overBudget && 'text-destructive font-semibold',
                 )}
               >
@@ -210,7 +210,7 @@ function Row({
             </>
           ) : (
             <>
-              · this month <span className="font-mono tabular">{formatBDT(spend, { withSymbol: false })}</span>
+              · this month <span className="tabular">{formatBDT(spend, { withSymbol: false })}</span>
             </>
           )}
         </div>

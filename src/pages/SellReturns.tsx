@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Search, Eye, Undo2 } from 'lucide-react';
+import { Plus, Search, Eye } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -10,9 +10,10 @@ import { Pagination } from '@/components/ui/Pagination';
 import { useSales } from '@/stores/sales';
 import { toast } from '@/stores/toast';
 import { formatBDT } from '@/lib/utils';
+import { sum2 } from '@/lib/money';
 import { hasBackend } from '@/lib/api';
 import { SkeletonTable } from '@/components/ui/Skeleton';
-import { CreateReturnModal } from '@/components/sales/CreateReturnModal';
+import { ReturnDetail } from '@/components/returns/ReturnDetail';
 
 export default function SellReturns() {
   const nav = useNavigate();
@@ -20,7 +21,10 @@ export default function SellReturns() {
   const loading = useSales((s) => s.loading);
   const hydrate = useSales((s) => s.hydrate);
   const [q, setQ] = useState('');
-  const [picking, setPicking] = useState<string | null>(null);
+  // The return whose detail drawer is open. (A `picking` state for an in-page
+  // Create Return modal used to sit here, never set — the modal was
+  // unreachable. Returns are created from the sale, where the lines are.)
+  const [viewing, setViewing] = useState<string | null>(null);
   const backend = hasBackend();
 
   // Client-side paging: `sellReturns.list` is header-only and this list grows
@@ -29,10 +33,8 @@ export default function SellReturns() {
   const [pageSize, setPageSize] = useState(50);
 
   // Mirror Sales.tsx: hydrate from the backend on mount so the store is
-  // populated when this page is the entry point.
-  // NOTE (deferred): hydrate() maps sellReturns.list header rows via
-  // toSellReturnRecord, which leaves `lines: []` (the list query returns no
-  // nested return lines). This page only renders header fields, so that's fine.
+  // populated when this page is the entry point. The list rows are header-only;
+  // the detail drawer reads a return's lines with `sellReturns.get`.
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
@@ -61,7 +63,7 @@ export default function SellReturns() {
 
   // Summed over the FULL filtered set, not just this page — all rows are in
   // memory, so there is no reason to scope this to the visible slice.
-  const total = list.reduce((s, r) => s + r.total, 0);
+  const total = sum2(list.map((r) => r.total));
 
   return (
     <div>
@@ -105,7 +107,7 @@ export default function SellReturns() {
           ) : (
           <>
           <table className="w-full text-sm">
-            <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50">
+            <thead className="text-xs text-muted-foreground bg-secondary/50">
               <tr>
                 <th className="text-left px-4 py-2.5 font-medium">Date</th>
                 <th className="text-left px-2 py-2.5 font-medium">Return #</th>
@@ -130,13 +132,14 @@ export default function SellReturns() {
                   <td className="px-2 py-2.5 text-xs">
                     <Badge variant="default">{r.refundMethod}</Badge>
                   </td>
-                  <td className="px-2 py-2.5 text-right font-mono tabular font-semibold text-warning">
+                  <td className="px-2 py-2.5 text-right tabular font-semibold text-warning">
                     {formatBDT(r.total)}
                   </td>
                   <td className="px-4 py-2.5">
                     <button
                       className="size-7 grid place-items-center rounded hover:bg-secondary"
                       title="View"
+                      onClick={() => setViewing(r.id)}
                     >
                       <Eye className="size-3.5" />
                     </button>
@@ -165,9 +168,7 @@ export default function SellReturns() {
         </Card>
       </div>
 
-      <CreateReturnModal open={!!picking} onClose={() => setPicking(null)} saleId={picking} />
+      <ReturnDetail kind="sell" id={viewing} open={!!viewing} onClose={() => setViewing(null)} />
     </div>
   );
 }
-
-void Undo2;

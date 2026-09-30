@@ -1,10 +1,10 @@
 import { useMemo, useRef, useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useBackup } from '@/stores/backup';
 import {
   Search,
   Plus,
   Settings2,
-  Upload,
   Download,
   LayoutGrid,
   List,
@@ -41,6 +41,8 @@ import { ReceivePaymentModal } from '@/components/contacts/ReceivePaymentModal';
 
 export default function Customers() {
   const nav = useNavigate();
+  const exportCsv = useBackup((s) => s.exportCsv);
+  const exportBusy = useBackup((s) => s.busy);
   const { items, add, update, remove } = useCustomers();
   const loading = useCustomers((s) => s.loading);
   const total = useCustomers((s) => s.total);
@@ -155,11 +157,15 @@ export default function Customers() {
               <Settings2 className="size-4" />
             </IconBtn>
             <ViewToggle value={customerView} onChange={setCustomerView} />
-            <Button variant="outline" size="sm" onClick={() => nav('/contacts/customers/import')}>
-              <Upload className="size-4" /> Import
-            </Button>
-            <Button variant="outline" size="sm">
-              <Download className="size-4" /> Export
+            {/* Import is switched off until real importers exist (see /import). */}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={exportBusy}
+              onClick={() => void exportCsv('customers')}
+              title="Write every customer to a CSV file in your backup folder"
+            >
+              <Download className="size-4" /> Export all
             </Button>
             <Button onClick={() => setDrawerId('new')}>
               <Plus className="size-4" /> Add Customer
@@ -172,7 +178,7 @@ export default function Customers() {
         {/* KPI strip — PAGE-SCOPED. Only the current page is in memory, so these
             are explicitly labelled instead of masquerading as book-wide totals. */}
         <div>
-          <div className="text-[11px] text-muted-foreground mb-1.5">
+          <div className="text-xs text-muted-foreground mb-1.5">
             Totals for this page only. Use Reports for full-range figures.
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -203,7 +209,7 @@ export default function Customers() {
               setGroup(e.target.value);
               void loadPage({ group: e.target.value });
             }}
-            className="h-9 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
+            className="h-10 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="all">All groups</option>
             <option value="Retail">Retail</option>
@@ -214,7 +220,7 @@ export default function Customers() {
             <select
               value={tag}
               onChange={(e) => setTag(e.target.value)}
-              className="h-9 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
+              className="h-10 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
             >
               <option value="all">All tags</option>
               {allTags.map((t) => (
@@ -246,7 +252,7 @@ export default function Customers() {
               </button>
             ))}
           </div>
-          <span className="text-[11px] text-muted-foreground">Due and tag filter this page</span>
+          <span className="text-xs text-muted-foreground">Due and tag filter this page</span>
         </Card>
 
         {selected.size > 0 && (
@@ -254,9 +260,7 @@ export default function Customers() {
             <Badge variant="info">{selected.size} selected</Badge>
             <div className="flex-1" />
             {/* "Send SMS" removed with the SMS feature — it had no handler. */}
-            <Button variant="outline" size="sm">
-              <Download className="size-3.5" /> Export
-            </Button>
+            {/* A selection-only export is not supported; use Export all above. */}
             <Button
               variant="destructive"
               size="sm"
@@ -285,7 +289,7 @@ export default function Customers() {
           <Card className="overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50 sticky top-0">
+                <thead className="text-xs text-muted-foreground bg-secondary/50 sticky top-0">
                   <tr>
                     <th className="w-10 px-3 py-2.5">
                       <input type="checkbox" checked={allSelected} onChange={toggleAll} />
@@ -415,16 +419,16 @@ export default function Customers() {
                 </div>
                 <div className="grid grid-cols-2 gap-2 mt-4 pt-4 border-t border-border">
                   <div>
-                    <div className="text-[10px] text-muted-foreground uppercase">Total Purchase</div>
-                    <div className="text-sm font-semibold font-mono tabular">
+                    <div className="text-xs text-muted-foreground">Total Purchase</div>
+                    <div className="text-sm font-semibold tabular">
                       {formatBDT(c.totalPurchase)}
                     </div>
                   </div>
                   <div>
-                    <div className="text-[10px] text-muted-foreground uppercase">Due</div>
+                    <div className="text-xs text-muted-foreground">Due</div>
                     <div
                       className={cn(
-                        'text-sm font-semibold font-mono tabular',
+                        'text-sm font-semibold tabular',
                         c.due > 0 ? 'text-destructive' : 'text-muted-foreground',
                       )}
                     >
@@ -485,18 +489,17 @@ export default function Customers() {
         <CustomerForm
           asDrawer
           initial={editing}
-          onSave={(c) => {
-            if (drawerId === 'new') add(c);
-            else update(c.id, c);
-            setDrawerId(null);
+          onSave={async (c) => {
+            // Closes only once saved; a refusal keeps the form open as typed.
+            const ok = drawerId === 'new' ? !!(await add(c)) : await update(c.id, c);
+            if (ok) setDrawerId(null);
           }}
           onCancel={() => setDrawerId(null)}
           onDelete={
             editing
               ? async () => {
                   if (await confirm({ title: `Delete "${editing.name}"?`, variant: 'destructive' })) {
-                    remove(editing.id);
-                    setDrawerId(null);
+                    if (await remove(editing.id)) setDrawerId(null);
                   }
                 }
               : undefined
@@ -514,7 +517,7 @@ export default function Customers() {
 }
 
 function CustomerCell({ col, c }: { col: CustomerColumn; c: Customer }) {
-  const align = CUSTOMER_COLUMN_META[col].align === 'right' ? 'text-right font-mono tabular' : '';
+  const align = CUSTOMER_COLUMN_META[col].align === 'right' ? 'text-right tabular' : '';
   switch (col) {
     case 'avatar':
       return (
@@ -531,7 +534,7 @@ function CustomerCell({ col, c }: { col: CustomerColumn; c: Customer }) {
               {c.tags.slice(0, 2).map((t) => (
                 <span
                   key={t}
-                  className="text-[9px] px-1 py-0 rounded bg-primary/10 text-primary font-medium"
+                  className="text-xs px-1 py-0 rounded bg-primary/10 text-primary font-medium"
                 >
                   {t}
                 </span>
@@ -619,7 +622,7 @@ function CustomerCell({ col, c }: { col: CustomerColumn; c: Customer }) {
             {(c.tags ?? []).map((t) => (
               <span
                 key={t}
-                className="text-[10px] px-1.5 py-0 rounded bg-primary/10 text-primary font-medium"
+                className="text-xs px-1.5 py-0 rounded bg-primary/10 text-primary font-medium"
               >
                 {t}
               </span>
@@ -674,7 +677,7 @@ function Stat({
 }) {
   return (
     <Card className="p-4">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="text-xs text-muted-foreground">{label}</div>
       <div
         className={cn(
           'text-xl font-bold mt-0.5 tabular',
@@ -701,7 +704,7 @@ function IconBtn({
     <button
       onClick={onClick}
       title={title}
-      className="h-9 w-9 grid place-items-center rounded-md border border-border hover:bg-secondary text-muted-foreground hover:text-foreground transition"
+      className="h-10 w-10 grid place-items-center rounded-md border border-border hover:bg-secondary text-muted-foreground hover:text-foreground transition"
     >
       {children}
     </button>

@@ -158,7 +158,7 @@ export default function Brands() {
           )}
 
           <table className="w-full text-sm">
-            <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50">
+            <thead className="text-xs text-muted-foreground bg-secondary/50">
               <tr>
                 <th className="text-left font-medium px-4 py-2.5">Brand</th>
                 <th className="text-right font-medium px-4 py-2.5">Products</th>

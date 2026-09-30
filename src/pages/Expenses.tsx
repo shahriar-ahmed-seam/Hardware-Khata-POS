@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useBackup } from '@/stores/backup';
 import {
   Plus,
   Search,
   Settings2,
-  Upload,
   Download,
   Trash2,
   Repeat,
@@ -61,6 +61,8 @@ function presetToRange(preset: DateFilter): { from?: string; to?: string } {
 
 export default function Expenses() {
   const nav = useNavigate();
+  const exportCsv = useBackup((s) => s.exportCsv);
+  const exportBusy = useBackup((s) => s.busy);
   const expenses = useExpenses((s) => s.expenses);
   const cats = useExpenses((s) => s.categories);
   const removeExpense = useExpenses((s) => s.deleteExpense);
@@ -160,11 +162,15 @@ export default function Expenses() {
             <Button variant="outline" size="sm" onClick={() => nav('/expenses/categories')}>
               <ListTree className="size-4" /> Categories
             </Button>
-            <Button variant="outline" size="sm" onClick={() => nav('/expenses/import')}>
-              <Upload className="size-4" /> Import
-            </Button>
-            <Button variant="outline" size="sm">
-              <Download className="size-4" /> Export
+            {/* Import is switched off until real importers exist (see /import). */}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={exportBusy}
+              onClick={() => void exportCsv('expenses')}
+              title="Write every expense to a CSV file in your backup folder"
+            >
+              <Download className="size-4" /> Export all
             </Button>
             <Button
               onClick={() => {
@@ -184,7 +190,7 @@ export default function Expenses() {
             longer the whole table, and a page-scoped year total is just wrong.
             Reports owns full-range figures. */}
         <div>
-          <div className="text-[11px] text-muted-foreground mb-1.5">
+          <div className="text-xs text-muted-foreground mb-1.5">
             Totals for this page only. Use Reports for full-range figures.
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -211,7 +217,7 @@ export default function Expenses() {
               setCategoryId(e.target.value);
               void loadPage({ categoryId: e.target.value });
             }}
-            className="h-9 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
+            className="h-10 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="all">All categories</option>
             {cats.map((c) => (
@@ -227,7 +233,7 @@ export default function Expenses() {
               setMethod(e.target.value);
               void loadPage({ method: e.target.value });
             }}
-            className="h-9 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
+            className="h-10 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="all">All methods</option>
             {['Cash', 'bKash', 'Nagad', 'Card', 'Bank', 'Cheque'].map((m) => (
@@ -260,16 +266,16 @@ export default function Expenses() {
               value={minAmt}
               onChangeNumber={setMinAmt}
               placeholder="Min"
-              className="h-9 w-24 text-right"
+              className="h-10 w-24 text-right"
             />
             <span className="text-xs text-muted-foreground">–</span>
             <NumberField
               value={maxAmt}
               onChangeNumber={setMaxAmt}
               placeholder="Max"
-              className="h-9 w-24 text-right"
+              className="h-10 w-24 text-right"
             />
-            <span className="text-[11px] text-muted-foreground">Amount filters this page</span>
+            <span className="text-xs text-muted-foreground">Amount filters this page</span>
           </div>
         </Card>
 
@@ -277,9 +283,7 @@ export default function Expenses() {
           <div className="rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 flex items-center gap-2">
             <Badge variant="info">{selected.size} selected</Badge>
             <div className="flex-1" />
-            <Button variant="outline" size="sm">
-              <Download className="size-3.5" /> Export
-            </Button>
+            {/* A selection-only export is not supported; use Export all above. */}
             <Button
               variant="destructive"
               size="sm"
@@ -311,7 +315,7 @@ export default function Expenses() {
               </div>
             ) : (
             <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50 sticky top-0">
+              <thead className="text-xs text-muted-foreground bg-secondary/50 sticky top-0">
                 <tr>
                   <th className="w-10 px-3 py-2.5">
                     <input type="checkbox" checked={allSelected} onChange={toggleAll} />
@@ -424,7 +428,7 @@ function Cell({
   e: ExpenseRecord;
   cats: { id: string; name: string; parentId?: string; emoji?: string }[];
 }) {
-  const align = EXPENSE_COLUMN_META[c].align === 'right' ? 'text-right font-mono tabular' : '';
+  const align = EXPENSE_COLUMN_META[c].align === 'right' ? 'text-right tabular' : '';
   switch (c) {
     case 'date':
       return (
@@ -511,7 +515,7 @@ function Stat({
 }) {
   return (
     <Card className="p-4">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="text-xs text-muted-foreground">{label}</div>
       <div className={cn('text-lg font-bold mt-0.5 tabular', tone === 'primary' && 'text-primary')}>
         {value}
       </div>
@@ -532,7 +536,7 @@ function IconBtn({
     <button
       onClick={onClick}
       title={title}
-      className="h-9 w-9 grid place-items-center rounded-md border border-border hover:bg-secondary text-muted-foreground hover:text-foreground transition"
+      className="h-10 w-10 grid place-items-center rounded-md border border-border hover:bg-secondary text-muted-foreground hover:text-foreground transition"
     >
       {children}
     </button>

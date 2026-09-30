@@ -13,7 +13,7 @@ in English or Bangla, in taka, with lakh/crore numbering on the invoice.
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)](#stack)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.5-3178C6?logo=typescript&logoColor=white)](#stack)
 [![SQLite](https://img.shields.io/badge/SQLite-local%20file-003B57?logo=sqlite&logoColor=white)](#your-data-stays-yours)
-[![Checks](https://img.shields.io/badge/verification-1%2C078%20checks-brightgreen)](#verification)
+[![Checks](https://img.shields.io/badge/verification-1%2C433%20checks-brightgreen)](#verification)
 
 [Install](#install) · [What it does](#what-it-does) · [Your data](#your-data-stays-yours) · [Build from source](#build-from-source) · [Architecture](#architecture) · [Docs](#documentation)
 
@@ -104,7 +104,7 @@ empty ledger and the reference lists (units, categories, tax rates) a shop needs
   cannot void a sale, edit a finalized invoice or reach the owner-only settings.
 - **Full audit trail.** Nothing is silently deleted: a sale is voided, a purchase cancelled, a
   product archived, a buying price retracted — each with who, when and why.
-- **Bangla throughout** — a 2,420-phrase dictionary, toggled from the title bar. It translates
+- **Bangla throughout** — a 2,492-phrase dictionary, toggled from the title bar. It translates
   only the interface: product names, invoice numbers and amounts are your data and are never
   rewritten.
 
@@ -112,7 +112,8 @@ empty ledger and the reference lists (units, categories, tax rates) a shop needs
 
 ## Your data stays yours
 
-The shop's database is a single SQLite file at **`%APPDATA%\pos\pos.db`**.
+The shop's database is a single SQLite file at **`%APPDATA%\pos\pos.db`** (on Linux,
+`~/.config/pos/pos.db`).
 
 ### Backup & Cloud
 
@@ -130,8 +131,9 @@ There is no account, no third-party credential and no outbound request from this
 - **Restore** verifies the file first, names it and its row counts in a confirmation that
   defaults to *Cancel*, and takes a safety copy of the current database before overwriting.
 - **Backup to Pendrive** is one button on the dashboard. That is the copy that survives a stolen
-  or dead PC. If Windows will not report which drives are removable, the app says so instead of
-  claiming there is no pendrive, and lets you pick the folder yourself.
+  or dead PC. Removable drives are found through PowerShell on Windows and `lsblk` on Linux; if
+  the system will not say which drives are removable, the app says so instead of claiming there
+  is no pendrive, and lets you pick the folder yourself.
 - CSV export of sales, purchases, products, customers, suppliers and stock — UTF-8 with a BOM,
   so Excel on Windows renders ৳ and Bangla correctly.
 
@@ -140,7 +142,7 @@ There is no account, no third-party credential and no outbound request from this
 ## Two rules the whole system is built on
 
 These are not implementation details. They are why the numbers can be trusted, and every one of
-the 1,161 automated checks exists to defend them.
+the 1,605 automated checks exists to defend them.
 
 **1. Stock is never a stored number.** On-hand quantity is always
 `SUM(qty)` of the stock movements for that product and branch. Every change is a signed,
@@ -164,19 +166,21 @@ verification suite asserts the identity directly.
 npm run backend:verify:all
 ```
 
-**1,161 automated checks across eight suites**, run against real SQLite databases — including a
+**1,605 automated checks across nine suites**, run against real SQLite databases — including a
 full simulated trading year and a complete shop day driven end to end through the same API the
 user interface uses.
 
 | Suite | Checks | What it proves |
 |---|---:|---|
-| `all.ts` | 395 | Exact expected values for every operation, plus determinism and a real-file smoke test |
-| `api.ts` | 216 | The 152-channel API surface, end to end, write-then-read |
-| `run.ts` | 105 | Accounting identities over a 365-day dataset; date ranges; report totals match their detail rows |
-| `e2e.ts` | 68 | One full shop day from a clean install, reconciling every cross-module number |
+| `all.ts` | 598 | Exact expected values for every operation, plus determinism and a real-file smoke test. Includes `chain.ts` (152): the refusals — no over-return, no void after a return, no payment on a dead document, transfers received once |
+| `api.ts` | 216 | The 158-channel API surface, end to end, write-then-read |
+| `run.ts` | 109 | Accounting identities over a 365-day dataset; date ranges; report totals match their detail rows |
+| `e2e.ts` | 69 | One full shop day from a clean install, reconciling every cross-module number |
 | `paging.ts` | 91 | Paged list reads equal the unpaged truth, product by product and customer by customer |
-| `backup.ts` | 120 | Snapshots, integrity verification, retention, restore, CSV export, invoice PDFs |
-| `costing.ts` | 83 | The buying-price history and the cache that can never drift from it |
+| `backup.ts` | 138 | Snapshots, integrity verification, retention, restore, CSV export, invoice PDFs, Linux drive detection |
+| `costing.ts` | 96 | The buying-price history and the cache that can never drift from it |
+| `mirror.ts` | 23 | The renderer's money functions agree with the backend's, figure for figure |
+| `security.ts` | 93 | The IPC gate: internal-only channels, the settings allow-list, the lock, PIN throttling, who a write is recorded against |
 
 These are not smoke tests. They assert things like *gross profit equals revenue minus COGS*,
 *stock is never negative*, *the dashboard total equals the raw SQL sum*, *money conserves across
@@ -204,13 +208,13 @@ disagree about arithmetic.
 │  electron/ipc.ts   session + PERMISSION GATE (the only gate)   │
 │         │                                                       │
 │         ▼                                                       │
-│  backend/api.ts    buildApi() — 152 channels                    │
+│  backend/api.ts    buildApi() — 162 channels                    │
 │         ▼                                                       │
 │  backend/services/ operations with side effects                 │
 │         ▼                                                       │
 │  backend/core/     PURE money / date / id functions             │
 │         ▼                                                       │
-│  SQLite (better-sqlite3, WAL, FTS5) — ~30 tables, schema v7     │
+│  SQLite (better-sqlite3, WAL, FTS5) — ~30 tables, schema v11    │
 └────────────────────────────────────────────────────────────────┘
 ```
 
@@ -249,9 +253,10 @@ cd Hardware-Khata-POS
 npm install
 
 npm run dev                  # launch the app (rebuilds native deps for Electron first)
-npm run backend:verify:all   # 1,161 checks (rebuilds native deps for Node first)
+npm run backend:verify:all   # 1,605 checks (rebuilds native deps for Node first)
 npm run build                # production bundles
 npm run build:win            # Windows installer, no upload
+npm run build:linux          # Linux AppImage + .deb, no upload
 ```
 
 Two things will bite you, and they bite everyone once:
@@ -275,8 +280,9 @@ Two things will bite you, and they bite everyone once:
 | `npm run build` | Renderer + main + preload production bundles |
 | `npm run build:win` | Build the NSIS installer locally (never uploads) |
 | `npm run release:win` | Build **and** publish to GitHub Releases (needs `GH_TOKEN`) |
-| `npm run backend:verify:all` | All seven verification suites |
-| `npm run backend:verify` \| `:scenarios` \| `:e2e` \| `:paging` \| `:backup` \| `:costing` | One suite at a time |
+| `npm run build:linux` | Build the AppImage and `.deb` locally (never uploads) |
+| `npm run backend:verify:all` | All nine verification suites |
+| `npm run backend:verify` \| `:scenarios` \| `:e2e` \| `:paging` \| `:backup` \| `:costing` \| `:mirror` \| `:security` \| `:chain` | One suite at a time |
 | `npm run backend:typecheck` | `tsc` over the backend only |
 | `npm run i18n:check` | 32 assertions over the Bangla dictionary, incl. a full round trip |
 | `npm run i18n:extract` | List interface strings that are still untranslated |
@@ -316,7 +322,7 @@ development: a real shop must never start with invented numbers in its books.
 | **State** | Zustand (application state + writes), TanStack Query (catalogue reads) |
 | **Data** | SQLite via `better-sqlite3` — WAL journal, foreign keys on, FTS5 search |
 | **Auth** | `bcryptjs` — pure JavaScript, deliberately, to avoid a second native module |
-| **Packaging** | electron-builder (NSIS) + electron-updater 6.x |
+| **Packaging** | electron-builder (NSIS; AppImage + deb on Linux) + electron-updater 6.x |
 
 Money is `REAL` rounded to two decimals at every boundary, timestamps are ISO-8601 UTC text,
 identifiers are text keys.

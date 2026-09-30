@@ -2,6 +2,20 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api, hasBackend } from '@/lib/api';
 import { useUsers, type User } from '@/stores/users';
+import { toast } from '@/stores/toast';
+
+/** A session call that must not fail silently: one retry, then a warning. */
+async function sessionCall(channel: 'session.lock' | 'session.logout', warning: string): Promise<void> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await api(channel);
+      return;
+    } catch {
+      // retry once
+    }
+  }
+  toast.warning(warning);
+}
 
 /**
  * Auth / session store.
@@ -177,12 +191,23 @@ export const useAuth = create<AuthState>()(
       },
 
       logout: () => {
-        void api('session.logout').catch(() => {});
+        // The screen signs out at once; the main process is told with one retry.
+        // A failure used to be ignored, which left the session alive in main.
+        if (hasBackend()) {
+          void sessionCall('session.logout', 'Signing out did not reach the app core. Close the app to be sure.');
+        }
         set({ currentUserId: null, locked: false, permissions: [] });
       },
 
       lock: () => {
-        if (get().currentUserId) set({ locked: true });
+        if (!get().currentUserId) return;
+        set({ locked: true });
+        // The main process refuses writes while locked; the overlay alone never
+        // stopped anything. Locking must never wait on IPC, so it is not awaited,
+        // but a failure is retried once and then shown instead of ignored.
+        if (hasBackend()) {
+          void sessionCall('session.lock', 'The lock did not reach the app core. Sign out to be sure.');
+        }
       },
 
       // Unlock is verified ONLY by the main process against the live session.
@@ -224,9 +249,17 @@ export const useAuth = create<AuthState>()(
           /* ignore — fall through to session restore */
         }
         try {
-          const res = await api<SessionLoginResult | null>('session.current');
+          const res = await api<(SessionLoginResult & { locked?: boolean }) | null>(
+            'session.current',
+          );
           if (res && res.user) {
-            set({ currentUserId: res.user.id, permissions: res.permissions ?? [] });
+            // A reload while locked must come back locked — the main process
+            // still refuses writes until the PIN is entered.
+            set({
+              currentUserId: res.user.id,
+              permissions: res.permissions ?? [],
+              locked: res.locked === true,
+            });
           } else {
             // Main holds no session (e.g. after a real restart). Do not present a
             // "logged in" UI that the IPC layer would then deny writes for.

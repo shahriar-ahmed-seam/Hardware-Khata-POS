@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -29,11 +29,11 @@ import {
   ChevronLeft,
   ChevronRight,
   BarChart3,
-  Hammer,
   Store,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUI } from '@/stores/ui';
+import { useBranches } from '@/stores/branches';
 
 type Item = { label: string; to: string; icon: any; badge?: string };
 type Group = { label: string; icon: any; items: Item[] };
@@ -46,9 +46,10 @@ type Entry = { kind: 'item'; item: Item } | { kind: 'group'; group: Group };
  *  - The seven per-module "Import …" rows collapsed into one "Data & Import"
  *    hub (`/import`) instead of repeating the same idea in six groups.
  *  - "Variations" removed — it only ever rendered a Placeholder page.
- *  - Expenses, Reports, Data & Import and Settings moved OUT of the sidebar
- *    entirely, to the gear menu in the titlebar (MoreMenu.tsx), so this list
- *    only holds what is reached during a sale.
+ *  - Expenses, Data & Import and Settings live in the gear menu in the
+ *    titlebar (MoreMenu.tsx). Reports is in both places: the owner looks at it
+ *    daily and could not find it behind the gear.
+ *  - Stock Transfers only shows once the shop has a second branch.
  *  - No fabricated counters (the old hard-coded "4" stock-alert badge is gone).
  */
 const nav: Entry[] = [
@@ -109,6 +110,7 @@ const nav: Entry[] = [
       items: [
         { label: 'Stock Report', to: '/stock', icon: Boxes },
         { label: 'Stock Alerts', to: '/stock/alerts', icon: AlertTriangle },
+        // Hidden while the shop has one branch (see `visibleNav`).
         { label: 'Transfers', to: '/stock/transfers', icon: ArrowLeftRight },
         { label: 'Damage / Adjustment', to: '/stock/adjustments', icon: AlertTriangle },
       ],
@@ -138,20 +140,38 @@ const nav: Entry[] = [
       ],
     },
   },
+  { kind: 'item', item: { label: 'Reports', to: '/reports', icon: BarChart3 } },
   // "More & Settings" (Reports · All Expenses · Expense Categories ·
-  // Data & Import · Settings) is NOT here any more. It moved to the gear in the
-  // titlebar — see components/layout/MoreMenu.tsx. None of those five is used
-  // during a sale, so they were spending permanent sidebar room and pushing the
-  // everyday destinations further from the top.
+  // Data & Import · Settings) lives in the titlebar gear — see
+  // components/layout/MoreMenu.tsx. Apart from Reports (above), none of those is
+  // used daily, so they do not spend permanent sidebar room.
   //
   // SMS is gone entirely: it had no backend at all (gateway, credit balance and
   // send history were local placeholder state), so every number it showed was
   // invented. The pages still exist on disk if a real BD gateway is ever wired up.
 ];
 
+/** Drop entries that do not apply to this shop (Transfers needs 2+ branches). */
+function visibleNav(branchCount: number): Entry[] {
+  if (branchCount > 1) return nav;
+  return nav.map((e) =>
+    e.kind === 'group'
+      ? {
+          kind: 'group',
+          group: {
+            ...e.group,
+            items: e.group.items.filter((i) => !i.to.startsWith('/stock/transfers')),
+          },
+        }
+      : e,
+  );
+}
+
 export function Sidebar() {
-  const { sidebarCollapsed, toggleSidebar } = useUI();
+  const { sidebarCollapsed, toggleSidebar, setSidebarCollapsed } = useUI();
   const location = useLocation();
+  const branchCount = useBranches((s) => s.items.length);
+  const entries = useMemo(() => visibleNav(branchCount), [branchCount]);
 
   // Accordion: only one group open at a time.
   // Initially open the group that contains the current route.
@@ -173,28 +193,11 @@ export function Sidebar() {
         sidebarCollapsed ? 'w-[68px]' : 'w-[248px]',
       )}
     >
-      {/* The business name and offline/branch status already live in the
-          titlebar — this header is just the mark plus the collapse control. */}
-      <div className="flex items-center gap-2 px-3 h-12 border-b border-sidebar-border">
-        <div className="grid place-items-center size-8 rounded-md bg-gradient-to-br from-primary to-accent text-white">
-          <Hammer className="size-[18px]" />
-        </div>
-        <div className="flex-1" />
-        <button
-          onClick={toggleSidebar}
-          title={sidebarCollapsed ? 'Expand menu' : 'Collapse menu'}
-          className="size-8 grid place-items-center rounded-md hover:bg-sidebar-hover text-sidebar-foreground/80 hover:text-sidebar-foreground"
-        >
-          {sidebarCollapsed ? (
-            <ChevronRight className="size-[18px]" />
-          ) : (
-            <ChevronLeft className="size-[18px]" />
-          )}
-        </button>
-      </div>
-
+      {/* No header row: the shop mark, name and branch already sit in the
+          titlebar right above, so the old logo row only repeated them and
+          pushed every link 48px down. The collapse control is at the bottom. */}
       <nav className="flex-1 overflow-y-auto py-2 px-2 space-y-1">
-        {nav.map((entry, i) =>
+        {entries.map((entry, i) =>
           entry.kind === 'item' ? (
             <SidebarItem key={i} item={entry.item} collapsed={sidebarCollapsed} />
           ) : (
@@ -207,10 +210,37 @@ export function Sidebar() {
               onToggle={() =>
                 setOpenGroup((cur) => (cur === entry.group.label ? null : entry.group.label))
               }
+              onExpand={() => {
+                setOpenGroup(entry.group.label);
+                setSidebarCollapsed(false);
+              }}
             />
           ),
         )}
       </nav>
+
+      <div className="shrink-0 border-t border-sidebar-border p-2">
+        <button
+          type="button"
+          onClick={toggleSidebar}
+          title={sidebarCollapsed ? 'Expand menu' : 'Collapse menu'}
+          aria-label={sidebarCollapsed ? 'Expand menu' : 'Collapse menu'}
+          aria-expanded={!sidebarCollapsed}
+          className={cn(
+            'w-full h-10 flex items-center gap-2.5 rounded-md text-sm font-medium text-sidebar-foreground/80 hover:bg-sidebar-hover hover:text-sidebar-foreground transition',
+            sidebarCollapsed ? 'justify-center' : 'px-2.5',
+          )}
+        >
+          {sidebarCollapsed ? (
+            <ChevronRight className="size-[18px] shrink-0" />
+          ) : (
+            <>
+              <ChevronLeft className="size-[18px] shrink-0" />
+              <span className="truncate">Collapse menu</span>
+            </>
+          )}
+        </button>
+      </div>
     </aside>
   );
 }
@@ -234,7 +264,7 @@ function SidebarItem({ item, collapsed }: { item: Item; collapsed: boolean }) {
       {!collapsed && <span className="flex-1 min-w-0 truncate">{item.label}</span>}
       {/* Badges stay compact and never steal room from a longer (Bangla) label */}
       {!collapsed && item.badge && (
-        <span className="text-2xs font-mono px-1 py-0.5 rounded bg-sidebar-hover shrink-0">
+        <span className="text-xs font-mono px-1 py-0.5 rounded bg-sidebar-hover shrink-0">
           {item.badge}
         </span>
       )}
@@ -248,41 +278,40 @@ function SidebarGroup({
   currentPath,
   isOpen,
   onToggle,
+  onExpand,
 }: {
   group: Group;
   collapsed: boolean;
   currentPath: string;
   isOpen: boolean;
   onToggle: () => void;
+  /** Folded menu only: unfold it and open this group. */
+  onExpand: () => void;
 }) {
   const hasActive = group.items.some((i) => currentPath.startsWith(i.to));
   const Icon = group.icon;
   const open = isOpen;
 
   if (collapsed) {
+    // Folded menu (POS folds it): one click on a group's icon opens the menu
+    // with that group expanded, so the next page is one more click away.
+    // There used to be a hover flyout here, but the menu's scroll area clipped
+    // it, so it never showed and the only way out was the button at the bottom.
     return (
-      <div className="relative group/g" title={group.label}>
-        <button className="w-full flex items-center justify-center h-11 rounded-md hover:bg-sidebar-hover text-sidebar-foreground">
-          <Icon className="size-[18px]" />
-        </button>
-        <div className="hidden group-hover/g:block absolute left-full top-0 ml-2 z-30 min-w-[200px] bg-card text-card-foreground border border-border rounded-md shadow-lg py-1">
-          <div className="px-3 py-1.5 text-xs font-bold text-muted-foreground">{group.label}</div>
-          {group.items.map((it) => (
-            <NavLink
-              key={it.to}
-              to={it.to}
-              className={({ isActive }) =>
-                cn(
-                  'flex items-center gap-2 px-3 py-2 text-sm hover:bg-secondary',
-                  isActive && 'bg-secondary text-primary font-semibold',
-                )
-              }
-            >
-              <it.icon className="size-4" /> {it.label}
-            </NavLink>
-          ))}
-        </div>
-      </div>
+      <button
+        type="button"
+        onClick={onExpand}
+        title={group.label}
+        aria-label={group.label}
+        className={cn(
+          'w-full flex items-center justify-center h-11 rounded-md transition',
+          hasActive
+            ? 'text-primary bg-primary/10'
+            : 'text-sidebar-foreground hover:bg-sidebar-hover',
+        )}
+      >
+        <Icon className="size-[18px]" />
+      </button>
     );
   }
 

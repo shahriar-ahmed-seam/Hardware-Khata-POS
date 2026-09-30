@@ -100,7 +100,7 @@ export default function TaxReportPage() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <Card className="p-4 border-l-4 border-success">
             <div className="flex items-center justify-between">
-              <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+              <div className="text-xs font-semibold text-muted-foreground">
                 Sales VAT collected
               </div>
               <ArrowUpRight className="size-3.5 text-success" />
@@ -108,13 +108,13 @@ export default function TaxReportPage() {
             <div className="tabular font-bold text-xl mt-1.5 text-success">
               {formatBDT(data.salesTotal)}
             </div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">
+            <div className="text-xs text-muted-foreground mt-0.5">
               from {formatNumber(data.salesInvoices)} invoices
             </div>
           </Card>
           <Card className="p-4 border-l-4 border-warning">
             <div className="flex items-center justify-between">
-              <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+              <div className="text-xs font-semibold text-muted-foreground">
                 Purchase VAT paid
               </div>
               <ArrowDownRight className="size-3.5 text-warning" />
@@ -122,7 +122,7 @@ export default function TaxReportPage() {
             <div className="tabular font-bold text-xl mt-1.5 text-warning">
               {formatBDT(data.purchaseTotal)}
             </div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">
+            <div className="text-xs text-muted-foreground mt-0.5">
               from {formatNumber(data.purchaseInvoices)} bills
             </div>
           </Card>
@@ -133,7 +133,7 @@ export default function TaxReportPage() {
             )}
           >
             <div className="flex items-center justify-between">
-              <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+              <div className="text-xs font-semibold text-muted-foreground">
                 Net VAT position
               </div>
               <Calculator className="size-3.5 text-primary" />
@@ -146,7 +146,7 @@ export default function TaxReportPage() {
             >
               {formatBDT(data.net)}
             </div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">
+            <div className="text-xs text-muted-foreground mt-0.5">
               {data.net >= 0 ? 'Owed to government' : 'Refundable'}
             </div>
           </Card>
@@ -196,7 +196,7 @@ export default function TaxReportPage() {
         )}
 
         <Card className="p-4 bg-secondary/30">
-          <div className="flex items-start gap-2 text-[12px] text-muted-foreground">
+          <div className="flex items-start gap-2 text-sm text-muted-foreground">
             <Percent className="size-4 mt-0.5 shrink-0" />
             <div>
               <div className="font-semibold text-foreground mb-0.5">For VAT filing</div>
@@ -240,7 +240,7 @@ function Section({
       >
         <div className="font-semibold text-sm">{title}</div>
       </div>
-      <div className="grid grid-cols-[0.8fr_1fr_1.2fr_1.2fr] gap-2 px-4 py-2 border-b border-border bg-secondary/40 text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+      <div className="grid grid-cols-[0.8fr_1fr_1.2fr_1.2fr] gap-2 px-4 py-2 border-b border-border bg-secondary/40 text-xs font-semibold text-muted-foreground">
         <div>Rate</div>
         <div className="text-right">{invoiceLabel}</div>
         <div className="text-right">Taxable amount</div>

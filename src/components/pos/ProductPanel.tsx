@@ -6,8 +6,10 @@ import { Badge } from '@/components/ui/Badge';
 import { Popover } from '@/components/ui/Popover';
 import { ProductImage } from '@/components/products/ProductImage';
 import { cn, formatBDT } from '@/lib/utils';
+import { usableImage } from '@/lib/imageFile';
 import { usePOS } from '@/stores/pos';
 import { useProducts } from '@/hooks/useProducts';
+import { useDefaultBranchId } from '@/lib/branch';
 import { useCategories, useBrands } from '@/hooks/useCatalog';
 
 /**
@@ -52,7 +54,7 @@ export function ProductPanel({
   } = usePOS();
 
   // ----- Data source: backend catalog only (seed fallbacks removed) -----
-  const productsQuery = useProducts('br_mp');
+  const productsQuery = useProducts(useDefaultBranchId());
   const categoriesQuery = useCategories();
   const brandsQuery = useBrands();
 
@@ -134,7 +136,7 @@ export function ProductPanel({
           <ScanBarcode className="size-4" /> Scan
         </Button>
         <div className="relative flex-1 min-w-0">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
           <Input
             ref={searchInputRef as any}
             value={search}
@@ -146,35 +148,37 @@ export function ProductPanel({
               }
             }}
             placeholder="Name / SKU / barcode  (F2)"
-            className="pl-8 pr-2 h-9 text-xs"
+            className="pl-9 pr-2"
           />
         </div>
       </div>
 
-      {/* View / filters row — kept to ONE line. The panel is drag-resizable and
-          narrow, so brand + stock switches live in the Filters popover instead
-          of wrapping onto extra rows and pushing products off screen. */}
-      <div className="px-2.5 pb-2 flex items-center gap-2 flex-nowrap">
-        <div className="flex items-center gap-0.5 p-0.5 bg-secondary rounded-md text-xs">
+      {/* View / filters row. Brand + stock switches live in the Filters popover
+          so this stays short; it may wrap (the count drops to a second line) at
+          the largest text sizes rather than push the page sideways. */}
+      <div className="px-2.5 pb-2 flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-0.5 p-0.5 bg-secondary rounded-md text-sm" role="group" aria-label="View">
           <button
             onClick={() => setProductView('grid')}
             className={cn(
-              'px-2 py-1 rounded inline-flex items-center gap-1 transition',
+              'h-8 px-2.5 rounded inline-flex items-center gap-1.5 transition',
               productView === 'grid' ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground',
             )}
             title="Grid view"
+            aria-pressed={productView === 'grid'}
           >
-            <LayoutGrid className="size-3.5" /> Grid
+            <LayoutGrid className="size-4" /> Grid
           </button>
           <button
             onClick={() => setProductView('list')}
             className={cn(
-              'px-2 py-1 rounded inline-flex items-center gap-1 transition',
+              'h-8 px-2.5 rounded inline-flex items-center gap-1.5 transition',
               productView === 'list' ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground',
             )}
             title="List view"
+            aria-pressed={productView === 'list'}
           >
-            <List className="size-3.5" /> List
+            <List className="size-4" /> List
           </button>
         </div>
 
@@ -189,15 +193,16 @@ export function ProductPanel({
           active={filtersActive}
         />
 
-        <div className="ml-auto text-2xs text-muted-foreground font-mono tabular whitespace-nowrap">
+        <div className="ml-auto text-xs text-muted-foreground tabular whitespace-nowrap">
           {list.length} of {products.length}
         </div>
       </div>
 
-      {/* Categories with mini thumbnails — one row, with a right-edge fade so it
-          is obvious the strip keeps scrolling past the visible edge. */}
-      <div className="relative px-2.5 pb-2">
-        <div className="flex items-center gap-1.5 flex-nowrap overflow-x-auto scroll-hide">
+      {/* Categories — they wrap, up to two rows, then scroll. They used to be
+          one sideways-scrolling strip with a hidden scrollbar, so with a plain
+          mouse wheel every category past the second chip was out of reach. */}
+      <div className="px-2.5 pb-2">
+        <div className="flex flex-wrap items-center gap-1.5 max-h-[4.5rem] overflow-y-auto">
           <CatChip active={activeCat === 'all'} onClick={() => setActiveCat('all')} emoji="🛒">
             All
           </CatChip>
@@ -212,11 +217,10 @@ export function ProductPanel({
             </CatChip>
           ))}
         </div>
-        <div className="pointer-events-none absolute top-0 right-0 bottom-2 w-10 bg-gradient-to-l from-background via-background/80 to-transparent" />
       </div>
 
       {/* Product list/grid */}
-      <div className="flex-1 overflow-auto scroll-hide p-2.5 pt-0 min-h-0">
+      <div className="flex-1 overflow-auto p-2.5 pt-0 min-h-0">
         {loading && (
           <div className="h-full grid place-items-center text-center text-sm text-muted-foreground">
             Loading products…
@@ -237,55 +241,71 @@ export function ProductPanel({
               crammed 4 columns into ~600px, giving ~90px cards. auto-fill +
               minmax keys off THIS container's width, so cards never shrink below
               a readable size and the count adapts as the splitter moves. */}
+          {/* PRODUCT CARD — picture strip, name, code · brand, then price and
+              stock on one line. The old card was a 4:3 box (≈135px) with a
+              64px picture floating in it, so most of every card was empty dark
+              space and only four fitted on screen. A photo now fills its strip;
+              without one, the category emoji sits on a soft tile. */}
           <div
-            className="grid gap-2.5"
-            style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))' }}
+            className="grid gap-2"
+            style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(9.5rem, 1fr))' }}
           >
             {visible.map((p) => {
               const oos = p.stock <= 0;
               const low = p.stock > 0 && p.stock <= p.reorderLevel;
               // Grey it out only when the card genuinely cannot be tapped.
               const blocked = oos && !allowNegativeStock;
+              const photo = usableImage(p.image);
+              // No brand → nothing after the code (brandName's '—' is for tables).
+              const brand = brands.find((b) => b.id === p.brandId)?.name;
               return (
                 <button
                   key={p.id}
                   onClick={() => onAdd(p.id)}
                   disabled={blocked}
+                  title={p.name}
                   className={cn(
-                    'group relative text-left rounded-xl border border-border bg-card transition overflow-hidden',
+                    'group flex flex-col items-stretch text-left rounded-lg border border-border bg-card transition overflow-hidden focus-ring',
                     blocked
                       ? 'opacity-50 grayscale cursor-not-allowed'
-                      : 'hover:border-primary hover:shadow-md',
+                      : 'hover:border-primary hover:ring-1 hover:ring-primary/40',
                   )}
                 >
-                  <div className="aspect-[4/3] bg-gradient-to-br from-secondary to-muted grid place-items-center relative">
-                    <ProductImage url={p.image} categoryId={p.categoryId} size={64} rounded="lg" />
-                    {/* Stock badge lives over the image corner so it can never
-                        collide with a long price in the footer. */}
-                    <div className="absolute top-1.5 right-1.5">
-                      <Badge variant={oos ? 'destructive' : low ? 'warning' : 'success'}>
-                        {p.stock} {p.unit}
-                      </Badge>
-                    </div>
-                    {oos && (
-                      <div className="absolute bottom-1.5 left-1.5">
-                        <Badge variant="destructive">No stock</Badge>
-                      </div>
+                  <div className="relative h-[4.5rem] shrink-0 bg-secondary/60 grid place-items-center overflow-hidden">
+                    {photo ? (
+                      <img
+                        src={photo}
+                        alt=""
+                        className="absolute inset-0 size-full object-cover transition-transform duration-200 group-hover:scale-105"
+                      />
+                    ) : (
+                      <ProductImage categoryId={p.categoryId} size={44} rounded="lg" />
                     )}
                   </div>
-                  <div className="p-2">
-                    <div className="text-2xs text-muted-foreground font-mono truncate">{p.sku}</div>
+                  <div className="flex-1 flex flex-col p-2 gap-0.5 min-w-0">
                     {/* No fixed min-height: Bangla lines are taller than Latin
                         (see the [lang='bn'] leading rule) and overflowed the box. */}
-                    <div className="text-xs font-medium leading-snug line-clamp-2 mt-0.5">
-                      {p.name}
+                    <div className="text-sm font-semibold leading-snug line-clamp-2">{p.name}</div>
+                    <div className="text-xs text-muted-foreground truncate">
+                      <span className="font-mono">{p.sku}</span>
+                      {brand && (
+                        <>
+                          {' · '}
+                          <span>{brand}</span>
+                        </>
+                      )}
                     </div>
-                    <div className="text-2xs text-muted-foreground mt-0.5 truncate">
-                      {brandName(p.brandId)}
-                    </div>
-                    {/* Price owns the whole footer width and is the biggest text. */}
-                    <div className="mt-1.5 text-lg font-bold font-mono tabular leading-tight truncate">
-                      {formatBDT(p.price, { withSymbol: false })}
+                    <div className="mt-auto pt-1 flex items-center justify-between gap-1.5 min-w-0">
+                      <span className="text-base font-bold tabular leading-tight truncate">
+                        {formatBDT(p.price, { withSymbol: false })}
+                      </span>
+                      {oos ? (
+                        <Badge variant="destructive">No stock</Badge>
+                      ) : (
+                        <Badge variant={low ? 'warning' : 'success'}>
+                          {p.stock} {p.unit}
+                        </Badge>
+                      )}
                     </div>
                   </div>
                 </button>
@@ -309,7 +329,7 @@ export function ProductPanel({
                 <col className="w-[5.5rem]" />
                 <col className="w-[5.5rem]" />
               </colgroup>
-              <thead className="text-2xs uppercase text-muted-foreground bg-secondary/50">
+              <thead className="text-xs text-muted-foreground bg-secondary/50">
                 <tr>
                   <th className="text-left font-medium px-3 py-2">Product</th>
                   <th className="text-right font-medium px-1.5 py-2">Price</th>
@@ -344,16 +364,16 @@ export function ProductPanel({
                                 narrow panel the brand was the first thing cut —
                                 and in a hardware shop the brand is half the
                                 identity of the item ("2 inch — but whose?"). */}
-                            <div className="text-2xs text-muted-foreground font-mono truncate">
+                            <div className="text-xs text-muted-foreground font-mono truncate">
                               {p.sku}
                             </div>
-                            <div className="text-2xs text-muted-foreground truncate">
+                            <div className="text-xs text-muted-foreground truncate">
                               {brandName(p.brandId)}
                             </div>
                           </div>
                         </div>
                       </td>
-                      <td className="px-1.5 py-2 text-right font-mono tabular font-semibold">
+                      <td className="px-1.5 py-2 text-right tabular font-semibold">
                         {formatBDT(p.price, { withSymbol: false })}
                       </td>
                       <td className="px-1.5 py-2 text-right">
@@ -361,7 +381,7 @@ export function ProductPanel({
                           {p.stock} {p.unit}
                         </Badge>
                         {oos && (
-                          <div className="mt-1 text-2xs text-destructive whitespace-nowrap">
+                          <div className="mt-1 text-xs text-destructive whitespace-nowrap">
                             No stock
                           </div>
                         )}
@@ -399,10 +419,10 @@ function CapNotice({ total }: { total: number }) {
   return (
     <div className="mt-2.5 rounded-lg border border-dashed border-border bg-secondary/40 px-3 py-2.5 text-center">
       <div className="text-xs font-medium">Showing the first 200 products only.</div>
-      <div className="text-2xs text-muted-foreground mt-0.5">
-        <span className="font-mono tabular">{total}</span> <span>products match right now.</span>
+      <div className="text-xs text-muted-foreground mt-0.5">
+        <span className="tabular">{total}</span> <span>products match right now.</span>
       </div>
-      <div className="text-2xs text-muted-foreground">Keep typing to narrow the search.</div>
+      <div className="text-xs text-muted-foreground">Keep typing to narrow the search.</div>
     </div>
   );
 }
@@ -434,13 +454,13 @@ function FiltersPopover({
         <button
           onClick={() => set(true)}
           className={cn(
-            'relative h-8 px-2.5 rounded-md text-xs inline-flex items-center gap-1.5 border transition whitespace-nowrap',
+            'relative h-9 px-3 rounded-md text-sm inline-flex items-center gap-1.5 border transition whitespace-nowrap',
             active
               ? 'border-primary/50 bg-primary/10 text-primary'
               : 'border-border text-muted-foreground hover:bg-secondary',
           )}
         >
-          <SlidersHorizontal className="size-3.5" /> Filters
+          <SlidersHorizontal className="size-4" /> Filters
           {/* Dot so a narrowed list is never a silent surprise. */}
           {active && (
             <span className="absolute -top-1 -right-1 size-2.5 rounded-full bg-primary border border-background" />
@@ -451,11 +471,11 @@ function FiltersPopover({
       {() => (
         <div className="p-3 space-y-3">
           <div>
-            <div className="text-2xs font-medium text-muted-foreground mb-1">Brand</div>
+            <div className="text-xs font-medium text-muted-foreground mb-1">Brand</div>
             <select
               value={activeBrand}
               onChange={(e) => setActiveBrand(e.target.value)}
-              className="w-full h-9 px-2 text-xs rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
+              className="w-full h-10 px-2 text-xs rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
             >
               <option value="all">All Brands</option>
               {brands.map((b) => (
@@ -535,7 +555,7 @@ function ToggleRow({
         >
           {label}
         </span>
-        <span className="block text-2xs text-muted-foreground leading-snug mt-0.5">{hint}</span>
+        <span className="block text-xs text-muted-foreground leading-snug mt-0.5">{hint}</span>
       </span>
     </button>
   );
@@ -556,7 +576,7 @@ function CatChip({
     <button
       onClick={onClick}
       className={cn(
-        'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition border',
+        'inline-flex items-center gap-1.5 h-8 px-3 rounded-full text-sm font-medium whitespace-nowrap transition border',
         active
           ? 'bg-primary text-primary-foreground border-primary'
           : 'bg-secondary text-secondary-foreground border-transparent hover:bg-secondary/70',

@@ -324,7 +324,7 @@ export default function LoginPage() {
               className="space-y-3"
             >
               <div>
-                <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+                <label className="text-xs font-semibold text-muted-foreground">
                   Username
                 </label>
                 <div className="relative">
@@ -339,7 +339,7 @@ export default function LoginPage() {
                 </div>
               </div>
               <div>
-                <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+                <label className="text-xs font-semibold text-muted-foreground">
                   Password
                 </label>
                 <div className="relative">
@@ -371,7 +371,7 @@ export default function LoginPage() {
               Forgot PIN / password?
             </button>
             {forgotOpen && (
-              <div className="mt-3 text-left text-[12px] text-muted-foreground bg-secondary/40 rounded-md p-3 border border-border">
+              <div className="mt-3 text-left text-sm text-muted-foreground bg-secondary/40 rounded-md p-3 border border-border">
                 Offline recovery: PINs are reset by the shop owner from{' '}
                 <span className="font-semibold text-foreground">Settings → Users</span>. If you are
                 the owner and locked out, restore from a backup.

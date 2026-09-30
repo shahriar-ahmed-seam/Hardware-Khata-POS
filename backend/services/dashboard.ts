@@ -3,15 +3,23 @@ import { round2 } from '../core/money.ts';
 import { resolveRange, type RangeInput, type ResolvedRange } from '../core/dates.ts';
 import { stockLevels, stockValuation } from './stock.ts';
 import { customerDue, supplierDue } from './ledger.ts';
+import { sellReturnsEffect } from './reports.ts';
 
 function branchClause(branchId?: string, alias = ''): string {
   const col = alias ? `${alias}.branch_id` : 'branch_id';
   return branchId && branchId !== 'all' ? ` AND ${col} = @branchId` : '';
 }
 
-function deltaPct(curr: number, prev: number): number {
-  if (prev === 0) return curr > 0 ? 100 : 0;
-  return round2(((curr - prev) / prev) * 100);
+/**
+ * Change against the previous period, in percent — or null when there is no
+ * previous figure to compare with. It used to report 0-vs-0 as "0%" and
+ * anything-vs-0 as "100%": invented numbers the dashboard showed as a trend.
+ * The base is taken as a magnitude so a loss turning into a profit reads as a
+ * rise, not a fall.
+ */
+export function deltaPct(curr: number, prev: number): number | null {
+  if (Math.abs(prev) < 0.005) return null;
+  return round2(((curr - prev) / Math.abs(prev)) * 100);
 }
 
 /** Previous period of equal length immediately before `r`. */
@@ -126,7 +134,12 @@ export function getStats(db: DB, rangeInput: RangeInput, branchId?: string) {
     cashInDrawer += sh.opening_cash + inRow.s - outRow.s;
   }
 
-  const grossProfit = round2(cur.net - cur.cogs);
+  // The same definition as the Profit & Loss report: refunds come off, and the
+  // cost of goods that came back onto the shelf comes off the cost of goods sold.
+  // The dashboard used to ignore returns entirely, so "Today's Profit" and the
+  // P&L for the same day disagreed whenever anything was returned.
+  const ret = sellReturnsEffect(db, range.from, range.to, branchId);
+  const grossProfit = round2(cur.net - cur.cogs + ret.returnedCost - ret.refunds);
   const netProfit = round2(grossProfit - expenses.s);
 
   return {
@@ -135,6 +148,8 @@ export function getStats(db: DB, rangeInput: RangeInput, branchId?: string) {
     profit: {
       revenue: round2(cur.net),
       cogs: round2(cur.cogs),
+      returnedCost: ret.returnedCost,
+      refunds: ret.refunds,
       grossProfit,
       marginPct: cur.net > 0 ? round2((grossProfit / cur.net) * 100) : 0,
       expenses: round2(expenses.s),
@@ -158,11 +173,22 @@ export function getStats(db: DB, rangeInput: RangeInput, branchId?: string) {
 }
 
 // ---------- Widgets ----------
+/**
+ * HOURS, DAYS AND MONTHS ARE THE SHOP'S, NOT UTC.
+ *
+ * Dates are stored as UTC ISO strings, and these widgets bucketed them with
+ * `substr(date, …)` — the UTC hour, day and month. In Bangladesh (UTC+6) the
+ * 10 am rush showed up at 4 am, a sale at 00:30 landed on the PREVIOUS day, and
+ * anything sold after midnight on the 1st counted towards last month. The date
+ * RANGES already use local time (core/dates.ts), so the buckets did not even
+ * agree with the ranges they sat in. SQLite's 'localtime' modifier converts with
+ * the same system clock JavaScript's local Date uses.
+ */
 export function hourlySales(db: DB, rangeInput: RangeInput, branchId?: string) {
   const range = resolveRange(rangeInput);
   const rows = db
     .prepare(
-      `SELECT substr(date, 12, 2) AS hour, COALESCE(SUM(total),0) AS total, COUNT(*) AS cnt
+      `SELECT strftime('%H', date, 'localtime') AS hour, COALESCE(SUM(total),0) AS total, COUNT(*) AS cnt
          FROM sales WHERE status='final' AND date >= @from AND date <= @to ${branchClause(branchId)}
         GROUP BY hour ORDER BY hour`,
     )
@@ -175,13 +201,17 @@ export function hourlySales(db: DB, rangeInput: RangeInput, branchId?: string) {
 }
 
 export function salesTrend(db: DB, days: number, branchId?: string) {
+  // The window starts at LOCAL midnight `days` days ago, as an ISO instant, so the
+  // filter still compares raw `date` (and can use its index).
+  const now = new Date();
+  const since = new Date(now.getFullYear(), now.getMonth(), now.getDate() - days).toISOString();
   const rows = db
     .prepare(
-      `SELECT substr(date, 1, 10) AS day, COALESCE(SUM(total),0) AS total
-         FROM sales WHERE status='final' AND date >= date('now', '-' || @days || ' days') ${branchClause(branchId)}
+      `SELECT date(date, 'localtime') AS day, COALESCE(SUM(total),0) AS total
+         FROM sales WHERE status='final' AND date >= @since ${branchClause(branchId)}
         GROUP BY day ORDER BY day`,
     )
-    .all({ days, branchId }) as { day: string; total: number }[];
+    .all({ since, branchId }) as { day: string; total: number }[];
   return rows.map((r) => ({ day: r.day, total: round2(r.total) }));
 }
 
@@ -332,23 +362,26 @@ export function salesVsPurchaseVsExpense(db: DB, months = 6, branchId?: string) 
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     keys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
   }
-  const from = keys[0] + '-01'; // first day of the oldest month (string compare is safe on ISO)
+  // LOCAL midnight on the 1st of the oldest month, as an ISO instant. The old
+  // bound was the bare string 'YYYY-MM-01' compared with UTC timestamps, which in
+  // UTC+6 dropped the first six hours of that month.
+  const from = new Date(now.getFullYear(), now.getMonth() - (months - 1), 1).toISOString();
 
   const salesRows = db
     .prepare(
-      `SELECT substr(date,1,7) AS m, COALESCE(SUM(total),0) AS v FROM sales
+      `SELECT strftime('%Y-%m', date, 'localtime') AS m, COALESCE(SUM(total),0) AS v FROM sales
         WHERE status='final' AND date >= @from ${branchClause(branchId)} GROUP BY m`,
     )
     .all({ from, branchId }) as { m: string; v: number }[];
   const purchaseRows = db
     .prepare(
-      `SELECT substr(date,1,7) AS m, COALESCE(SUM(total),0) AS v FROM purchases
+      `SELECT strftime('%Y-%m', date, 'localtime') AS m, COALESCE(SUM(total),0) AS v FROM purchases
         WHERE status != 'cancelled' AND date >= @from ${branchClause(branchId)} GROUP BY m`,
     )
     .all({ from, branchId }) as { m: string; v: number }[];
   const expenseRows = db
     .prepare(
-      `SELECT substr(date,1,7) AS m, COALESCE(SUM(amount),0) AS v FROM expenses
+      `SELECT strftime('%Y-%m', date, 'localtime') AS m, COALESCE(SUM(amount),0) AS v FROM expenses
         WHERE voided = 0 AND date >= @from ${branchClause(branchId)} GROUP BY m`,
     )
     .all({ from, branchId }) as { m: string; v: number }[];

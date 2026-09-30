@@ -40,7 +40,7 @@ export default function TaxRatesPage() {
       <div className="p-6 max-w-3xl space-y-4">
         <Card className="overflow-hidden">
           <table className="w-full text-sm">
-            <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50">
+            <thead className="text-xs text-muted-foreground bg-secondary/50">
               <tr>
                 <th className="text-left px-4 py-2.5 font-medium">Name</th>
                 <th className="text-right px-4 py-2.5 font-medium">Rate</th>
@@ -56,7 +56,7 @@ export default function TaxRatesPage() {
                     <Percent className="size-3.5 text-muted-foreground" />
                     {t.name}
                   </td>
-                  <td className="px-4 py-2.5 text-right font-mono tabular font-semibold">
+                  <td className="px-4 py-2.5 text-right tabular font-semibold">
                     {t.percentage}%
                   </td>
                   <td className="px-4 py-2.5 text-xs capitalize">
@@ -70,7 +70,7 @@ export default function TaxRatesPage() {
                     ) : (
                       <button
                         onClick={() => setDefault(t.id)}
-                        className="text-[11px] px-2 h-7 rounded border border-border hover:bg-secondary"
+                        className="text-xs px-2 h-7 rounded border border-border hover:bg-secondary"
                       >
                         Set default
                       </button>
@@ -166,19 +166,19 @@ function Form({
     >
       <div className="flex-1 overflow-auto p-4 space-y-3">
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">Name *</label>
+          <label className="text-xs font-semibold text-muted-foreground">Name *</label>
           <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="VAT 15%" />
         </div>
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">Percentage *</label>
+          <label className="text-xs font-semibold text-muted-foreground">Percentage *</label>
           <NumberField value={pct} onChangeNumber={setPct} className="text-right" />
         </div>
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">Scope</label>
+          <label className="text-xs font-semibold text-muted-foreground">Scope</label>
           <select
             value={scope ?? 'all'}
             onChange={(e) => setScope(e.target.value as TaxRate['scope'])}
-            className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+            className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="all">All</option>
             <option value="product">Products only</option>

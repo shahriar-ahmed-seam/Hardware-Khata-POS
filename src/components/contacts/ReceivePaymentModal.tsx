@@ -7,6 +7,8 @@ import { Banknote, Smartphone, CreditCard, Building2, HandCoins, Save } from 'lu
 import { cn, formatBDT } from '@/lib/utils';
 import { useCustomers } from '@/stores/contacts';
 import { useSales, type SaleRecord } from '@/stores/sales';
+import { toast } from '@/stores/toast';
+import { round2, sum2 } from '@/lib/money';
 import { api } from '@/lib/api';
 import { toCustomer, type BackendCustomer } from '@/hooks/contactAdapter';
 import { toSaleRecord, type BackendSale } from '@/hooks/saleAdapter';
@@ -32,7 +34,7 @@ export function ReceivePaymentModal({ open, onClose, customerId }: Props) {
   const storeCustomer = useCustomers((s) => s.items.find((c) => c.id === customerId)) ?? null;
   const receivePayment = useCustomers((s) => s.receivePayment);
   const sales = useSales((s) => s.sales);
-  const addSalePayment = useSales((s) => s.addPayment);
+  const [saving, setSaving] = useState(false);
 
   // The contacts store holds ONE PAGE of customers. This modal usually opens
   // from a row on that page, but not always (Customer Dues rows, a deep-linked
@@ -134,43 +136,51 @@ export function ReceivePaymentModal({ open, onClose, customerId }: Props) {
    * Every hook in this component therefore runs unconditionally, and the
    * "nothing to show" case is handled in the RETURNED MARKUP instead.
    */
+  /**
+   * The part of the balance that is NOT on an open invoice — the opening
+   * balance still owed. The backend pays this FIRST (services/accounts.ts); the
+   * preview mirrors that so the screen and the books agree.
+   */
+  const openingPart = useMemo(() => {
+    if (!customer) return 0;
+    const onInvoices = sum2(dueInvoices.map((i) => i.due));
+    return Math.max(0, round2(customer.due - onInvoices));
+  }, [customer, dueInvoices]);
+
   const allocation = useMemo(() => {
-    if (mode !== 'auto' || !customer) return [];
-    let remaining = amount;
-    const out: { saleId: string; invoiceNo: string; apply: number }[] = [];
+    if (mode !== 'auto' || !customer) return { opening: 0, invoices: [], advance: 0 };
+    const opening = Math.min(amount, openingPart);
+    let remaining = round2(amount - opening);
+    const invoices: { saleId: string; invoiceNo: string; apply: number }[] = [];
     for (const inv of dueInvoices) {
       if (remaining <= 0) break;
       const apply = Math.min(inv.due, remaining);
-      out.push({ saleId: inv.id, invoiceNo: inv.invoiceNo, apply });
-      remaining -= apply;
+      invoices.push({ saleId: inv.id, invoiceNo: inv.invoiceNo, apply });
+      remaining = round2(remaining - apply);
     }
-    return out;
-  }, [mode, amount, dueInvoices, customer]);
+    return { opening, invoices, advance: Math.max(0, remaining) };
+  }, [mode, amount, dueInvoices, customer, openingPart]);
 
-  const submit = () => {
-    if (!customer || effectiveAmount <= 0) return;
-    receivePayment(customer.id, effectiveAmount, method, reference || undefined);
-    if (mode === 'auto') {
-      allocation.forEach((a) => {
-        addSalePayment(a.saleId, {
-          method,
-          amount: a.apply,
-          reference: reference || undefined,
-          paidAt: new Date().toISOString(),
-        });
-      });
-    } else {
-      Object.entries(picked).forEach(([saleId, applyAmt]) => {
-        if (applyAmt > 0) {
-          addSalePayment(saleId, {
-            method,
-            amount: applyAmt,
-            reference: reference || undefined,
-            paidAt: new Date().toISOString(),
-          });
-        }
-      });
-    }
+  // ONE backend call places the whole payment in one transaction. This used to
+  // loop one un-awaited sales.addPayment per invoice and save NOTHING for money
+  // that did not fit an invoice, while promising "applied as advance".
+  const submit = async () => {
+    if (!customer || effectiveAmount <= 0 || saving) return;
+    setSaving(true);
+    const allocations =
+      mode === 'pick'
+        ? Object.entries(picked)
+            .filter(([, v]) => v > 0)
+            .map(([docId, v]) => ({ docId, amount: v }))
+        : undefined;
+    const res = await receivePayment(customer.id, effectiveAmount, method, reference || undefined, allocations);
+    setSaving(false);
+    if (!res) return;
+    const parts: string[] = [];
+    if (res.toOpening > 0) parts.push(`Opening balance ${formatBDT(res.toOpening)}`);
+    if (res.allocated > 0) parts.push(`Invoices ${formatBDT(res.allocated)}`);
+    if (res.advance > 0) parts.push(`Advance ${formatBDT(res.advance)}`);
+    toast.success('Payment recorded', { description: parts.join(' · ') });
     onClose();
   };
 
@@ -202,7 +212,7 @@ export function ReceivePaymentModal({ open, onClose, customerId }: Props) {
         <div className="flex items-center justify-between">
           <div className="text-sm">
             <span className="text-muted-foreground">Receiving </span>
-            <span className="font-mono tabular font-semibold text-success">
+            <span className="tabular font-semibold text-success">
               {formatBDT(effectiveAmount)}
             </span>
           </div>
@@ -210,7 +220,7 @@ export function ReceivePaymentModal({ open, onClose, customerId }: Props) {
             <Button variant="outline" onClick={onClose}>
               Cancel
             </Button>
-            <Button onClick={submit} disabled={effectiveAmount <= 0}>
+            <Button onClick={() => void submit()} disabled={effectiveAmount <= 0 || saving}>
               <Save className="size-4" /> Save Payment
             </Button>
           </div>
@@ -259,18 +269,18 @@ export function ReceivePaymentModal({ open, onClose, customerId }: Props) {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {mode === 'auto' && (
             <div>
-              <label className="text-[10px] uppercase font-semibold text-muted-foreground">Amount</label>
+              <label className="text-xs font-semibold text-muted-foreground">Amount</label>
               <NumberField value={amount} onChangeNumber={setAmount} className="text-right text-base" />
               <div className="flex items-center gap-1 mt-1">
                 <button
                   onClick={() => setAmount(customer.due)}
-                  className="text-[10px] px-2 h-6 rounded border border-border hover:bg-secondary"
+                  className="text-xs px-2 h-6 rounded border border-border hover:bg-secondary"
                 >
                   Full due
                 </button>
                 <button
                   onClick={() => setAmount(Math.round(customer.due / 2))}
-                  className="text-[10px] px-2 h-6 rounded border border-border hover:bg-secondary"
+                  className="text-xs px-2 h-6 rounded border border-border hover:bg-secondary"
                 >
                   Half
                 </button>
@@ -279,7 +289,7 @@ export function ReceivePaymentModal({ open, onClose, customerId }: Props) {
           )}
           {needsRef && (
             <div>
-              <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+              <label className="text-xs font-semibold text-muted-foreground">
                 Reference / TxID
               </label>
               <Input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="TX1234567" />
@@ -287,18 +297,37 @@ export function ReceivePaymentModal({ open, onClose, customerId }: Props) {
           )}
         </div>
 
+        {/* Where the money goes besides invoices (the backend does the same). */}
+        {mode === 'auto' && (allocation.opening > 0 || allocation.advance > 0) && (
+          <div className="rounded-md border border-border bg-secondary/40 px-3 py-2 text-sm space-y-1">
+            {allocation.opening > 0 && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Opening balance</span>
+                <span className="tabular text-success">{formatBDT(allocation.opening)}</span>
+              </div>
+            )}
+            {allocation.advance > 0 && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Kept as an advance on the account</span>
+                <span className="tabular text-success">{formatBDT(allocation.advance)}</span>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Allocation preview / picker */}
         {dueInvoices.length === 0 ? (
           <div className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-            No outstanding invoices. Payment will be applied as advance.
+            No open invoices. The payment goes to the opening balance first; anything more is kept as an
+            advance on the account.
           </div>
         ) : (
           <div className="rounded-lg border border-border overflow-hidden">
-            <div className="px-3 py-2 border-b border-border bg-secondary/40 text-[11px] uppercase font-semibold text-muted-foreground">
+            <div className="px-3 py-2 border-b border-border bg-secondary/40 text-xs font-semibold text-muted-foreground">
               {mode === 'auto' ? 'Will apply to' : 'Choose how much to apply per invoice'}
             </div>
             <table className="w-full text-sm">
-              <thead className="text-[10px] uppercase text-muted-foreground border-b border-border">
+              <thead className="text-xs text-muted-foreground border-b border-border">
                 <tr>
                   <th className="text-left px-3 py-2 font-medium">Invoice</th>
                   <th className="text-left px-2 py-2 font-medium">Date</th>
@@ -309,7 +338,7 @@ export function ReceivePaymentModal({ open, onClose, customerId }: Props) {
               </thead>
               <tbody>
                 {dueInvoices.map((s) => {
-                  const auto = allocation.find((a) => a.saleId === s.id)?.apply ?? 0;
+                  const auto = allocation.invoices.find((a) => a.saleId === s.id)?.apply ?? 0;
                   const cur = mode === 'auto' ? auto : picked[s.id] ?? 0;
                   return (
                     <tr key={s.id} className="border-t border-border">
@@ -317,15 +346,15 @@ export function ReceivePaymentModal({ open, onClose, customerId }: Props) {
                       <td className="px-2 py-2 text-xs text-muted-foreground">
                         {new Date(s.date).toLocaleDateString('en-GB')}
                       </td>
-                      <td className="px-2 py-2 text-right font-mono tabular">
+                      <td className="px-2 py-2 text-right tabular">
                         {formatBDT(s.total, { withSymbol: false })}
                       </td>
-                      <td className="px-2 py-2 text-right font-mono tabular text-destructive">
+                      <td className="px-2 py-2 text-right tabular text-destructive">
                         {formatBDT(s.due, { withSymbol: false })}
                       </td>
                       <td className="px-3 py-2 text-right">
                         {mode === 'auto' ? (
-                          <span className="font-mono tabular text-success">
+                          <span className="tabular text-success">
                             {cur > 0 ? formatBDT(cur, { withSymbol: false }) : '—'}
                           </span>
                         ) : (

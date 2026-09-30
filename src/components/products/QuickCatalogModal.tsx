@@ -225,11 +225,11 @@ function Labelled({
 }) {
   return (
     <div>
-      <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+      <label className="text-xs font-semibold text-muted-foreground">
         {label} {required && <span className="text-destructive">*</span>}
       </label>
       {children}
-      {hint && <div className="text-[10px] text-muted-foreground mt-0.5">{hint}</div>}
+      {hint && <div className="text-xs text-muted-foreground mt-0.5">{hint}</div>}
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { currentUserId } from '@/lib/actor';
 import { persist } from 'zustand/middleware';
 import { api } from '@/lib/api';
 import { toast } from '@/stores/toast';
@@ -10,7 +11,6 @@ import {
   type BackendTaxRate,
 } from '@/hooks/settingsAdapter';
 
-const CURRENT_USER = 'u_admin';
 
 // ---------- Business Info ----------
 export interface BusinessInfo {
@@ -200,7 +200,22 @@ export interface AppearancePrefs {
   themeMode: 'light' | 'dark' | 'system';
   accentHue: number; // 0..360
   density: 'compact' | 'comfortable';
-  fontScale: 0.9 | 1 | 1.1 | 1.2;
+  fontScale: FontScale;
+}
+
+/** Text-size steps offered in Settings → Appearance and the titlebar A− / A+. */
+export const FONT_SCALE_STEPS = [1, 1.15, 1.3, 1.45] as const;
+export type FontScale = (typeof FONT_SCALE_STEPS)[number];
+
+/**
+ * Snap any stored value to the nearest step. Older builds offered
+ * 0.9 / 1.1 / 1.2, and those values are still in existing shops' settings.
+ */
+export function snapFontScale(v: unknown): FontScale {
+  const n = typeof v === 'number' && Number.isFinite(v) ? v : 1;
+  let best: FontScale = FONT_SCALE_STEPS[0];
+  for (const s of FONT_SCALE_STEPS) if (Math.abs(s - n) < Math.abs(best - n)) best = s;
+  return best;
 }
 
 const DEFAULT_APPEARANCE: AppearancePrefs = {
@@ -399,7 +414,10 @@ export const useSettings = create<State>()(
               if (kv.receipt != null) patch.receipt = kv.receipt as ReceiptTemplate;
               if (kv.barcode != null) patch.barcode = kv.barcode as BarcodeSettings;
               if (kv.printers != null) patch.printers = kv.printers as PrinterProfile[];
-              if (kv.appearance != null) patch.appearance = kv.appearance as AppearancePrefs;
+              if (kv.appearance != null) {
+                const ap = kv.appearance as AppearancePrefs;
+                patch.appearance = { ...ap, fontScale: snapFontScale(ap.fontScale) };
+              }
               if (kv.pos != null) patch.pos = kv.pos as POSPrefs;
               if (kv.cashRegister != null) patch.cashRegister = kv.cashRegister as CashRegisterPrefs;
               if (kv.shortcuts != null) patch.shortcuts = kv.shortcuts as ShortcutMap;
@@ -444,9 +462,13 @@ export const useSettings = create<State>()(
             fiscalYearStart: merged.fiscalYearStart,
             defaultLanguage: merged.defaultLanguage,
             ...(defaultBranchId !== undefined ? { defaultBranchId } : {}),
-            userId: CURRENT_USER,
+            userId: currentUserId(),
           })
-            .then(() => get().hydrate())
+            .then(() => {
+              // The backend moves the branch list's default flag with it.
+              if (defaultBranchId) void useBranches.getState().hydrate();
+              return get().hydrate();
+            })
             .catch((e: unknown) => {
               toast.error(e instanceof Error ? e.message : 'Failed to save business info');
               void get().hydrate();

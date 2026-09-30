@@ -9,7 +9,7 @@ import { seedMaster } from '../seed/master.ts';
 import { Suite } from './assert.ts';
 import { round2 } from '../core/money.ts';
 import { recordMovement, stockOnHand, weightedAvgCost } from '../services/stock.ts';
-import { createSale, updateSale, addSalePayment, voidSale, deleteSale } from '../services/sales.ts';
+import { createSale, updateSale, addSalePayment, voidSale, deleteSale, convertSale } from '../services/sales.ts';
 import { createPurchase, addPurchasePayment, cancelPurchase, deletePurchase } from '../services/purchases.ts';
 import { createSellReturn, createPurchaseReturn } from '../services/returns.ts';
 import { createShipment, updateShipment, deleteShipment } from '../services/shipments.ts';
@@ -154,17 +154,34 @@ export function runScenarios(s: Suite) {
     db.close();
   }
 
-  // ---------- Scenario D: overpayment clamps due to 0 ----------
+  // ---------- Scenario D: overpayment ----------
+  // A NAMED customer may pay ahead: the invoice clears and the extra is a credit
+  // on their account. A walk-in has no account, so paying over the bill is
+  // refused (the change goes back; it is not drawer cash). See core/validate.ts.
   s.section('scenario-overpay');
   {
     const db = fresh();
     const sale = createSale(db, {
       branchId: 'br_mp',
       userId: 'u_rana',
+      customerId: 'cu2',
       lines: [{ productId: 'p1', qty: 1, spr: 520 }],
-      payments: [{ method: 'Cash', amount: 600 }], // overpay (change scenario)
+      payments: [{ method: 'Cash', amount: 600 }],
     });
     s.money('overpay due is 0 not negative', sale.due, 0);
+    s.money('the extra is a credit on the customer account', customerDue(db, 'cu2'), -80);
+    let refused = false;
+    try {
+      createSale(db, {
+        branchId: 'br_mp',
+        userId: 'u_rana',
+        lines: [{ productId: 'p1', qty: 1, spr: 520 }],
+        payments: [{ method: 'Cash', amount: 600 }],
+      });
+    } catch {
+      refused = true;
+    }
+    s.ok('a walk-in cannot pay more than the bill', refused);
     db.close();
   }
 
@@ -1167,7 +1184,10 @@ export function runScenarios(s: Suite) {
     s.eq('the sale is void', row2().status, 'void');
     s.money('a voided invoice owes nothing', row2().due, 0);
     s.money('and shows nothing as received', row2().paid, 0);
-    s.money('the customer owes what they did before it', customerDue(db, 'cu2'), dueStart);
+    // The void paid nothing back for the bKash ৳500 (only cash leaves the
+    // drawer), so the shop still owes it: it stays on the customer's account as
+    // a credit instead of vanishing with the voided invoice (ledger.ts).
+    s.money('the bKash paid on it is still owed back to the customer', customerDue(db, 'cu2'), round2(dueStart - 500));
     s.eq(
       'the payment rows are KEPT as the record of what moved',
       (
@@ -1476,14 +1496,28 @@ export function runScenarios(s: Suite) {
       0,
     );
 
-    // Convert to final — side effects apply once, for the edited quantity.
-    updateSale(db, draft.id, {
-      status: 'final',
+    // A draft cannot be finalised by an edit (it would keep its DRF- number)…
+    let editRefused = false;
+    try {
+      updateSale(db, draft.id, {
+        status: 'final',
+        branchId: 'br_mp',
+        userId: 'u_admin',
+        lines: [{ productId: 'p1', qty: 5, spr: 400 }],
+        payments: [{ method: 'Cash', amount: 2000 }],
+        reason: 'confirmed at the counter',
+      });
+    } catch {
+      editRefused = true;
+    }
+    s.ok('an edit cannot turn a draft into a sale', editRefused);
+
+    // …it is converted. Side effects apply once, for the edited quantity.
+    convertSale(db, draft.id, {
       branchId: 'br_mp',
       userId: 'u_admin',
       lines: [{ productId: 'p1', qty: 5, spr: 400 }],
       payments: [{ method: 'Cash', amount: 2000 }],
-      reason: 'confirmed at the counter',
     });
     s.money('converting a draft moves stock exactly once', stockOnHand(db, 'p1', 'br_mp'), stockBefore - 5);
     s.money('converting a draft takes the cash once', shiftTotals(db, shiftId).expected, drawerBefore + 2000);
@@ -1778,7 +1812,7 @@ export function runScenarios(s: Suite) {
       branchId: 'br_mp',
     });
     s.money('allocated equals amount (within open bills)', res.allocated, 5000);
-    s.money('no remainder when bills cover amount', res.remainder, 0);
+    s.money('no advance when bills cover amount', res.advance, 0);
     s.money('supplier due dropped by paid amount', supplierDue(db, sup.id), round2(dueBefore - 5000));
 
     const b1 = db.prepare('SELECT paid, due FROM purchases WHERE id = ?').get(bill1.id) as { paid: number; due: number };
@@ -1788,7 +1822,8 @@ export function runScenarios(s: Suite) {
     s.money('next bill partially paid', b2.paid, 1000);
     s.money('next bill due reduced', b2.due, 1000);
 
-    // overpay beyond open bills: remainder is NOT persisted (advance deferral)
+    // overpay beyond open bills: the rest is KEPT as an advance with the supplier
+    // (it used to be returned and saved nowhere).
     const res2 = paySupplier(db, {
       supplierId: sup.id,
       amount: 5000, // only 1000 of bill2 remains open
@@ -1797,8 +1832,8 @@ export function runScenarios(s: Suite) {
       branchId: 'br_mp',
     });
     s.money('allocated only what open bills could absorb', res2.allocated, 1000);
-    s.money('remainder beyond open bills returned (not persisted)', res2.remainder, 4000);
-    s.money('supplier due fully cleared', supplierDue(db, sup.id), 0);
+    s.money('the rest is recorded as an advance', res2.advance, 4000);
+    s.money('the supplier now holds 4,000 of ours (negative due)', supplierDue(db, sup.id), -4000);
     db.close();
   }
 

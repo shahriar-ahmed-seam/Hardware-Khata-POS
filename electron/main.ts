@@ -1,8 +1,9 @@
-import { app, BrowserWindow, ipcMain, nativeTheme, shell, screen } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell, screen } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { initDb, closeDb } from './db.ts';
 import { registerIpc } from './ipc.ts';
+import { isAppNavigation, isSafeExternalUrl } from './guard.ts';
 import { initBackupDefaults, startAutoBackup, stopAutoBackup } from './backup.ts';
 import { initInvoicePdfDefaults } from './invoicePdf.ts';
 import { initUpdater } from './updater.ts';
@@ -92,14 +93,28 @@ function createSplash() {
     ? path.join(__dirname, '../electron/splash.html')
     : path.join(__dirname, 'splash.html');
 
+  // The page reads its version from the query string (it used to say v0.1.0
+  // whatever was installed).
+  const query = { v: app.getVersion() };
   // Fallback: if not copied, fall back to source path
   if (!fs.existsSync(splashHtml)) {
-    splashWindow.loadFile(path.join(process.cwd(), 'electron/splash.html'));
+    splashWindow.loadFile(path.join(process.cwd(), 'electron/splash.html'), { query });
   } else {
-    splashWindow.loadFile(splashHtml);
+    splashWindow.loadFile(splashHtml, { query });
   }
 
   splashWindow.once('ready-to-show', () => splashWindow?.show());
+}
+
+/**
+ * The window's own icon, for Linux (the taskbar and Alt+Tab under X11, and any
+ * dev run). Windows takes the icon from the .exe, so it is left alone there.
+ * build/icon.png is packed into the app by electron-builder.json `files`.
+ */
+function windowIcon(): string | undefined {
+  if (process.platform === 'win32') return undefined;
+  const file = path.join(__dirname, '../build/icon.png');
+  return fs.existsSync(file) ? file : undefined;
 }
 
 // ---------- Main Window ----------
@@ -120,6 +135,7 @@ function createWindow() {
     frame: false,
     titleBarStyle: 'hidden',
     backgroundColor: '#0b0d10',
+    icon: windowIcon(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -146,16 +162,48 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', showMainAndCloseSplash);
 
+  // The always-on-top splash only ever closed on `ready-to-show`. If the page
+  // failed to load (the dev server on another port, a missing dist/) it sat on
+  // top of everything for good. Show the window anyway so the failure is seen.
+  let shown = false;
+  mainWindow.once('show', () => {
+    shown = true;
+  });
+  mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    // eslint-disable-next-line no-console
+    console.error(`[window] failed to load ${url}: ${desc} (${code})`);
+    if (!shown) showMainAndCloseSplash();
+  });
+  setTimeout(() => {
+    if (!shown) showMainAndCloseSplash();
+  }, 20_000).unref?.();
+
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5173');
+    // vite-plugin-electron sets this to wherever Vite actually started — 5173
+    // is only the first choice, and Vite moves on if the port is taken.
+    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL ?? 'http://localhost:5173');
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
 
+  // New windows never open inside the app. A web link goes to the system
+  // browser, and only if it is an ordinary web or mail link — the renderer's
+  // URL used to be passed to the OS unchecked.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    if (isSafeExternalUrl(url)) void shell.openExternal(url);
     return { action: 'deny' };
   });
+
+  // The router is a HashRouter, so screens never navigate the page. A real
+  // navigation (a stray <a href>, a file or link dropped on the window) would
+  // replace the app with that page while the preload bridge stayed attached.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const appUrl = mainWindow?.webContents.getURL() ?? '';
+    if (isAppNavigation(url, appUrl)) return;
+    event.preventDefault();
+    if (isSafeExternalUrl(url)) void shell.openExternal(url);
+  });
+  mainWindow.webContents.on('will-attach-webview', (event) => event.preventDefault());
 
   mainWindow.on('maximize', () => mainWindow?.webContents.send('window:maximized', true));
   mainWindow.on('unmaximize', () => mainWindow?.webContents.send('window:maximized', false));
@@ -215,7 +263,11 @@ ipcMain.handle('theme:get', () => ({
   dark: nativeTheme.shouldUseDarkColors,
 }));
 
-app.whenReady().then(() => {
+// Only the instance holding the lock goes any further. `app.quit()` above is
+// asynchronous, so the losing instance used to reach `whenReady` too — opening
+// the SAME database, running its migrations and starting a second backup timer
+// alongside the running app.
+if (gotLock) app.whenReady().then(() => {
   // DB + IPC must be ready before the renderer can call the backend.
   try {
     const info = initDb();
@@ -230,8 +282,27 @@ app.whenReady().then(() => {
   } catch (e) {
     // eslint-disable-next-line no-console
     console.error('[db] init failed:', e);
+    /**
+     * Say so, and stop. This used to be a console line only: the window opened
+     * anyway and every screen failed with "Database not initialized", which looks
+     * like the shop's data is gone. Nothing has been changed on disk.
+     */
+    const detail = e instanceof Error ? e.message : String(e);
+    dialog.showErrorBox(
+      'The shop database could not be opened',
+      `Nothing has been changed. Close other copies of the app and try again.\n\n${detail}` +
+        (isDev ? '\n\nIn development this is usually the native module ABI: run npm run rebuild:electron.' : ''),
+    );
+    app.exit(1);
+    return;
   }
   registerIpc();
+  // The window is frameless, so the default menu is never SEEN — but its
+  // shortcuts still work: Ctrl+Shift+I opened DevTools (a console straight into
+  // the IPC bridge) and Ctrl+R reloaded mid-sale. The app draws its own
+  // controls and handles its own keys; in development the menu stays for
+  // debugging. Copy/paste in text fields is Chromium's, not the menu's.
+  if (!isDev) Menu.setApplicationMenu(null);
   createSplash();
   createWindow();
   // In-app updates. Reads the owner's preference from the database, so it must
@@ -244,6 +315,14 @@ app.on('window-all-closed', () => {
   stopAutoBackup();
   closeDb();
   if (process.platform !== 'darwin') app.quit();
+});
+
+// Every other way out (an update's quit-and-install, a quit from the OS, a
+// signal) closes the database too. It was only closed when the last window
+// closed. closeDb is idempotent.
+app.on('will-quit', () => {
+  stopAutoBackup();
+  closeDb();
 });
 
 app.on('activate', () => {

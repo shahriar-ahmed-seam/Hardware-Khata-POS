@@ -5,6 +5,8 @@ import { Input } from '@/components/ui/Input';
 import { NumberField } from '@/components/ui/NumberField';
 import { Save, UserCog } from 'lucide-react';
 import { useSuppliers } from '@/stores/contacts';
+import { api } from '@/lib/api';
+import { toast } from '@/stores/toast';
 import type { Supplier } from '@/types/domain';
 import { cn } from '@/lib/utils';
 
@@ -41,9 +43,30 @@ export function NewSupplierModal({ open, onClose, onCreated }: Props) {
 
   const isValid = name.trim() && phone.trim();
 
-  const submit = () => {
-    if (!isValid) return;
-    const created = add({
+  const [saving, setSaving] = useState(false);
+  // Hands the REAL backend id to the purchase form, and only once it is saved.
+  // It used to pass 'sp_' + Date.now(), which purchases.create then refused.
+  const submit = async () => {
+    if (!isValid || saving) return;
+    setSaving(true);
+    // Phone is the de-dupe key (the note in this modal says so): an existing
+    // supplier with the same number is selected instead of making a second one.
+    const digits = (p?: string | null) => (p ?? '').replace(/\D/g, '');
+    try {
+      const all = await api<{ id: string; name: string; phone?: string | null }[]>('suppliers.list', {});
+      const same = all.find((x) => digits(x.phone) !== '' && digits(x.phone) === digits(phone));
+      if (same) {
+        setSaving(false);
+        toast.info(`${same.name} already has this phone number — selected them instead`);
+        reset();
+        onCreated(same.id);
+        onClose();
+        return;
+      }
+    } catch {
+      // The look-up is a convenience; the create below still runs.
+    }
+    const id = await add({
       name: name.trim(),
       company: company.trim() || undefined,
       contactPerson: contactPerson.trim() || undefined,
@@ -55,8 +78,10 @@ export function NewSupplierModal({ open, onClose, onCreated }: Props) {
       due: openingBalance || 0,
       totalPurchase: 0,
     });
+    setSaving(false);
+    if (!id) return;
     reset();
-    onCreated(created.id);
+    onCreated(id);
     onClose();
   };
 
@@ -81,7 +106,7 @@ export function NewSupplierModal({ open, onClose, onCreated }: Props) {
           >
             Cancel
           </Button>
-          <Button onClick={submit} disabled={!isValid}>
+          <Button onClick={() => void submit()} disabled={!isValid || saving}>
             <Save className="size-4" /> Save & Select
           </Button>
         </div>
@@ -123,7 +148,7 @@ export function NewSupplierModal({ open, onClose, onCreated }: Props) {
             <select
               value={paymentTerms}
               onChange={(e) => setPaymentTerms(e.target.value as Supplier['paymentTerms'])}
-              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+              className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
             >
               {TERMS.map((t) => (
                 <option key={t} value={t}>
@@ -168,11 +193,11 @@ function Field({
 }) {
   return (
     <div className={cn(className)}>
-      <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+      <label className="text-xs font-semibold text-muted-foreground">
         {label} {required && <span className="text-destructive">*</span>}
       </label>
       {children}
-      {hint && <div className="text-[10px] text-muted-foreground mt-0.5">{hint}</div>}
+      {hint && <div className="text-xs text-muted-foreground mt-0.5">{hint}</div>}
     </div>
   );
 }

@@ -117,7 +117,7 @@ export default function UsersPage() {
             <select
               value={roleFilter}
               onChange={(e) => setRoleFilter(e.target.value)}
-              className="h-9 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+              className="h-10 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
             >
               <option value="">All roles</option>
               {roles.map((r) => (
@@ -129,7 +129,7 @@ export default function UsersPage() {
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as UserStatus | '')}
-              className="h-9 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+              className="h-10 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
             >
               <option value="">All status</option>
               <option value="active">Active</option>
@@ -140,7 +140,7 @@ export default function UsersPage() {
         </Card>
 
         <Card className="overflow-hidden">
-          <div className="grid grid-cols-[2fr_1fr_1.2fr_1fr_auto] gap-3 px-4 py-2.5 border-b border-border bg-secondary/40 text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+          <div className="grid grid-cols-[2fr_1fr_1.2fr_1fr_auto] gap-3 px-4 py-2.5 border-b border-border bg-secondary/40 text-xs font-semibold text-muted-foreground">
             <div>User</div>
             <div>Role</div>
             <div>Branches</div>
@@ -170,7 +170,7 @@ export default function UsersPage() {
                         </span>
                       )}
                     </div>
-                    <div className="text-[11px] text-muted-foreground truncate">
+                    <div className="text-xs text-muted-foreground truncate">
                       @{u.username}
                       {u.phone && <span className="ml-2 font-mono">{u.phone}</span>}
                       {u.email && <span className="ml-2">· {u.email}</span>}
@@ -407,7 +407,7 @@ function UserForm({
             <select
               value={status}
               onChange={(e) => setStatus(e.target.value as UserStatus)}
-              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+              className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
             >
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
@@ -432,7 +432,7 @@ function UserForm({
                     <Shield className="size-3" /> {r.name}
                   </div>
                   {r.description && (
-                    <div className="text-[11px] text-muted-foreground mt-0.5">{r.description}</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">{r.description}</div>
                   )}
                 </button>
               ))}
@@ -441,7 +441,7 @@ function UserForm({
         </div>
 
         <div className="space-y-2">
-          <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+          <div className="text-xs font-semibold text-muted-foreground">
             Branches assigned
           </div>
           <label className="flex items-center gap-2 text-sm cursor-pointer">
@@ -496,7 +496,7 @@ function Field({
 }) {
   return (
     <div className={cn(className)}>
-      <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+      <label className="text-xs font-semibold text-muted-foreground">
         {label} {required && <span className="text-destructive">*</span>}
       </label>
       {children}

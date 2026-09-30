@@ -11,7 +11,6 @@ import {
   type BackendAgent,
 } from '@/hooks/settingsAdapter';
 
-const CURRENT_USER = 'u_admin';
 
 // ---------- Permissions ----------
 // Permission groups visible to the user. Each group has actions.

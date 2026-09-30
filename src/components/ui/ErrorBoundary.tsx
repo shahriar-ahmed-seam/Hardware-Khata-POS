@@ -52,7 +52,7 @@ export class ErrorBoundary extends Component<Props, State> {
             keeps happening, note what you were doing and report it.
           </p>
           {error && (
-            <pre className="mt-4 text-left text-[11px] bg-secondary/60 rounded-md p-3 max-h-40 overflow-auto font-mono text-muted-foreground">
+            <pre className="mt-4 text-left text-xs bg-secondary/60 rounded-md p-3 max-h-40 overflow-auto font-mono text-muted-foreground">
               {error.name}: {error.message}
             </pre>
           )}

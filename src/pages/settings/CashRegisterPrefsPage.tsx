@@ -32,7 +32,7 @@ export default function CashRegisterPrefsPage() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+                <label className="text-xs font-semibold text-muted-foreground">
                   Warn at (≥)
                 </label>
                 <NumberField
@@ -41,7 +41,7 @@ export default function CashRegisterPrefsPage() {
                 />
               </div>
               <div>
-                <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+                <label className="text-xs font-semibold text-muted-foreground">
                   Block at (≥)
                 </label>
                 <NumberField
@@ -50,10 +50,8 @@ export default function CashRegisterPrefsPage() {
                 />
               </div>
             </div>
-            <div className="text-[11px] text-muted-foreground">
-              Variance is the difference between expected drawer and counted cash on shift close.
-              Below warn → silent. Between warn and block → yellow warning, can still close. Above
-              block → red, requires manager PIN if enabled.
+            <div className="text-xs text-muted-foreground">
+              Variance is the difference between expected drawer and counted cash on shift close. Below warn → silent. Between warn and block → yellow warning, can still close. Above block → red, needs the owner or a manager if enabled.
             </div>
           </Card>
 
@@ -63,14 +61,14 @@ export default function CashRegisterPrefsPage() {
               <div className="text-sm font-semibold">Shift defaults</div>
             </div>
             <div>
-              <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+              <label className="text-xs font-semibold text-muted-foreground">
                 Default carried float at open
               </label>
               <NumberField
                 value={c.defaultCarriedFloat}
                 onChangeNumber={(v) => set({ defaultCarriedFloat: v })}
               />
-              <div className="text-[11px] text-muted-foreground mt-1">
+              <div className="text-xs text-muted-foreground mt-1">
                 Pre-fill the Open Shift modal with this amount. Cashier can override.
               </div>
             </div>
@@ -79,8 +77,8 @@ export default function CashRegisterPrefsPage() {
           <Card className="p-4 space-y-1">
             <div className="text-sm font-semibold mb-2">Authorization</div>
             <ToggleRow
-              label="Require manager PIN on variance over block"
-              desc="Cashier cannot close a shift with variance ≥ block threshold without a manager PIN."
+              label="Owner or manager must close a shift over the block limit"
+              desc="A cashier cannot close a shift whose variance is at or over the block limit. The owner or a manager signs in and closes it."
               checked={c.requireManagerPinOnVariance}
               onChange={(v) => set({ requireManagerPinOnVariance: v })}
             />
@@ -89,7 +87,7 @@ export default function CashRegisterPrefsPage() {
 
         {/* RIGHT — preview */}
         <div>
-          <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em] mb-2">
+          <div className="text-xs font-semibold text-muted-foreground mb-2">
             What cashiers will see
           </div>
           <Card className="p-4 space-y-3">
@@ -140,8 +138,8 @@ function Threshold({
         <div className="size-7 rounded-full bg-success/20 grid place-items-center text-success text-xs font-bold">✓</div>
         <div>
           <div className="text-sm font-semibold text-success">Within range</div>
-          <div className="text-[12px] text-muted-foreground">{filled}</div>
-          <div className="text-[12px] text-muted-foreground">Shift closes silently.</div>
+          <div className="text-sm text-muted-foreground">{filled}</div>
+          <div className="text-sm text-muted-foreground">Shift closes silently.</div>
         </div>
       </div>
     );
@@ -154,8 +152,8 @@ function Threshold({
         </div>
         <div>
           <div className="text-sm font-semibold text-warning">Warning</div>
-          <div className="text-[12px] text-muted-foreground">{filled}</div>
-          <div className="text-[12px] text-muted-foreground">
+          <div className="text-sm text-muted-foreground">{filled}</div>
+          <div className="text-sm text-muted-foreground">
             Yellow notice on Z-Report. Cashier can still close.
           </div>
         </div>
@@ -169,9 +167,9 @@ function Threshold({
       </div>
       <div>
         <div className="text-sm font-semibold text-destructive">Blocked</div>
-        <div className="text-[12px] text-muted-foreground">{filled}</div>
-        <div className="text-[12px] text-muted-foreground">
-          Manager PIN required (if enabled). Locked otherwise.
+        <div className="text-sm text-muted-foreground">{filled}</div>
+        <div className="text-sm text-muted-foreground">
+          The owner or a manager must close it (if enabled).
         </div>
       </div>
     </div>

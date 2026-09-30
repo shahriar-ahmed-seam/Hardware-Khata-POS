@@ -3,6 +3,7 @@ import { tx } from '../db/connection.ts';
 import { newId } from '../core/ids.ts';
 import { logActivity } from './activity.ts';
 import { nextRef } from './sequences.ts';
+import { shopBranchId } from './branch.ts';
 
 /**
  * SHIPMENTS — logistics / delivery tracking.
@@ -41,10 +42,12 @@ export function createShipment(db: DB, input: CreateShipmentInput) {
     // its customer if the caller did not pass them explicitly. Pure reads.
     let saleInvoiceNo = input.saleInvoiceNo ?? null;
     let customerName = input.customerName ?? null;
+    let saleBranch: string | undefined;
     if (input.saleId) {
       const sale = db
-        .prepare('SELECT invoice_no, customer_id FROM sales WHERE id = ?')
-        .get(input.saleId) as { invoice_no: string; customer_id: string | null } | undefined;
+        .prepare('SELECT invoice_no, customer_id, branch_id FROM sales WHERE id = ?')
+        .get(input.saleId) as { invoice_no: string; customer_id: string | null; branch_id: string } | undefined;
+      saleBranch = sale?.branch_id;
       if (sale) {
         if (!saleInvoiceNo) saleInvoiceNo = sale.invoice_no;
         if (!customerName) {
@@ -57,6 +60,10 @@ export function createShipment(db: DB, input: CreateShipmentInput) {
         }
       }
     }
+
+    // The branch that sold it (the screen used to send the literal 'br_mp').
+    const branchId = shopBranchId(db, input.branchId || saleBranch);
+    input = { ...input, branchId };
 
     const status = input.status ?? 'pending';
     const createdAt = new Date().toISOString();
@@ -82,14 +89,14 @@ export function createShipment(db: DB, input: CreateShipmentInput) {
       input.targetDate ?? null,
       deliveredAt,
       input.notes ?? null,
-      input.branchId ?? null,
+      branchId ?? null,
       input.userId ?? null,
       createdAt,
     );
 
     logActivity(db, {
       by: input.userId,
-      branchId: input.branchId,
+      branchId: branchId,
       action: 'shipped',
       entity: 'shipment',
       entityId: id,

@@ -127,6 +127,10 @@ export function InvoicePrintModal({ open, onClose, sale, customer }: Props) {
     customer ?? (fetched?.id === sale.customerId ? fetched : undefined);
   const cart = saleToCart(sale);
   const payment = saleToPayment(sale);
+  // A quotation or draft is printed as what it is — never titled "Invoice".
+  const docType: 'invoice' | 'quotation' | 'draft' =
+    sale.status === 'quotation' ? 'quotation' : sale.status === 'draft' ? 'draft' : 'invoice';
+  const docTitle = docType === 'quotation' ? 'Quotation' : docType === 'draft' ? 'Draft' : 'Invoice';
 
   /**
    * Save as PDF. The main process renders whatever the print stylesheet shows,
@@ -150,7 +154,7 @@ export function InvoicePrintModal({ open, onClose, sale, customer }: Props) {
         return;
       }
       const where = res.primary?.path ?? res.saved[0].path;
-      toast.success('Invoice saved as PDF', {
+      toast.success(`${docTitle} saved as PDF`, {
         description:
           res.saved.length > 1 ? `${where} (+${res.saved.length - 1} backup copies)` : where,
       });
@@ -172,12 +176,14 @@ export function InvoicePrintModal({ open, onClose, sale, customer }: Props) {
         open={open}
         onClose={onClose}
         width="max-w-3xl"
-        title="Invoice"
+        title={docTitle}
         subtitle={sale.invoiceNo}
         footer={
           <div className="flex items-center justify-between gap-2">
             <div className="text-xs text-muted-foreground">
-              The original invoice, reprinted. Nothing about it changes.
+              {docType === 'invoice'
+                ? 'The original invoice, reprinted. Nothing about it changes.'
+                : 'Not a bill — no payment is recorded on it.'}
             </div>
             <div className="flex items-center gap-2">
               <Button variant="outline" onClick={() => void savePdf()} disabled={savingPdf}>
@@ -198,6 +204,9 @@ export function InvoicePrintModal({ open, onClose, sale, customer }: Props) {
             customer={resolvedCustomer}
             cashierName={sale.user}
             dateISO={sale.date}
+            docType={docType}
+            validUntil={sale.validUntil}
+            reprint
           />
         </div>
       </Modal>
@@ -212,6 +221,9 @@ export function InvoicePrintModal({ open, onClose, sale, customer }: Props) {
           customer={resolvedCustomer}
           cashierName={sale.user}
           dateISO={sale.date}
+          docType={docType}
+          validUntil={sale.validUntil}
+          reprint
         />
       </PrintSheet>
     </>

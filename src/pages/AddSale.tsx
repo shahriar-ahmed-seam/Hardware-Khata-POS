@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -18,7 +18,9 @@ import { NumberField } from '@/components/ui/NumberField';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { cn, formatBDT } from '@/lib/utils';
+import { currentUserName } from '@/lib/actor';
 import { useProducts } from '@/hooks/useProducts';
+import { useDefaultBranchId } from '@/lib/branch';
 import { useCustomersQuery } from '@/hooks/useCustomers';
 import { useBranches } from '@/stores/branches';
 import {
@@ -28,6 +30,7 @@ import {
   type SaleRecord,
   type SaleStatus,
   nextInvoiceNo,
+  realCustomerId,
 } from '@/stores/sales';
 
 /**
@@ -47,20 +50,82 @@ import { CustomerPicker } from '@/components/pos/CustomerPicker';
 import { DateTimeField, DateField } from '@/components/ui/DateTimeField';
 import { toLocalInput, fromLocalInput, localDateInputPlusDays } from '@/lib/datetime';
 import { round2, saleLineSubtotal, saleTotals } from '@/lib/money';
+import { api } from '@/lib/api';
+import { toSaleRecord, type BackendSale } from '@/hooks/saleAdapter';
 import type { Product } from '@/types/domain';
 
+/**
+ * `/sales/new` and `/sales/:id/edit`.
+ *
+ * THE RECORD IS LOADED BEFORE THE FORM EXISTS. The form seeds every field once,
+ * from `useState` initialisers, and it used to find the sale being edited in the
+ * sales store — which holds ONE PAGE. A deep link, a refresh, or an invoice from
+ * page four therefore rendered an EMPTY "New Sale" form, and saving it created a
+ * SECOND sale with its own number, stock movement and cash. Now an edit URL
+ * shows "Loading…" until the sale is in hand (from the store, or `sales.get`),
+ * and the form is mounted with it; an edit URL can never reach the create path.
+ */
 export default function AddSale() {
-  const nav = useNavigate();
   const { id } = useParams<{ id?: string }>();
+  const storeSale = useSales((s) => (id ? s.sales.find((x) => x.id === id) : undefined));
+  const [fetched, setFetched] = useState<SaleRecord | null>(null);
+  const [missing, setMissing] = useState(false);
+  const hasStoreSale = !!storeSale;
+
+  useEffect(() => {
+    if (!id || hasStoreSale) return;
+    let alive = true;
+    setMissing(false);
+    void api<BackendSale | null>('sales.get', { id })
+      .then((row) => {
+        if (!alive) return;
+        if (row) setFetched(toSaleRecord(row));
+        else setMissing(true);
+      })
+      .catch(() => {
+        if (alive) setMissing(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [id, hasStoreSale]);
+
+  if (!id) return <AddSaleForm key="new" />;
+
+  const editing = storeSale ?? (fetched?.id === id ? fetched : undefined);
+  if (!editing) {
+    return (
+      <div className="p-8 text-sm text-muted-foreground">
+        {missing ? 'That sale could not be found.' : 'Loading sale…'}
+      </div>
+    );
+  }
+  if (editing.status === 'void') {
+    return (
+      <div className="p-8 text-sm text-muted-foreground">
+        A voided sale cannot be edited — its stock and cash have already been reversed.
+      </div>
+    );
+  }
+  return <AddSaleForm key={id} editing={editing} />;
+}
+
+function AddSaleForm({ editing }: { editing?: SaleRecord }) {
+  const nav = useNavigate();
   const [searchParams] = useSearchParams();
-  const initialStatus = (searchParams.get('status') as SaleStatus) || 'final';
-  const sales = useSales((s) => s.sales);
+  // Only the three statuses a new document can have; anything else in the URL
+  // (a stale link, `?status=void`) falls back to a normal sale.
+  const requested = searchParams.get('status');
+  const initialStatus: SaleStatus =
+    requested === 'draft' || requested === 'quotation' ? requested : 'final';
   const addSale = useSales((s) => s.addSale);
   const updateSaleBackend = useSales((s) => s.updateSale);
   // Editing an existing invoice is Admin-only (see electron/permissions.ts).
   // The IPC gate is authoritative; this just keeps the button honest.
   const canEditSale = useCan('sales.edit');
   const [saving, setSaving] = useState(false);
+  // Blocks a second click that lands before the disabled button re-renders.
+  const savingRef = useRef(false);
 
   // Create-form wiring (backend only): the product/customer pickers read live
   // backend data and the Business Location select feeds a real branch.
@@ -68,7 +133,7 @@ export default function AddSale() {
   // customerId, and branch id; this page then navigates to the relevant list
   // which rehydrates from the backend. The mock master-data fallback was
   // removed — empty queries render empty pickers.
-  const productsQuery = useProducts('br_mp');
+  const productsQuery = useProducts(useDefaultBranchId());
   const customersQuery = useCustomersQuery();
   const products = productsQuery.data ?? [];
   const customers = customersQuery.data ?? [];
@@ -83,7 +148,6 @@ export default function AddSale() {
     void hydrateBranches();
   }, [hydrateBranches]);
 
-  const editing = id ? sales.find((s) => s.id === id) : undefined;
 
   // Default customer: edit value wins; otherwise pick the real walk-in customer
   // if the backend has one, else leave empty until the query resolves.
@@ -98,7 +162,22 @@ export default function AddSale() {
   const defaultBranchName =
     editing?.branch ?? (branches.find((b) => b.isDefault)?.name ?? branches[0]?.name ?? '');
 
-  const [status, setStatus] = useState<SaleStatus>(editing?.status ?? initialStatus);
+  /**
+   * CONVERTING a draft or quotation into a sale (`?convert=true`). The page used
+   * to ignore the flag, so "Convert to Sale" just opened the Admin-only
+   * correction form and the document stayed a quotation. Converting is selling:
+   * it goes through `sales.convert`, which gives the sale a real invoice number
+   * (a draft is finalised in place; a quotation is kept and a new sale is made).
+   */
+  const converting =
+    searchParams.get('convert') === 'true' &&
+    !!editing &&
+    (editing.status === 'draft' || editing.status === 'quotation');
+  const convertSaleBackend = useSales((s) => s.convertSale);
+
+  const [status, setStatus] = useState<SaleStatus>(
+    converting ? 'final' : editing?.status ?? initialStatus,
+  );
   const [customerId, setCustomerId] = useState(defaultCustomerId);
   const [branch, setBranch] = useState(defaultBranchName);
   /**
@@ -109,7 +188,8 @@ export default function AddSale() {
    * an instant six hours in the future, which could push the sale into tomorrow's
    * takings. See lib/datetime.ts.
    */
-  const [date, setDate] = useState(toLocalInput(editing?.date));
+  // A converted document is sold NOW, not on the day the quote was written.
+  const [date, setDate] = useState(toLocalInput(converting ? undefined : editing?.date));
   const [validUntil, setValidUntil] = useState(
     editing?.validUntil ?? localDateInputPlusDays(14),
   );
@@ -345,7 +425,9 @@ export default function AddSale() {
     }
 
     const owingOnSave = round2(total - paidTotal);
-    const isNamedCustomer = !!customer && customerId.startsWith('cu_');
+    // Any real customer counts — not only ids created in the app (`cu_…`); the
+    // sample year's customers and imported ones were refused credit here.
+    const isNamedCustomer = !!customer && !!realCustomerId(customerId);
     if (newStatus === 'final' && owingOnSave > 0.004 && !isNamedCustomer) {
       toast.error('Choose a customer before leaving money owing', {
         description:
@@ -365,7 +447,7 @@ export default function AddSale() {
       customerId,
       customerName: customer?.name ?? 'Walk-in Customer',
       branch,
-      user: 'Seam',
+      user: currentUserName(),
       lines,
       subtotal,
       totalLineDiscount,
@@ -392,7 +474,7 @@ export default function AddSale() {
       due: round2(Math.max(0, total - paidTotal - (editing?.credited ?? 0))),
       payments: cleanPayments,
       audit: editing?.audit ?? [
-        { id: 'a_' + Date.now(), at: new Date().toISOString(), by: 'Seam', action: 'created' },
+        { id: 'a_' + Date.now(), at: new Date().toISOString(), by: currentUserName(), action: 'created' },
       ],
       notes: notes || undefined,
       validUntil: newStatus === 'quotation' ? validUntil : undefined,
@@ -404,6 +486,16 @@ export default function AddSale() {
     // in one transaction, keeping the invoice number the customer is holding. So
     // the old delete-and-recreate dance is gone, along with the flat refusal to
     // touch a finalized sale.
+    if (converting && editing) {
+      setSaving(true);
+      const invoiceNo = await convertSaleBackend(editing.id, { ...rec, status: 'final' });
+      setSaving(false);
+      if (!invoiceNo) return;
+      toast.success(`${editing.invoiceNo} is now sale ${invoiceNo}`);
+      goToList('final');
+      return;
+    }
+
     if (editing) {
       if (!canEditSale) {
         toast.error('Only an admin can edit a sale', {
@@ -437,14 +529,39 @@ export default function AddSale() {
       return;
     }
 
-    addSale(rec);
+    // Wait for the backend: a refused sale keeps the form open with everything
+    // typed, instead of leaving for the list as if it had been saved.
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    const created = await addSale(rec);
+    savingRef.current = false;
+    setSaving(false);
+    if (!created) return;
+    toast.success(
+      newStatus === 'quotation'
+        ? `Quotation ${created.invoiceNo} saved`
+        : newStatus === 'draft'
+          ? `Draft ${created.invoiceNo} saved`
+          : `Sale ${created.invoiceNo} saved`,
+    );
     goToList(newStatus);
   };
 
   return (
     <div>
       <PageHeader
-        title={editing ? 'Edit Sale' : status === 'quotation' ? 'New Quotation' : status === 'draft' ? 'New Draft' : 'New Sale'}
+        title={
+          converting
+            ? `Convert ${editing?.invoiceNo ?? ''} to a sale`
+            : editing
+              ? 'Edit Sale'
+              : status === 'quotation'
+                ? 'New Quotation'
+                : status === 'draft'
+                  ? 'New Draft'
+                  : 'New Sale'
+        }
         subtitle="Form-based entry · use POS for fast counter sales"
         actions={
           <>
@@ -454,7 +571,7 @@ export default function AddSale() {
             {/* A finalized invoice is corrected, not re-filed as a draft or a
                 quotation — those two buttons would change what the document IS.
                 They stay for a new sale and for an unfinalized one. */}
-            {editing?.status !== 'final' && (
+            {editing?.status !== 'final' && !converting && (
               <>
                 <Button variant="outline" disabled={saving} onClick={() => void save('draft')}>
                   <PenSquare className="size-4" /> Save as Draft
@@ -464,7 +581,11 @@ export default function AddSale() {
                 </Button>
               </>
             )}
-            {editing ? (
+            {converting ? (
+              <Button disabled={saving} onClick={() => void save('final')}>
+                <CheckCircle2 className="size-4" /> Save Sale
+              </Button>
+            ) : editing ? (
               <Button
                 disabled={saving || !canEditSale}
                 title={canEditSale ? undefined : 'Only an admin can edit a sale'}
@@ -481,9 +602,16 @@ export default function AddSale() {
         }
       />
 
-      {editing && !canEditSale && (
+      {editing && !canEditSale && !converting && (
         <div className="mx-6 mt-4 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
           Only an admin can edit a sale. Ask the owner to sign in.
+        </div>
+      )}
+      {converting && (
+        <div className="mx-6 mt-4 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm">
+          {editing?.status === 'quotation'
+            ? 'Saving makes a new sale from this quotation. The quotation is kept as it was.'
+            : 'Saving turns this draft into a sale with its own invoice number.'}
         </div>
       )}
 
@@ -504,7 +632,7 @@ export default function AddSale() {
                 <select
                   value={customerId}
                   onChange={(e) => setCustomerId(e.target.value)}
-                  className="h-9 flex-1 min-w-0 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                  className="h-10 flex-1 min-w-0 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
                 >
                   {customers.map((c) => (
                     <option key={c.id} value={c.id}>
@@ -520,7 +648,7 @@ export default function AddSale() {
                   onClick={() => setNewCustomerOpen(true)}
                   title="Add new customer"
                   aria-label="Add new customer"
-                  className="size-9 shrink-0 grid place-items-center rounded-md border border-border text-muted-foreground hover:border-primary hover:bg-primary/10 hover:text-primary transition"
+                  className="size-10 shrink-0 grid place-items-center rounded-md border border-border text-muted-foreground hover:border-primary hover:bg-primary/10 hover:text-primary transition"
                 >
                   <Plus className="size-4" />
                 </button>
@@ -533,7 +661,7 @@ export default function AddSale() {
               <select
                 value={branch}
                 onChange={(e) => setBranch(e.target.value)}
-                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
               >
                 {(branches.length > 0 ? branches.map((b) => b.name) : branch ? [branch] : []).map((name) => (
                   <option key={name} value={name}>
@@ -546,7 +674,7 @@ export default function AddSale() {
               <select
                 value={status}
                 onChange={(e) => setStatus(e.target.value as SaleStatus)}
-                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
               >
                 <option value="final">Final</option>
                 <option value="draft">Draft</option>
@@ -590,7 +718,7 @@ export default function AddSale() {
                       <ProductImage url={p.image} categoryId={p.categoryId} size={28} />
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-medium truncate">{p.name}</div>
-                        <div className="text-[10px] text-muted-foreground font-mono">
+                        <div className="text-xs text-muted-foreground font-mono">
                           {p.sku} · stock {p.stock} {p.unit}
                         </div>
                       </div>
@@ -612,7 +740,7 @@ export default function AddSale() {
 
             <div className="mt-3 rounded-lg border border-border overflow-hidden">
               <table className="w-full text-sm">
-                <thead className="text-[10px] uppercase text-muted-foreground bg-secondary/50">
+                <thead className="text-xs text-muted-foreground bg-secondary/50">
                   <tr>
                     <th className="text-left px-3 py-2 font-medium w-8">#</th>
                     <th className="text-left px-2 py-2 font-medium">Item</th>
@@ -653,19 +781,19 @@ export default function AddSale() {
                         <td className="px-3 py-2 text-xs text-muted-foreground">{i + 1}</td>
                         <td className="px-2 py-2">
                           <div className="font-medium">{l.name}</div>
-                          <div className="text-[11px] text-muted-foreground font-mono">{l.sku}</div>
+                          <div className="text-xs text-muted-foreground font-mono">{l.sku}</div>
                         </td>
-                        <td className="px-2 py-2 text-right font-mono tabular text-xs text-warning">
+                        <td className="px-2 py-2 text-right tabular text-xs text-warning">
                           {cat ? formatBDT(cat.cost, { withSymbol: false }) : '—'}
                         </td>
-                        <td className="px-2 py-2 text-right font-mono tabular text-xs text-primary">
+                        <td className="px-2 py-2 text-right tabular text-xs text-primary">
                           {cat ? formatBDT(cat.avgCost ?? cat.cost, { withSymbol: false }) : '—'}
                         </td>
                         {/* What is actually on the shelf. Red + bold once the
                             quantity exceeds it — no words needed. */}
                         <td
                           className={cn(
-                            'px-2 py-2 text-right font-mono tabular text-xs',
+                            'px-2 py-2 text-right tabular text-xs',
                             cat === undefined
                               ? 'text-muted-foreground'
                               : l.qty > cat.stock + 0.0001
@@ -701,7 +829,7 @@ export default function AddSale() {
                             className="h-7 w-16 px-2 text-right text-xs"
                           />
                         </td>
-                        <td className="px-2 py-2 text-right font-mono tabular font-semibold">
+                        <td className="px-2 py-2 text-right tabular font-semibold">
                           {formatBDT(sub, { withSymbol: false })}
                         </td>
                         <td className="px-2 py-2 text-right">
@@ -778,7 +906,7 @@ export default function AddSale() {
               {other > 0 && <Row label="Other" value={formatBDT(other)} />}
               <div className="border-t border-border pt-2 flex items-center justify-between">
                 <span className="font-semibold">Total</span>
-                <span className="text-xl font-bold font-mono tabular text-primary">{formatBDT(total)}</span>
+                <span className="text-xl font-bold tabular text-primary">{formatBDT(total)}</span>
               </div>
             </div>
 
@@ -815,7 +943,7 @@ export default function AddSale() {
                 <div className="text-sm font-semibold">
                   {editing ? 'Payments received' : 'How much is the customer paying now?'}
                 </div>
-                <div className="text-[11px] text-muted-foreground mt-0.5">
+                <div className="text-xs text-muted-foreground mt-0.5">
                   {editing
                     ? 'Correct an amount that was keyed wrongly, or record a payment that was missed. Cash changes are posted to the shift that is open now.'
                     : 'Leave it empty if the whole bill goes on their khata. Cash is posted to the shift that is open now.'}
@@ -852,7 +980,7 @@ export default function AddSale() {
                         onChange={(e) =>
                           patchPayment(idx, { method: e.target.value as SalePayment['method'] })
                         }
-                        className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                        className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
                       >
                         {PAYMENT_METHODS.map((m) => (
                           <option key={m} value={m}>
@@ -883,7 +1011,7 @@ export default function AddSale() {
                     <button
                       onClick={() => removePayment(idx)}
                       title="Remove this payment"
-                      className="h-9 w-9 grid place-items-center rounded-md border border-border text-muted-foreground hover:text-destructive hover:border-destructive/50"
+                      className="h-10 w-10 grid place-items-center rounded-md border border-border text-muted-foreground hover:text-destructive hover:border-destructive/50"
                     >
                       <Trash2 className="size-4" />
                     </button>
@@ -960,8 +1088,8 @@ function PriceTriplet({
 function Cell({ label, value, tone }: { label: string; value: number; tone: string }) {
   return (
     <div>
-      <div className="text-[9px] uppercase text-muted-foreground leading-none">{label}</div>
-      <div className={cn('mt-0.5 text-xs font-mono tabular font-semibold', tone)}>
+      <div className="text-xs text-muted-foreground leading-none">{label}</div>
+      <div className={cn('mt-0.5 text-xs tabular font-semibold', tone)}>
         {formatBDT(value, { withSymbol: false })}
       </div>
     </div>
@@ -979,7 +1107,7 @@ function Field({
 }) {
   return (
     <div>
-      <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+      <label className="text-xs font-semibold text-muted-foreground">
         {label} {required && <span className="text-destructive">*</span>}
       </label>
       {children}
@@ -1001,7 +1129,7 @@ function Row({
       <span className="text-muted-foreground">{label}</span>
       <span
         className={cn(
-          'font-mono tabular',
+          'tabular',
           tone === 'success' && 'text-success',
           tone === 'warning' && 'text-warning',
         )}

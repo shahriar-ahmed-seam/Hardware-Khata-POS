@@ -48,6 +48,17 @@ export function defaultBranchId(): string | undefined {
   return defaultBranch()?.id;
 }
 
+/**
+ * The shop's default branch id, for a COMPONENT (re-renders when the branch list
+ * arrives or the default moves). `undefined` until the list has loaded — a read
+ * given `undefined` covers every branch, which for a one-branch shop is the same
+ * figure. Writes should not send it at all: the backend resolves a missing
+ * branch to the default itself (backend/services/branch.ts).
+ */
+export function useDefaultBranchId(): string | undefined {
+  return useBranches((s) => (s.items.find((b) => b.isDefault) ?? s.items[0])?.id);
+}
+
 /** The default branch's display name, or '' while the branch list is empty. */
 export function defaultBranchName(): string {
   return defaultBranch()?.name ?? '';

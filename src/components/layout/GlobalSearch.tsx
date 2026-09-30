@@ -12,6 +12,7 @@ import {
 } from '@/lib/search';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { labelFor } from '@/lib/labels';
 import { useT } from '@/lib/i18n';
 
 const ICONS: Record<string, any> = {
@@ -158,10 +159,10 @@ export function GlobalSearch() {
   return (
     <div
       ref={ref}
-      className="titlebar-no-drag flex-1 min-w-0 max-w-xl mx-auto relative"
+      className="titlebar-no-drag flex-1 min-w-0 max-w-xl mx-auto relative [container-type:inline-size]"
     >
       <div className="relative">
-        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
         <input
           ref={inputRef}
           value={q}
@@ -172,22 +173,27 @@ export function GlobalSearch() {
           onFocus={() => setOpen(true)}
           onKeyDown={onKeyDown}
           placeholder={t('titlebar.search.placeholder')}
-          className="w-full bg-secondary/70 hover:bg-secondary focus:bg-secondary text-xs rounded-md pl-8 pr-16 py-1.5 outline-none focus:ring-2 focus:ring-ring/50 placeholder:text-muted-foreground/70 transition"
+          className="w-full bg-secondary/70 hover:bg-secondary focus:bg-secondary h-9 text-sm rounded-md pl-9 pr-9 [@container_(min-width:16rem)]:pr-20 outline-none focus:ring-2 focus:ring-ring/50 placeholder:text-muted-foreground/70 transition"
         />
-        {q && (
+        {/* While typing, the shortcut hint gives its place to a clear button. */}
+        {q ? (
           <button
+            type="button"
             onClick={() => {
               setQ('');
               inputRef.current?.focus();
             }}
-            className="absolute right-12 top-1/2 -translate-y-1/2 size-5 grid place-items-center text-muted-foreground hover:text-foreground"
+            className="absolute right-1 top-1/2 -translate-y-1/2 size-7 grid place-items-center rounded text-muted-foreground hover:text-foreground hover:bg-background"
+            aria-label="Clear search"
+            title="Clear search"
           >
-            <X className="size-3" />
+            <X className="size-4" />
           </button>
+        ) : (
+          <kbd className="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-mono bg-background border border-border px-1.5 py-0.5 rounded pointer-events-none whitespace-nowrap hidden [@container_(min-width:16rem)]:block">
+            Ctrl K
+          </kbd>
         )}
-        <kbd className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-mono bg-background border border-border px-1.5 py-0.5 rounded">
-          Ctrl K
-        </kbd>
       </div>
 
       {open &&
@@ -202,9 +208,9 @@ export function GlobalSearch() {
           >
           {/* Scope chip */}
           {parsed.scope !== 'all' && (
-            <div className="px-3 py-1.5 border-b border-border flex items-center gap-2 text-[11px] bg-secondary/40">
+            <div className="px-3 py-1.5 border-b border-border flex items-center gap-2 text-xs bg-secondary/40">
               <span className={cn('px-1.5 py-0.5 rounded font-medium', scopeColor[parsed.scope])}>
-                {parsed.scope}
+                {labelFor('searchType', parsed.scope)}
               </span>
               <span className="text-muted-foreground">filter ·</span>
               <span className="font-mono">{parsed.term || '…'}</span>
@@ -214,7 +220,7 @@ export function GlobalSearch() {
           {/* Hints when no query */}
           {showHints && (
             <div className="p-2">
-              <div className="px-2 py-1 text-[10px] font-semibold uppercase text-muted-foreground">
+              <div className="px-2 py-1 text-xs font-semibold text-muted-foreground">
                 Smart filters — type to narrow search
               </div>
               <div className="grid grid-cols-2 gap-1 mt-1">
@@ -228,7 +234,7 @@ export function GlobalSearch() {
                     className="text-left px-2 py-1.5 rounded hover:bg-secondary"
                   >
                     <div className="text-xs font-medium">{h.label}</div>
-                    <div className="text-[10px] text-muted-foreground font-mono">
+                    <div className="text-xs text-muted-foreground font-mono">
                       {h.example}
                     </div>
                   </button>
@@ -268,18 +274,18 @@ export function GlobalSearch() {
                       <Icon className="size-3.5" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-xs font-medium truncate">{r.title}</div>
+                      <div className="text-sm font-medium truncate">{r.title}</div>
                       {r.subtitle && (
-                        <div className="text-[10px] text-muted-foreground truncate">
+                        <div className="text-xs text-muted-foreground truncate">
                           {r.subtitle}
                         </div>
                       )}
                     </div>
                     {r.meta && (
-                      <div className="text-[10px] font-mono text-muted-foreground">{r.meta}</div>
+                      <div className="text-xs font-mono text-muted-foreground">{r.meta}</div>
                     )}
-                    <div className="text-[10px] uppercase tracking-wide font-medium text-muted-foreground/70">
-                      {r.type}
+                    <div className="text-xs font-medium text-muted-foreground/70">
+                      {labelFor('searchType', r.type)}
                     </div>
                   </button>
                 );
@@ -288,7 +294,7 @@ export function GlobalSearch() {
           )}
 
           {/* Footer hint */}
-          <div className="px-3 py-1.5 border-t border-border bg-secondary/30 flex items-center justify-between text-[10px] text-muted-foreground">
+          <div className="px-3 py-1.5 border-t border-border bg-secondary/30 flex items-center justify-between text-xs text-muted-foreground">
             <span>
               <kbd className="font-mono">↑↓</kbd> navigate ·{' '}
               <kbd className="font-mono">Enter</kbd> open ·{' '}

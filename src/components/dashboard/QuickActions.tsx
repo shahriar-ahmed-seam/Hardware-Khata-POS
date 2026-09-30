@@ -123,7 +123,7 @@ function Tile({
       <div className="min-w-0">
         {/* Each label is one complete text node so the Bangla layer can match it. */}
         <div className="text-sm font-semibold leading-tight truncate">{label}</div>
-        <div className="text-[10px] opacity-80 leading-tight truncate">{hint}</div>
+        <div className="text-xs opacity-80 leading-tight truncate">{hint}</div>
       </div>
     </div>
   );

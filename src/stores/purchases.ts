@@ -1,7 +1,13 @@
 import { create } from 'zustand';
+import { currentUserId } from '@/lib/actor';
 import { api } from '@/lib/api';
 import { toast } from '@/stores/toast';
-import { toPurchaseRecord, type BackendPurchase } from '@/hooks/purchaseAdapter';
+import {
+  toPurchaseRecord,
+  toPurchaseReturnRecord,
+  type BackendPurchase,
+  type BackendPurchaseReturn,
+} from '@/hooks/purchaseAdapter';
 import { requireBranchId } from '@/lib/branch';
 import { markupOnCostPct, purchaseLine, purchaseTotals } from '@/lib/money';
 
@@ -93,6 +99,11 @@ export interface PurchaseRecord {
   other: number;
   total: number;
   paid: number;
+  /**
+   * Settled by a supplier CREDIT NOTE (a CreditAdjust purchase return) rather
+   * than by money. INVARIANT: due = max(0, total − paid − credited). Schema v10.
+   */
+  credited: number;
   due: number;
   payments: PurchasePayment[];
   notes?: string;
@@ -237,14 +248,55 @@ interface State {
   loadPage: (patch?: Partial<PurchasesQuery>) => Promise<void>;
   hydrate: () => Promise<void>;
   addPurchase: (p: PurchaseRecord) => Promise<string>;
-  updatePurchase: (id: string, patch: Partial<PurchaseRecord>) => void;
-  cancelPurchase: (id: string, by: string, reason?: string) => void;
-  deletePurchase: (id: string) => void;
-  addPayment: (purchaseId: string, p: Omit<PurchasePayment, 'id'>) => void;
-  addReturn: (r: PurchaseReturn) => void;
+  /** Admin correction of a saved bill. Resolves true once the backend has it. */
+  updatePurchase: (id: string, p: PurchaseRecord, reason: string) => Promise<boolean>;
+  /** Mark an ordered / in-transit bill received. */
+  receivePurchase: (id: string) => Promise<boolean>;
+  cancelPurchase: (id: string, by: string, reason?: string) => Promise<boolean>;
+  deletePurchase: (id: string) => Promise<boolean>;
+  addPayment: (purchaseId: string, p: Omit<PurchasePayment, 'id'>) => Promise<boolean>;
+  addReturn: (r: PurchaseReturn) => Promise<boolean>;
 }
 
-const CURRENT_USER = 'u_admin';
+
+/**
+ * The body both `purchases.create` and `purchases.update` take, from the form's
+ * record. One builder, so a correction can never be sent differently from a new
+ * bill. Payments are NOT part of it: a new bill adds its own, and a correction
+ * keeps the ones already made.
+ */
+function purchaseInputOf(p: PurchaseRecord) {
+  return {
+    status: p.status,
+    date: p.date,
+    supplierId: p.supplierId || undefined,
+    // Resolve branch name -> id via the branches store (the form uses names).
+    branchId: resolveBranchToId(p.branch),
+    userId: currentUserId(),
+    payTerms: p.payTerms,
+    lines: p.lines.map((l) => ({
+      productId: l.productId,
+      qty: l.qty,
+      unit: l.unit,
+      // "5 dozen at 620": qty and cost stay as the supplier billed them and
+      // the backend converts stock to base units, so the bill matches the
+      // supplier to the paisa even though 620/12 does not divide evenly.
+      unitFactor: l.unitFactor && l.unitFactor > 0 ? l.unitFactor : 1,
+      baseUnit: l.baseUnit,
+      imei: l.imei,
+      unitCostBeforeDisc: l.unitCostBeforeDisc,
+      discountPct: l.discountPct,
+      discountFlat: l.discountFlat,
+      newSellPrice: l.newSellPrice,
+    })),
+    orderDiscountType: p.orderDiscountType,
+    orderDiscountValue: p.orderDiscountValue,
+    taxPct: p.taxPct,
+    shipping: p.shipping,
+    other: p.other,
+    notes: p.notes,
+  };
+}
 
 export const usePurchases = create<State>((set, get) => ({
   purchases: [],
@@ -286,53 +338,37 @@ export const usePurchases = create<State>((set, get) => ({
     }
   },
 
-  /** Re-run the current page query (called after every write). */
+  /**
+   * Re-run the current page query (called after every write), AND load the
+   * purchase returns. Nothing used to load them, so the Purchase Returns screen
+   * was always empty. They are header-only and grow slowly; the screen pages
+   * them in memory.
+   */
   hydrate: async () => {
-    await get().loadPage();
+    await Promise.all([
+      get().loadPage(),
+      api<BackendPurchaseReturn[]>('purchaseReturns.list')
+        .then((rows) => set({ returns: rows.map(toPurchaseReturnRecord) }))
+        .catch(() => {
+          // Leave the last good list in place rather than blanking the screen.
+        }),
+    ]);
   },
 
   addPurchase: async (p) => {
     // Resolve branch name -> id via the branches store (AddPurchase still uses
     // branch names); falls back to the default branch only if unresolvable.
-    const branchId = resolveBranchToId(p.branch);
     try {
       // Await the create so callers (e.g. Save & Pay) can attach a payment to
       // the PERSISTED purchase. purchases.create returns the new backend id.
       const res = await api<{ id: string; refNo: string }>('purchases.create', {
-        status: p.status,
-        date: p.date,
-        supplierId: p.supplierId || undefined,
-        branchId,
-        userId: CURRENT_USER,
-        payTerms: p.payTerms,
-        lines: p.lines.map((l) => ({
-          productId: l.productId,
-          qty: l.qty,
-          unit: l.unit,
-          // "5 dozen at 620": qty and cost stay as the supplier billed them and
-          // the backend converts stock to base units, so the bill matches the
-          // supplier to the paisa even though 620/12 does not divide evenly.
-          unitFactor: l.unitFactor && l.unitFactor > 0 ? l.unitFactor : 1,
-          baseUnit: l.baseUnit,
-          imei: l.imei,
-          unitCostBeforeDisc: l.unitCostBeforeDisc,
-          discountPct: l.discountPct,
-          discountFlat: l.discountFlat,
-          taxPct: l.taxPct,
-          newSellPrice: l.newSellPrice,
-        })),
-        orderDiscountType: p.orderDiscountType,
-        orderDiscountValue: p.orderDiscountValue,
-        taxPct: p.taxPct,
-        shipping: p.shipping,
-        other: p.other,
+        ...purchaseInputOf(p),
         payments: p.payments.map((pay) => ({
           method: pay.method,
           amount: pay.amount,
           reference: pay.reference,
           paidAt: pay.paidAt,
         })),
-        notes: p.notes,
       });
       // Rehydrate so the just-created purchase (with the real id) is in the store.
       await get().hydrate();
@@ -344,75 +380,103 @@ export const usePurchases = create<State>((set, get) => ({
       throw e;
     }
   },
-  // NOTE: there is no `purchases.update` channel yet, so editing an existing
-  // purchase only touches the in-memory copy until that backend op lands.
-  updatePurchase: (id, patch) =>
-    set((s) => ({
-      purchases: s.purchases.map((x) =>
-        x.id === id
-          ? {
-              ...x,
-              ...patch,
-              audit: [
-                ...x.audit,
-                { id: 'a_' + Date.now(), at: new Date().toISOString(), by: 'Seam', action: 'edited' },
-              ],
-            }
-          : x,
-      ),
-    })),
-  cancelPurchase: (id, by, reason) => {
-    void api('purchases.cancel', { purchaseId: id, userId: CURRENT_USER, reason })
-      .then(() => get().hydrate())
-      .catch((e: unknown) => {
-        toast.error(e instanceof Error ? e.message : 'Failed to cancel purchase');
-        void get().hydrate();
-      });
+  /**
+   * Correct a saved purchase through the backend (admin — `purchases.edit`).
+   * The bill keeps its number and its payments; lines, prices, supplier and
+   * status are re-applied in one transaction (updatePurchase in
+   * backend/services/purchases.ts). This used to change only the in-memory copy,
+   * which the next load threw away.
+   */
+  updatePurchase: async (id, p, reason) => {
+    try {
+      await api('purchases.update', { purchaseId: id, input: { ...purchaseInputOf(p), reason } });
+      await get().hydrate();
+      return true;
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save the correction');
+      await get().hydrate();
+      return false;
+    }
   },
+  /** An ordered / in-transit bill arrives: its goods go into stock, as entered. */
+  receivePurchase: async (id) => {
+    try {
+      await api('purchases.receive', { purchaseId: id, userId: currentUserId() });
+      await get().hydrate();
+      toast.success('Goods received — stock updated');
+      return true;
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to receive the goods');
+      await get().hydrate();
+      return false;
+    }
+  },
+  // These resolve true only once the backend accepted them (they used to be
+  // fire-and-forget, so a screen could close on a write that was refused).
+  cancelPurchase: (id, _by, reason) =>
+    settlePurchase(
+      get,
+      api('purchases.cancel', { purchaseId: id, userId: currentUserId(), reason }),
+      'Failed to cancel purchase',
+    ),
   // Business rule lives in the backend: a `received` purchase cannot be deleted
   // (it must be cancelled so stock is reversed); ordered/in-transit/cancelled
   // never touched stock and are safe to remove.
-  deletePurchase: (id) => {
-    void api('purchases.delete', { purchaseId: id })
-      .then(() => get().hydrate())
-      .catch((e: unknown) => {
-        toast.error(e instanceof Error ? e.message : 'Failed to delete purchase');
-        void get().hydrate();
+  deletePurchase: (id) =>
+    settlePurchase(get, api('purchases.delete', { purchaseId: id }), 'Failed to delete purchase'),
+  addPayment: (purchaseId, p) =>
+    settlePurchase(
+      get,
+      api('purchases.addPayment', {
+        purchaseId,
+        payment: { method: p.method, amount: p.amount, reference: p.reference, paidAt: p.paidAt },
+        userId: currentUserId(),
+      }),
+      'Failed to record payment',
+    ),
+  // Resolves true only once the backend has accepted the return.
+  addReturn: async (r) => {
+    try {
+      await api('purchaseReturns.create', {
+        purchaseId: r.purchaseId,
+        supplierId: r.supplierId || undefined,
+        // No branchId: the goods leave from the branch the bill was received at.
+        userId: currentUserId(),
+        reason: r.reason,
+        refundMethod: r.refundMethod,
+        lines: r.lines.map((l) => ({
+          productId: l.productId,
+          qty: l.qty,
+          unit: l.unit,
+          unitCost: l.unitCost,
+          refundAmount: l.refundAmount,
+        })),
+        notes: r.notes,
       });
-  },
-  addPayment: (purchaseId, p) => {
-    void api('purchases.addPayment', {
-      purchaseId,
-      payment: { method: p.method, amount: p.amount, reference: p.reference, paidAt: p.paidAt },
-      userId: CURRENT_USER,
-    })
-      .then(() => get().hydrate())
-      .catch((e: unknown) => {
-        toast.error(e instanceof Error ? e.message : 'Failed to record payment');
-        void get().hydrate();
-      });
-  },
-  addReturn: (r) => {
-    void api('purchaseReturns.create', {
-      purchaseId: r.purchaseId,
-      supplierId: r.supplierId,
-      branchId: 'br_mp',
-      userId: CURRENT_USER,
-      reason: r.reason,
-      refundMethod: r.refundMethod,
-      lines: r.lines.map((l) => ({
-        productId: l.productId,
-        qty: l.qty,
-        unit: l.unit,
-        unitCost: l.unitCost,
-        refundAmount: l.refundAmount,
-      })),
-      notes: r.notes,
-    })
-      .then(() => get().hydrate())
-      .catch((e: unknown) => {
-        toast.error(e instanceof Error ? e.message : 'Failed to save return');
-        void get().hydrate();
-      });
+      await get().hydrate();
+      toast.success('Purchase return saved');
+      return true;
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save return');
+      void get().hydrate();
+      return false;
+    }
   },
 }));
+
+/** Wait for a purchase write, then re-read either way. True only when accepted. */
+async function settlePurchase(
+  get: () => { hydrate: () => Promise<void> },
+  write: Promise<unknown>,
+  failure: string,
+): Promise<boolean> {
+  try {
+    await write;
+    void get().hydrate();
+    return true;
+  } catch (e: unknown) {
+    toast.error(e instanceof Error ? e.message : failure);
+    void get().hydrate();
+    return false;
+  }
+}

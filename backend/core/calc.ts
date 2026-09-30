@@ -78,6 +78,68 @@ export function computeSaleTotals(i: SaleTotalsInput): SaleTotals {
   };
 }
 
+// ---------- Sell-return refund ----------
+export interface ReturnRefundInput {
+  /** The sale line's subtotal AFTER its own discounts (sale_lines.line_subtotal). */
+  lineSubtotal: number;
+  /** The quantity on that line. */
+  lineQty: number;
+  /** How many of them are coming back (capped at lineQty). */
+  returnQty: number;
+  /** The invoice subtotal (sum of line subtotals) and its order discount. */
+  subtotal: number;
+  orderDiscount: number;
+  /** Order-level VAT %, which the customer paid on these goods too. */
+  taxPct: number;
+}
+
+/**
+ * What the customer actually paid for `returnQty` of a line — the default refund.
+ *
+ * The return screen used to refund `qty × unit price`, the price BEFORE any
+ * discount: a line sold at 10% off, or an invoice with ৳200 knocked off the
+ * whole bill, refunded more than the customer ever handed over. This is the
+ * line's own net price, less its share of the order discount (in proportion to
+ * the line's share of the subtotal), plus the VAT charged on it. Shipping and
+ * "other" charges are not goods and are not refunded.
+ *
+ * Rounded once, at the end — it is a proportion of figures that were already
+ * rounded when the invoice was stored.
+ */
+export function computeReturnRefund(i: ReturnRefundInput): number {
+  if (i.lineQty <= 0 || i.returnQty <= 0 || i.subtotal <= 0) return 0;
+  const qty = Math.min(i.returnQty, i.lineQty);
+  const lineShare = (i.lineSubtotal / i.lineQty) * qty;
+  const afterOrder = (lineShare * Math.max(0, i.subtotal - i.orderDiscount)) / i.subtotal;
+  return round2(afterOrder * (1 + i.taxPct / 100));
+}
+
+// ---------- Purchase-return refund ----------
+export interface PurchaseReturnRefundInput {
+  /** The bill line's total (purchase_lines.line_total — discount and line tax in). */
+  lineTotal: number;
+  lineQty: number;
+  returnQty: number;
+  /** The bill's total after line discounts, before the order discount. */
+  afterLine: number;
+  orderDiscount: number;
+}
+
+/**
+ * What the shop actually paid the supplier for `returnQty` of a bill line — the
+ * default credit or cash back. The return screen used `qty × unit cost before
+ * tax`, which left out the line's own tax and ignored any discount taken off
+ * the whole bill. This is the line's per-unit total, less its share of the order
+ * discount. The backend's ceiling (the line total per unit) is never lower.
+ */
+export function computePurchaseReturnRefund(i: PurchaseReturnRefundInput): number {
+  if (i.lineQty <= 0 || i.returnQty <= 0) return 0;
+  const qty = Math.min(i.returnQty, i.lineQty);
+  const lineShare = (i.lineTotal / i.lineQty) * qty;
+  const factor = i.afterLine > 0 ? Math.max(0, i.afterLine - i.orderDiscount) / i.afterLine : 1;
+  return round2(lineShare * factor);
+}
+
 // ---------- COGS / profit ----------
 export interface CogsLine {
   qty: number;

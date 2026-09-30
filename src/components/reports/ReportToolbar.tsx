@@ -276,7 +276,7 @@ export function ReportToolbar({
             </>
           )}
 
-          <span className="ml-auto text-[11px] text-muted-foreground tabular">
+          <span className="ml-auto text-xs text-muted-foreground tabular">
             {fmt(resolved.from)} – {fmt(resolved.to)}
           </span>
         </Card>

@@ -51,7 +51,7 @@ export default function Warranties() {
 
         <Card className="overflow-hidden">
           <table className="w-full text-sm">
-            <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50">
+            <thead className="text-xs text-muted-foreground bg-secondary/50">
               <tr>
                 <th className="text-left font-medium px-4 py-2.5">Name</th>
                 <th className="text-right font-medium px-4 py-2.5">Duration</th>
@@ -160,11 +160,11 @@ function WarrantyForm({
     >
       <div className="flex-1 overflow-auto p-4 space-y-3">
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">Name *</label>
+          <label className="text-xs font-semibold text-muted-foreground">Name *</label>
           <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="1 Year Manufacturer" />
         </div>
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+          <label className="text-xs font-semibold text-muted-foreground">
             Duration (months)
           </label>
               <NumberField
@@ -174,7 +174,7 @@ function WarrantyForm({
               />
         </div>
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">Description</label>
+          <label className="text-xs font-semibold text-muted-foreground">Description</label>
           <textarea
             value={desc}
             onChange={(e) => setDesc(e.target.value)}

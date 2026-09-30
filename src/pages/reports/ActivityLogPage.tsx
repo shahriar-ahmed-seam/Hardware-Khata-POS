@@ -282,7 +282,7 @@ export default function ActivityLogPage() {
 
         {grouped.map(([day, items]) => (
           <section key={day}>
-            <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em] mb-2 px-1">
+            <div className="text-xs font-semibold text-muted-foreground mb-2 px-1">
               {day} <span className="text-muted-foreground/60">· {items.length}</span>
             </div>
             <Card className="overflow-hidden">
@@ -312,14 +312,14 @@ export default function ActivityLogPage() {
                         <span className="text-sm text-muted-foreground">{e.action}</span>
                         <Badge variant="default">{ENTITY_LABELS[e.entity]}</Badge>
                         {e.entityRef && (
-                          <span className="text-[11px] font-mono text-muted-foreground bg-secondary px-1.5 rounded">
+                          <span className="text-xs font-mono text-muted-foreground bg-secondary px-1.5 rounded">
                             {e.entityRef}
                           </span>
                         )}
                         {e.amount !== undefined && (
                           <span
                             className={cn(
-                              'text-[11px] font-semibold tabular',
+                              'text-xs font-semibold tabular',
                               e.amount < 0 ? 'text-destructive' : 'text-success',
                             )}
                           >
@@ -328,13 +328,13 @@ export default function ActivityLogPage() {
                           </span>
                         )}
                       </div>
-                      <div className="text-[12px] text-muted-foreground mt-0.5">{e.message}</div>
-                      <div className="flex items-center gap-2 text-[11px] text-muted-foreground mt-0.5">
+                      <div className="text-sm text-muted-foreground mt-0.5">{e.message}</div>
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
                         <span className="tabular">{relativeTime(e.at)}</span>
                         {e.branch && <span>· {e.branch}</span>}
                       </div>
                     </div>
-                    <div className="size-7 rounded-full bg-secondary text-muted-foreground grid place-items-center text-[10px] font-bold shrink-0">
+                    <div className="size-7 rounded-full bg-secondary text-muted-foreground grid place-items-center text-xs font-bold shrink-0">
                       {e.by ? initials(e.by) : '—'}
                     </div>
                   </div>

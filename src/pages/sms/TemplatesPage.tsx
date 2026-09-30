@@ -99,7 +99,7 @@ export default function TemplatesPage() {
           <select
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value as TemplateCategory | '')}
-            className="h-9 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+            className="h-10 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="">All categories</option>
             {(Object.keys(CATEGORY_LABEL) as TemplateCategory[]).map((c) => (
@@ -132,7 +132,7 @@ export default function TemplatesPage() {
                         {t.language === 'bn' && <Badge variant="outline">বাংলা</Badge>}
                         {!t.active && <Badge variant="default">Inactive</Badge>}
                       </div>
-                      <div className="text-[11px] text-muted-foreground mt-0.5">
+                      <div className="text-xs text-muted-foreground mt-0.5">
                         {t.body.length} chars · {parts} part{parts === 1 ? '' : 's'} ·{' '}
                         {unicode ? 'Unicode' : 'GSM-7'}
                       </div>
@@ -235,7 +235,7 @@ function TemplateForm({
     >
       <div className="flex-1 overflow-auto p-4 space-y-3">
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+          <label className="text-xs font-semibold text-muted-foreground">
             Name <span className="text-destructive">*</span>
           </label>
           <Input
@@ -247,13 +247,13 @@ function TemplateForm({
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+            <label className="text-xs font-semibold text-muted-foreground">
               Category
             </label>
             <select
               value={category}
               onChange={(e) => setCategory(e.target.value as TemplateCategory)}
-              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+              className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
             >
               <option value="sale">Sale</option>
               <option value="payment">Payment</option>
@@ -264,13 +264,13 @@ function TemplateForm({
             </select>
           </div>
           <div>
-            <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+            <label className="text-xs font-semibold text-muted-foreground">
               Language
             </label>
             <select
               value={language}
               onChange={(e) => setLanguage(e.target.value as 'en' | 'bn')}
-              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+              className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
             >
               <option value="en">English</option>
               <option value="bn">বাংলা</option>
@@ -278,7 +278,7 @@ function TemplateForm({
           </div>
         </div>
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+          <label className="text-xs font-semibold text-muted-foreground">
             Body <span className="text-destructive">*</span>
           </label>
           <textarea
@@ -288,14 +288,14 @@ function TemplateForm({
             placeholder="Use {variables} for personalization."
             className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 resize-y"
           />
-          <div className="flex items-center justify-between mt-1 text-[11px] text-muted-foreground">
+          <div className="flex items-center justify-between mt-1 text-xs text-muted-foreground">
             <span>{body.length} chars</span>
             <span>
               {parts} part{parts === 1 ? '' : 's'} · {unicode ? 'Unicode (70/part)' : 'GSM-7 (160/part)'}
             </span>
           </div>
           <div className="mt-2 flex flex-wrap gap-1">
-            <span className="text-[11px] text-muted-foreground">Insert:</span>
+            <span className="text-xs text-muted-foreground">Insert:</span>
             {TEMPLATE_VARIABLES.map((v) => (
               <button
                 key={v}
@@ -303,7 +303,7 @@ function TemplateForm({
                 onClick={() =>
                   setBody((b) => b + (b.endsWith(' ') || b.length === 0 ? '' : ' ') + v)
                 }
-                className="px-2 h-6 rounded border border-border hover:bg-secondary text-[11px] font-mono"
+                className="px-2 h-6 rounded border border-border hover:bg-secondary text-xs font-mono"
               >
                 {v}
               </button>

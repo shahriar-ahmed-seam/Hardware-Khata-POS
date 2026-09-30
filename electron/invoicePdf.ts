@@ -10,6 +10,7 @@ import {
 } from '../backend/services/invoices.ts';
 import { getBackupConfig, setBackupConfig } from '../backend/services/backup.ts';
 import { getDb, dbFilePath } from './db.ts';
+import { pdfOpenError } from './guard.ts';
 
 /**
  * INVOICE → PDF (the Electron half)
@@ -118,24 +119,34 @@ export function listArchivedInvoices(limit?: number) {
   return listInvoicePdfs(path.join(dbFolder(), INVOICE_SUBFOLDER), limit);
 }
 
-/** Open the owner's PDF folder in Explorer. */
-export function revealPdfFolder(): { ok: boolean; error?: string } {
-  const folder = getBackupConfig(getDb()).pdfFolder || path.join(dbFolder(), INVOICE_SUBFOLDER);
+/**
+ * `shell.openPath` never throws: it resolves with an error STRING, and '' on
+ * success. It used to be fired and forgotten, so a folder the system could not
+ * open (no file manager registered, which happens on Linux) still reported ok.
+ */
+export async function openWithSystem(target: string): Promise<{ ok: boolean; error?: string }> {
   try {
-    void shell.openPath(folder);
-    return { ok: true };
+    const failure = await shell.openPath(target);
+    return failure ? { ok: false, error: failure } : { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
 
-/** Open one saved PDF in the system's default viewer. */
-export function openPdf(file: string): { ok: boolean; error?: string } {
-  if (!file) return { ok: false, error: 'No file given' };
-  try {
-    void shell.openPath(file);
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
-  }
+/** Open the owner's PDF folder in the file manager. */
+export async function revealPdfFolder(): Promise<{ ok: boolean; error?: string }> {
+  const folder = getBackupConfig(getDb()).pdfFolder || path.join(dbFolder(), INVOICE_SUBFOLDER);
+  return openWithSystem(folder);
+}
+
+/**
+ * Open one saved PDF in the system's default viewer — only a .pdf inside one of
+ * the invoice folders (see `pdfOpenError`). The path comes from the renderer, and
+ * the OS "open" action would otherwise run a program as readily as show a PDF.
+ */
+export async function openPdf(file: string): Promise<{ ok: boolean; error?: string }> {
+  const dirs = invoicePdfTargetsFor(getDb(), dbFolder()).map((t) => t.dir);
+  const refused = pdfOpenError(file, dirs);
+  if (refused) return { ok: false, error: refused };
+  return openWithSystem(path.resolve(file));
 }

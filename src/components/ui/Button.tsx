@@ -18,11 +18,13 @@ const variants: Record<Variant, string> = {
   success: 'bg-success text-success-foreground hover:bg-success/90',
 };
 
+// Sized for an elderly owner on a 1366×768 screen: 40px is the default hit
+// target, 32px the smallest (dense table rows / toolbars).
 const sizes: Record<Size, string> = {
-  sm: 'h-7 px-2.5 text-xs gap-1.5 rounded-md',
-  md: 'h-9 px-3.5 text-sm gap-2 rounded-md',
-  lg: 'h-11 px-5 text-sm gap-2 rounded-lg',
-  icon: 'size-9 rounded-md grid place-items-center',
+  sm: 'h-8 px-3 text-xs gap-1.5 rounded-md',
+  md: 'h-10 px-4 text-sm gap-2 rounded-md',
+  lg: 'h-12 px-5 text-base gap-2 rounded-lg',
+  icon: 'size-10 rounded-md grid place-items-center',
 };
 
 export const Button = forwardRef<HTMLButtonElement, Props>(

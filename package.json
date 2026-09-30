@@ -10,6 +10,8 @@
     "build:electron": "npm run build && electron-builder",
     "//build:win": "Local installer ONLY. --publish never so a local build can never upload a release by accident.",
     "build:win": "npm run build && electron-builder --win --publish never",
+    "//build:linux": "Local AppImage + .deb ONLY (release/). --publish never, same reason as build:win.",
+    "build:linux": "npm run build && electron-builder --linux --publish never",
     "//release:win": "Build AND upload to GitHub Releases, which is what in-app updates read. Needs a token: $env:GH_TOKEN = gh auth token",
     "release:win": "npm run build && electron-builder --win --publish always",
     "preview": "vite preview",
@@ -27,9 +29,12 @@
     "backend:backup": "npm run rebuild:node && tsx backend/verify/backup.ts",
     "backend:costing": "npm run rebuild:node && tsx backend/verify/costing.ts",
     "backend:mirror": "tsx backend/verify/mirror.ts",
-    "backend:verify:all": "npm run rebuild:node && tsx backend/verify/all.ts && tsx backend/verify/api.ts && tsx backend/verify/run.ts && tsx backend/verify/e2e.ts && tsx backend/verify/paging.ts && tsx backend/verify/backup.ts && tsx backend/verify/costing.ts && tsx backend/verify/mirror.ts"
+    "backend:security": "npm run rebuild:node && tsx backend/verify/security.ts",
+    "backend:chain": "npm run rebuild:node && tsx backend/verify/chain.ts",
+    "backend:verify:all": "npm run rebuild:node && tsx backend/verify/all.ts && tsx backend/verify/api.ts && tsx backend/verify/run.ts && tsx backend/verify/e2e.ts && tsx backend/verify/paging.ts && tsx backend/verify/backup.ts && tsx backend/verify/costing.ts && tsx backend/verify/mirror.ts && tsx backend/verify/security.ts"
   },
   "dependencies": {
+    "@fontsource/noto-sans-bengali": "5.3.0",
     "@tanstack/react-query": "^5.51.0",
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^12.10.0",

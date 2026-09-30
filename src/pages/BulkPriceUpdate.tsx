@@ -168,7 +168,7 @@ export default function BulkPriceUpdate() {
             <select
               value={cat}
               onChange={(e) => setCat(e.target.value)}
-              className="h-9 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
+              className="h-10 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
             >
               <option value="all">All Categories</option>
               {categories.map((c) => (
@@ -180,7 +180,7 @@ export default function BulkPriceUpdate() {
             <select
               value={brand}
               onChange={(e) => setBrand(e.target.value)}
-              className="h-9 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
+              className="h-10 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
             >
               <option value="all">All Brands</option>
               {brands.map((b) => (
@@ -196,7 +196,7 @@ export default function BulkPriceUpdate() {
 
           <Card className="overflow-hidden">
             <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50 sticky top-0">
+              <thead className="text-xs text-muted-foreground bg-secondary/50 sticky top-0">
                 <tr>
                   <th className="w-10 px-3 py-2.5">
                     <input type="checkbox" checked={allOnPage} onChange={toggleAll} />
@@ -228,16 +228,16 @@ export default function BulkPriceUpdate() {
                           <ProductImage url={p.image} categoryId={p.categoryId} size={32} />
                           <div className="min-w-0">
                             <div className="font-medium truncate">{p.name}</div>
-                            <div className="text-[11px] text-muted-foreground font-mono">
+                            <div className="text-xs text-muted-foreground font-mono">
                               {p.sku} · {brandLabel(p.brandId)} · {catLabel(p.categoryId)}
                             </div>
                           </div>
                         </div>
                       </td>
-                      <td className="px-2 py-2.5 text-right font-mono tabular">
+                      <td className="px-2 py-2.5 text-right tabular">
                         {formatBDT(current, { withSymbol: false })}
                       </td>
-                      <td className="px-3 py-2.5 text-right font-mono tabular">
+                      <td className="px-3 py-2.5 text-right tabular">
                         {isSel ? (
                           <span
                             className={cn(
@@ -265,11 +265,11 @@ export default function BulkPriceUpdate() {
             <div className="text-sm font-semibold">Update settings</div>
 
             <div>
-              <label className="text-[10px] uppercase font-semibold text-muted-foreground">Field</label>
+              <label className="text-xs font-semibold text-muted-foreground">Field</label>
               <select
                 value={field}
                 onChange={(e) => setField(e.target.value as Field)}
-                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
               >
                 {(Object.keys(FIELD_LABEL) as Field[]).map((f) => (
                   <option key={f} value={f}>
@@ -280,7 +280,7 @@ export default function BulkPriceUpdate() {
             </div>
 
             <div>
-              <label className="text-[10px] uppercase font-semibold text-muted-foreground">Mode</label>
+              <label className="text-xs font-semibold text-muted-foreground">Mode</label>
               <div className="flex items-center gap-0.5 p-0.5 bg-secondary rounded-md text-xs mt-1">
                 {(['flat', 'percent', 'set'] as Mode[]).map((m) => (
                   <button
@@ -301,7 +301,7 @@ export default function BulkPriceUpdate() {
 
             {mode !== 'set' && (
               <div>
-                <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+                <label className="text-xs font-semibold text-muted-foreground">
                   Direction
                 </label>
                 <div className="flex items-center gap-0.5 p-0.5 bg-secondary rounded-md text-xs mt-1">
@@ -324,7 +324,7 @@ export default function BulkPriceUpdate() {
             )}
 
             <div>
-              <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+              <label className="text-xs font-semibold text-muted-foreground">
                 {mode === 'set' ? 'New value' : mode === 'percent' ? 'Percent' : 'Amount'}
               </label>
               <NumberField
@@ -335,11 +335,11 @@ export default function BulkPriceUpdate() {
             </div>
 
             <div>
-              <label className="text-[10px] uppercase font-semibold text-muted-foreground">Rounding</label>
+              <label className="text-xs font-semibold text-muted-foreground">Rounding</label>
               <select
                 value={round}
                 onChange={(e) => setRound(e.target.value as any)}
-                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
               >
                 <option value="none">No rounding</option>
                 <option value="nearest">Nearest taka</option>
@@ -359,7 +359,7 @@ export default function BulkPriceUpdate() {
               <span className="text-muted-foreground">Total change</span>
               <span
                 className={cn(
-                  'font-mono tabular font-semibold',
+                  'tabular font-semibold',
                   totalDelta > 0 ? 'text-success' : totalDelta < 0 ? 'text-destructive' : '',
                 )}
               >

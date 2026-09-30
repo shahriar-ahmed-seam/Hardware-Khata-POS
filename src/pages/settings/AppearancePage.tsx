@@ -3,12 +3,13 @@ import { Save, Palette, Sun, Moon, Monitor, RotateCcw } from 'lucide-react';
 import { SettingsHeader } from '@/components/settings/SettingsHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { useSettings } from '@/stores/settings';
+import { FONT_SCALE_STEPS, snapFontScale, useSettings } from '@/stores/settings';
 import { useBranches } from '@/stores/branches';
 import { useTheme } from '@/stores/theme';
 import { useUI } from '@/stores/ui';
 import { toast } from '@/stores/toast';
 import { cn } from '@/lib/utils';
+import { labelFor } from '@/lib/labels';
 
 const PRESET_HUES = [
   { name: 'Indigo', hue: 243 },
@@ -34,12 +35,13 @@ function applyAccentHue(hue: number) {
 }
 
 function applyFontScale(scale: number) {
-  document.documentElement.style.fontSize = `${scale * 16}px`;
+  document.documentElement.style.fontSize = `${snapFontScale(scale) * 16}px`;
 }
 
 export default function AppearancePage() {
   const a = useSettings((s) => s.appearance);
   const set = useSettings((s) => s.setAppearance);
+  const fontScale = snapFontScale(a.fontScale);
   // For the preview card: the shop's real identity, so the sample looks like
   // this shop rather than the demo fixture's.
   const business = useSettings((s) => s.business);
@@ -126,7 +128,7 @@ export default function AppearancePage() {
                   key={p.hue}
                   onClick={() => set({ accentHue: p.hue })}
                   className={cn(
-                    'h-12 rounded-md border flex flex-col items-center justify-center gap-1 transition text-[11px] font-medium',
+                    'h-12 rounded-md border flex flex-col items-center justify-center gap-1 transition text-xs font-medium',
                     a.accentHue === p.hue
                       ? 'border-foreground/40 ring-2 ring-ring/50'
                       : 'border-border hover:bg-secondary',
@@ -141,7 +143,7 @@ export default function AppearancePage() {
               ))}
             </div>
             <div>
-              <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+              <label className="text-xs font-semibold text-muted-foreground">
                 Custom hue ({a.accentHue}°)
               </label>
               <input
@@ -170,17 +172,17 @@ export default function AppearancePage() {
                   key={d}
                   onClick={() => set({ density: d })}
                   className={cn(
-                    'h-12 rounded-md border text-sm font-medium capitalize transition',
+                    'h-12 rounded-md border text-sm font-medium transition',
                     a.density === d
                       ? 'border-primary bg-primary/10 text-primary'
                       : 'border-border hover:bg-secondary',
                   )}
                 >
-                  {d}
+                  {labelFor('density', d)}
                 </button>
               ))}
             </div>
-            <div className="text-[11px] text-muted-foreground">
+            <div className="text-xs text-muted-foreground">
               Compact reduces row heights and paddings across lists. Useful on smaller screens.
             </div>
           </Card>
@@ -188,31 +190,33 @@ export default function AppearancePage() {
           <Card className="p-4 space-y-3">
             <div className="text-sm font-semibold">Font size</div>
             <div className="grid grid-cols-4 gap-2">
-              {([0.9, 1, 1.1, 1.2] as const).map((s) => (
+              {FONT_SCALE_STEPS.map((s) => (
                 <button
                   key={s}
+                  type="button"
+                  aria-pressed={fontScale === s}
                   onClick={() => set({ fontScale: s })}
                   className={cn(
                     'h-12 rounded-md border font-medium transition',
-                    a.fontScale === s
+                    fontScale === s
                       ? 'border-primary bg-primary/10 text-primary'
                       : 'border-border hover:bg-secondary',
                   )}
                   style={{ fontSize: `${s * 14}px` }}
                 >
-                  {s === 1 ? 'Default' : `${Math.round(s * 100)}%`}
+                  {s === 1 ? 'Normal' : `${Math.round(s * 100)}%`}
                 </button>
               ))}
             </div>
-            <div className="text-[11px] text-muted-foreground">
-              Applies to the whole app. Useful for older shop floors with larger displays.
+            <div className="text-xs text-muted-foreground">
+              Applies to the whole app. Also on the A− / A+ buttons at the top of the screen.
             </div>
           </Card>
         </div>
 
         {/* RIGHT — preview */}
         <div>
-          <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em] mb-2">
+          <div className="text-xs font-semibold text-muted-foreground mb-2">
             Preview
           </div>
           <Card className="p-5 space-y-4">
@@ -249,7 +253,7 @@ export default function AppearancePage() {
                 >
                   <div>
                     <div className="text-sm font-medium">{n}</div>
-                    <div className="text-[11px] text-muted-foreground">In stock</div>
+                    <div className="text-xs text-muted-foreground">In stock</div>
                   </div>
                   <div className="text-sm tabular font-semibold text-primary">
                     ৳ {(540 + i * 10).toFixed(2)}

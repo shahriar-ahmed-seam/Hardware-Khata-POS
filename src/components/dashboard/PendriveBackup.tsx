@@ -42,11 +42,12 @@ export function PendriveBackup({ variant = 'inline' }: { variant?: 'inline' | 't
   const [running, setRunning] = useState(false);
   const [choices, setChoices] = useState<UsbDrive[] | null>(null);
   /**
-   * Set when the app could not ask Windows which drives are removable — usually
-   * PowerShell blocked by policy on the shop's PC. Saying "No pendrive found"
-   * there would be a lie, and it would leave the owner believing there is no way
-   * to get a copy off the machine. So we say what happened and offer the route
-   * that always works: they can see the stick in Explorer, so they can point at it.
+   * Set when the app could not ask the system which drives are removable —
+   * usually PowerShell blocked by policy on a Windows PC, or no lsblk on Linux.
+   * Saying "No pendrive found" there would be a lie, and it would leave the owner
+   * believing there is no way to get a copy off the machine. So we say what
+   * happened and offer the route that always works: they can see the stick in
+   * the file manager, so they can point at it.
    */
   const [detectionFailed, setDetectionFailed] = useState<string | null>(null);
 
@@ -141,7 +142,7 @@ export function PendriveBackup({ variant = 'inline' }: { variant?: 'inline' | 't
               <div className="text-sm font-semibold leading-tight truncate">
                 {running ? 'Saving to Pendrive…' : 'Backup to Pendrive'}
               </div>
-              <div className="text-[10px] opacity-80 leading-tight truncate">
+              <div className="text-xs opacity-80 leading-tight truncate">
                 A copy you can take home
               </div>
             </div>
@@ -214,12 +215,8 @@ export function PendriveBackup({ variant = 'inline' }: { variant?: 'inline' | 't
         <div className="p-4 space-y-3 text-sm">
           <p className="text-muted-foreground">{detectionFailed}</p>
           <p>
-            Your pendrive is still fine to use — pick it in the next window and the copy will be
-            written to it. Look for the drive letter Windows gave it, for example{' '}
-            <span className="font-mono" data-no-i18n>
-              E:
-            </span>
-            .
+            Your pendrive is still fine to use. Pick it in the next window and the copy will be
+            written to it. It is listed under its name or its drive letter.
           </p>
           <div className="rounded-md bg-secondary/60 px-3 py-2 text-xs text-muted-foreground">
             This saves one copy where you choose. It does not change where your scheduled
@@ -239,7 +236,7 @@ export function PendriveBackup({ variant = 'inline' }: { variant?: 'inline' | 't
   );
 }
 
-/** Bytes as GB/MB. Windows reports these, so they are real numbers, not estimates. */
+/** Bytes as GB/MB. The system reports these, so they are real numbers, not estimates. */
 function formatGb(bytes: number): string {
   const gb = bytes / 1024 ** 3;
   if (gb >= 1) return `${gb.toFixed(1)} GB`;

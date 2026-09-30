@@ -7,6 +7,7 @@ import { DateTimeField } from '@/components/ui/DateTimeField';
 import { nowLocalInput, fromLocalInput } from '@/lib/datetime';
 import { useSales, type SaleRecord, type SalePayment } from '@/stores/sales';
 import { formatBDT, cn } from '@/lib/utils';
+import { toast } from '@/stores/toast';
 
 const METHODS: SalePayment['method'][] = ['Cash', 'bKash', 'Nagad', 'Card', 'Bank'];
 
@@ -50,9 +51,13 @@ export function AddPaymentModal({
   // the extra lands on their account rather than this invoice.
   const overpaying = amount > sale.due + 0.005;
 
-  const submit = () => {
-    if (amount <= 0) return;
-    addPayment(sale.id, {
+  const [saving, setSaving] = useState(false);
+  // Closes only once the backend has taken the payment. A refusal (a walk-in
+  // paying more than is owed, say) keeps the modal open with the amount typed.
+  const submit = async () => {
+    if (amount <= 0 || saving) return;
+    setSaving(true);
+    const ok = await addPayment(sale.id, {
       method,
       amount,
       reference: reference || undefined,
@@ -60,6 +65,9 @@ export function AddPaymentModal({
       // shift, so the timestamp decides which shift it lands in.
       paidAt: fromLocalInput(paidAt),
     });
+    setSaving(false);
+    if (!ok) return;
+    toast.success('Payment recorded');
     onClose();
   };
 
@@ -75,7 +83,7 @@ export function AddPaymentModal({
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={amount <= 0}>
+          <Button onClick={() => void submit()} disabled={amount <= 0 || saving}>
             Save Payment
           </Button>
         </div>
@@ -83,7 +91,7 @@ export function AddPaymentModal({
     >
       <div className="p-4 space-y-3">
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">Method</label>
+          <label className="text-xs font-semibold text-muted-foreground">Method</label>
           <div className="grid grid-cols-5 gap-1.5 mt-1">
             {METHODS.map((m) => (
               <button
@@ -102,7 +110,7 @@ export function AddPaymentModal({
 
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-[10px] uppercase font-semibold text-muted-foreground">Amount</label>
+            <label className="text-xs font-semibold text-muted-foreground">Amount</label>
             <NumberField
               autoFocus
               value={amount}
@@ -112,13 +120,13 @@ export function AddPaymentModal({
             <div className="flex items-center gap-1 mt-1">
               <button
                 onClick={() => setAmount(sale.due)}
-                className="text-[10px] px-2 h-6 rounded border border-border hover:bg-secondary"
+                className="text-xs px-2 h-6 rounded border border-border hover:bg-secondary"
               >
                 Full due
               </button>
               <button
                 onClick={() => setAmount(Math.round(sale.due / 2))}
-                className="text-[10px] px-2 h-6 rounded border border-border hover:bg-secondary"
+                className="text-xs px-2 h-6 rounded border border-border hover:bg-secondary"
               >
                 Half
               </button>
@@ -126,7 +134,7 @@ export function AddPaymentModal({
           </div>
           {method !== 'Cash' && (
             <div>
-              <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+              <label className="text-xs font-semibold text-muted-foreground">
                 Reference / TxID
               </label>
               <Input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="TX1234567" />
@@ -135,7 +143,7 @@ export function AddPaymentModal({
         </div>
 
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+          <label className="text-xs font-semibold text-muted-foreground">
             Paid on
           </label>
           <DateTimeField value={paidAt} onChange={setPaidAt} />
@@ -153,17 +161,17 @@ export function AddPaymentModal({
         <div className="rounded-lg border border-border p-3 space-y-1 text-sm">
           <div className="flex items-center justify-between">
             <span className="text-muted-foreground">Already paid</span>
-            <span className="font-mono tabular">{formatBDT(sale.paid)}</span>
+            <span className="tabular">{formatBDT(sale.paid)}</span>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-muted-foreground">This payment</span>
-            <span className="font-mono tabular">{formatBDT(amount)}</span>
+            <span className="tabular">{formatBDT(amount)}</span>
           </div>
           <div className="flex items-center justify-between border-t border-border pt-1">
             <span className="font-semibold">Still owing after this</span>
             <span
               className={cn(
-                'font-mono tabular font-bold',
+                'tabular font-bold',
                 Math.max(0, sale.due - amount) <= 0.005 ? 'text-success' : 'text-destructive',
               )}
             >

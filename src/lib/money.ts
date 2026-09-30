@@ -155,6 +155,49 @@ export function saleTotals(i: SaleTotalsMoneyInput): SaleTotalsMoney {
   };
 }
 
+// ------------------------------------------------------------ return refund
+
+export interface ReturnRefundMoneyInput {
+  lineSubtotal: number;
+  lineQty: number;
+  returnQty: number;
+  subtotal: number;
+  orderDiscount: number;
+  taxPct: number;
+}
+
+/**
+ * The default refund for returning `returnQty` of a sale line: what the customer
+ * actually paid for them. Mirrors `computeReturnRefund` in backend/core/calc.ts —
+ * the line's net price, less its share of the order discount, plus VAT; rounded
+ * once at the end. The return screen used to refund `qty × unit price`, which
+ * ignored every discount on the invoice.
+ */
+export function returnRefund(i: ReturnRefundMoneyInput): number {
+  if (i.lineQty <= 0 || i.returnQty <= 0 || i.subtotal <= 0) return 0;
+  const qty = Math.min(i.returnQty, i.lineQty);
+  const lineShare = (i.lineSubtotal / i.lineQty) * qty;
+  const afterOrder = (lineShare * Math.max(0, i.subtotal - i.orderDiscount)) / i.subtotal;
+  return round2(afterOrder * (1 + i.taxPct / 100));
+}
+
+export interface PurchaseReturnRefundMoneyInput {
+  lineTotal: number;
+  lineQty: number;
+  returnQty: number;
+  afterLine: number;
+  orderDiscount: number;
+}
+
+/** Mirrors `computePurchaseReturnRefund` in backend/core/calc.ts. */
+export function purchaseReturnRefund(i: PurchaseReturnRefundMoneyInput): number {
+  if (i.lineQty <= 0 || i.returnQty <= 0) return 0;
+  const qty = Math.min(i.returnQty, i.lineQty);
+  const lineShare = (i.lineTotal / i.lineQty) * qty;
+  const factor = i.afterLine > 0 ? Math.max(0, i.afterLine - i.orderDiscount) / i.afterLine : 1;
+  return round2(lineShare * factor);
+}
+
 // ------------------------------------------------------------ purchase lines
 
 export interface PurchaseLineMoney {

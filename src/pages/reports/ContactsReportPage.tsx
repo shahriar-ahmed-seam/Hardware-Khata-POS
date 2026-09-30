@@ -215,7 +215,7 @@ export default function ContactsReportPage() {
 
         {mode === 'customers' ? (
           <Card className="overflow-hidden">
-            <div className="grid grid-cols-[1.6fr_0.8fr_0.7fr_1fr_1fr_1fr_0.6fr] gap-2 px-4 py-2.5 border-b border-border bg-secondary/40 text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+            <div className="grid grid-cols-[1.6fr_0.8fr_0.7fr_1fr_1fr_1fr_0.6fr] gap-2 px-4 py-2.5 border-b border-border bg-secondary/40 text-xs font-semibold text-muted-foreground">
               <div>Customer</div>
               <div>Group</div>
               <div className="text-right">Sales #</div>
@@ -236,7 +236,7 @@ export default function ContactsReportPage() {
               >
                 <div className="min-w-0">
                   <div className="font-medium truncate">{c.name}</div>
-                  <div className="text-[11px] font-mono text-muted-foreground">{c.phone}</div>
+                  <div className="text-xs font-mono text-muted-foreground">{c.phone}</div>
                 </div>
                 <div>
                   <Badge variant="default">{c.group}</Badge>
@@ -267,7 +267,7 @@ export default function ContactsReportPage() {
           </Card>
         ) : (
           <Card className="overflow-hidden">
-            <div className="grid grid-cols-[1.6fr_1fr_0.7fr_1fr_1fr_1fr_0.6fr] gap-2 px-4 py-2.5 border-b border-border bg-secondary/40 text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+            <div className="grid grid-cols-[1.6fr_1fr_0.7fr_1fr_1fr_1fr_0.6fr] gap-2 px-4 py-2.5 border-b border-border bg-secondary/40 text-xs font-semibold text-muted-foreground">
               <div>Supplier</div>
               <div>Terms</div>
               <div className="text-right">Bills #</div>
@@ -288,7 +288,7 @@ export default function ContactsReportPage() {
               >
                 <div className="min-w-0">
                   <div className="font-medium truncate">{s.name}</div>
-                  <div className="text-[11px] text-muted-foreground truncate">
+                  <div className="text-xs text-muted-foreground truncate">
                     {s.company ?? s.phone}
                   </div>
                 </div>
@@ -334,7 +334,7 @@ function Kpi({
 }) {
   return (
     <Card className="p-4">
-      <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+      <div className="text-xs font-semibold text-muted-foreground">
         {label}
       </div>
       <div

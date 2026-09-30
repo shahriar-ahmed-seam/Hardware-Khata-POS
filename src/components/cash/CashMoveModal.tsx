@@ -10,7 +10,8 @@ import { cn } from '@/lib/utils';
 interface Props {
   open: boolean;
   onClose: () => void;
-  shiftId: string;
+  /** The open drawer, if any. With none, the backend opens one. */
+  shiftId?: string;
   cashier?: string;
   defaultDirection?: 'in' | 'out';
 }
@@ -19,7 +20,7 @@ export function CashMoveModal({
   open,
   onClose,
   shiftId,
-  cashier = 'Seam',
+  cashier = '',
   defaultDirection = 'in',
 }: Props) {
   const recordMovement = useCashRegister((s) => s.recordMovement);
@@ -37,9 +38,15 @@ export function CashMoveModal({
     }
   }, [open, defaultDirection]);
 
-  const submit = () => {
-    if (amount <= 0) return;
-    recordMovement({
+  const [saving, setSaving] = useState(false);
+
+  // Stays open (with what was typed) when the backend refuses, instead of
+  // closing as if the movement had been recorded. The reason now travels with
+  // the note; it used to be dropped before it reached the database.
+  const submit = async () => {
+    if (amount <= 0 || saving) return;
+    setSaving(true);
+    const ok = await recordMovement({
       shiftId,
       type: direction === 'in' ? 'manual_in' : 'manual_out',
       amount,
@@ -47,7 +54,8 @@ export function CashMoveModal({
       note: note || undefined,
       cashier,
     });
-    onClose();
+    setSaving(false);
+    if (ok) onClose();
   };
 
   return (
@@ -62,7 +70,7 @@ export function CashMoveModal({
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={amount <= 0}>
+          <Button onClick={() => void submit()} disabled={amount <= 0 || saving}>
             <Save className="size-4" /> Save
           </Button>
         </div>
@@ -96,7 +104,7 @@ export function CashMoveModal({
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
-            <label className="text-[10px] uppercase font-semibold text-muted-foreground">Amount *</label>
+            <label className="text-xs font-semibold text-muted-foreground">Amount *</label>
             <NumberField
               autoFocus
               value={amount}
@@ -105,11 +113,11 @@ export function CashMoveModal({
             />
           </div>
           <div>
-            <label className="text-[10px] uppercase font-semibold text-muted-foreground">Reason</label>
+            <label className="text-xs font-semibold text-muted-foreground">Reason</label>
             <select
               value={reason}
               onChange={(e) => setReason(e.target.value as ManualReason)}
-              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+              className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
             >
               {MANUAL_REASONS.map((r) => (
                 <option key={r} value={r}>
@@ -121,7 +129,7 @@ export function CashMoveModal({
         </div>
 
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">Note</label>
+          <label className="text-xs font-semibold text-muted-foreground">Note</label>
           <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional context" />
         </div>
       </div>

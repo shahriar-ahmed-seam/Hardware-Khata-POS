@@ -41,7 +41,7 @@ export default function SalesAgentsPage() {
             </div>
             <div className="flex-1 text-sm">
               <div className="font-semibold">When to use this</div>
-              <p className="text-muted-foreground text-[12px] mt-0.5">
+              <p className="text-muted-foreground text-sm mt-0.5">
                 Skip this section unless you pay commissions on sales. When agents exist, the Add
                 Sale form gets an optional "Sales agent" field; reports include a Sales Rep
                 breakdown and commission totals. You can come back to this any time.
@@ -141,19 +141,19 @@ function AgentForm({
       className="flex flex-col gap-3 p-4"
     >
       <div>
-        <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+        <label className="text-xs font-semibold text-muted-foreground">
           Name <span className="text-destructive">*</span>
         </label>
         <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} />
       </div>
       <div>
-        <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+        <label className="text-xs font-semibold text-muted-foreground">
           Phone
         </label>
         <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
       </div>
       <div>
-        <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+        <label className="text-xs font-semibold text-muted-foreground">
           Commission %
         </label>
         <NumberField value={pct} onChangeNumber={setPct} />

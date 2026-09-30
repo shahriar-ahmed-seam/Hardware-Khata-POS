@@ -198,7 +198,7 @@ export default function SellPaymentPage() {
                   <span className="text-sm font-medium">{m}</span>
                 </div>
                 <div className="tabular font-bold text-base">{formatBDT(data.amount)}</div>
-                <div className="flex items-center gap-2 mt-1.5 text-[10px] text-muted-foreground">
+                <div className="flex items-center gap-2 mt-1.5 text-xs text-muted-foreground">
                   <span>{formatNumber(data.count)} pmts</span>
                   <span className="ml-auto">{pct.toFixed(1)}%</span>
                 </div>
@@ -226,7 +226,7 @@ export default function SellPaymentPage() {
         </Card>
 
         <Card className="overflow-hidden">
-          <div className="grid grid-cols-[1fr_1.2fr_1.5fr_0.9fr_1fr_1fr_0.8fr] gap-2 px-4 py-2.5 border-b border-border bg-secondary/40 text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+          <div className="grid grid-cols-[1fr_1.2fr_1.5fr_0.9fr_1fr_1fr_0.8fr] gap-2 px-4 py-2.5 border-b border-border bg-secondary/40 text-xs font-semibold text-muted-foreground">
             <div>Date</div>
             <div>Invoice</div>
             <div>Customer</div>
@@ -266,7 +266,7 @@ export default function SellPaymentPage() {
                     day: '2-digit',
                     month: 'short',
                   })}
-                  <span className="ml-1 text-[11px]">
+                  <span className="ml-1 text-xs">
                     {new Date(r.date).toLocaleTimeString('en-GB', {
                       hour: '2-digit',
                       minute: '2-digit',

@@ -15,6 +15,7 @@ import {
 import { confirm } from '@/stores/confirm';
 import { toast } from '@/stores/toast';
 import { NumberField } from '@/components/ui/NumberField';
+import { labelFor } from '@/lib/labels';
 
 const TYPES: UnitType[] = ['count', 'weight', 'length', 'volume', 'pack'];
 
@@ -117,8 +118,8 @@ export default function Units() {
             if (arr.length === 0) return null;
             return (
               <Card key={type} className="overflow-hidden">
-                <div className="px-4 py-2 border-b border-border bg-secondary/40 text-[11px] uppercase font-semibold text-muted-foreground tracking-wider">
-                  {type}
+                <div className="px-4 py-2 border-b border-border bg-secondary/40 text-xs font-semibold text-muted-foreground">
+                  {labelFor('unitType', type)}
                 </div>
                 {arr.map((u) => (
                   <div
@@ -131,9 +132,9 @@ export default function Units() {
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium">
                         {u.name}{' '}
-                        <span className="text-[11px] text-muted-foreground font-mono">({u.short})</span>
+                        <span className="text-xs text-muted-foreground font-mono">({u.short})</span>
                       </div>
-                      <div className="text-[11px] text-muted-foreground tabular">
+                      <div className="text-xs text-muted-foreground tabular">
                         1 {u.short} = {u.toBaseFactor} base unit
                       </div>
                     </div>
@@ -212,30 +213,30 @@ function UnitForm({
       <div className="flex-1 overflow-auto p-4 space-y-3">
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-[10px] uppercase font-semibold text-muted-foreground">Name *</label>
+            <label className="text-xs font-semibold text-muted-foreground">Name *</label>
             <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Pieces" />
           </div>
           <div>
-            <label className="text-[10px] uppercase font-semibold text-muted-foreground">Short *</label>
+            <label className="text-xs font-semibold text-muted-foreground">Short *</label>
             <Input value={short} onChange={(e) => setShort(e.target.value)} placeholder="pc" />
           </div>
         </div>
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">Type</label>
+          <label className="text-xs font-semibold text-muted-foreground">Type</label>
           <select
             value={type}
             onChange={(e) => setType(e.target.value as UnitType)}
-            className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+            className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
           >
             {TYPES.map((t) => (
               <option key={t} value={t}>
-                {t}
+                {labelFor('unitType', t)}
               </option>
             ))}
           </select>
         </div>
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+          <label className="text-xs font-semibold text-muted-foreground">
             Conversion to base
           </label>
           <NumberField
@@ -243,7 +244,7 @@ function UnitForm({
             onChangeNumber={setToBase}
             placeholder="1"
           />
-          <div className="text-[10px] text-muted-foreground mt-1">
+          <div className="text-xs text-muted-foreground mt-1">
             For BD: 1 dozen = 12, 1 hali = 4, 1 ft = 0.3048 m. Set 1 if this is the base.
           </div>
         </div>

@@ -141,8 +141,8 @@ export function toSaleRecord(b: BackendSale): SaleRecord {
   };
 }
 
-// ---- Sell return (list rows only) ----
-interface BackendSellReturn {
+// ---- Sell return (list rows, and `sellReturns.get` with lines) ----
+export interface BackendSellReturn {
   id: string;
   ref_no: string;
   sale_id: string | null;
@@ -156,13 +156,30 @@ interface BackendSellReturn {
   total: number;
   notes: string | null;
   manual: number;
+  /** Joined in by listSellReturns / getSellReturn. */
+  customer_name?: string | null;
+  user_name?: string | null;
+  /** Only on `sellReturns.get`. */
+  lines?: BackendSellReturnLine[];
+}
+
+export interface BackendSellReturnLine {
+  id: string;
+  product_id: string;
+  name_at_return: string | null;
+  sku_at_return: string | null;
+  qty: number;
+  unit: string;
+  unit_price: number;
+  refund_amount: number;
 }
 
 /**
- * Maps a `sellReturns.list` row (header only) into the SellReturn shape.
- * NOTE (deferred): the list query returns no nested return lines, so `lines`
- * is left empty. The Sell Returns list page only renders header fields, so this
- * is fine — full detail-line wiring is deferred (mirrors PurchaseReturns).
+ * Maps a sell-return row into the SellReturn shape. `sellReturns.list` rows are
+ * header-only (lines []); `sellReturns.get` carries the lines too.
+ *
+ * The customer name used to be hard-coded 'Walk-in Customer' for EVERY return;
+ * it is joined in by the query now.
  */
 export function toSellReturnRecord(b: BackendSellReturn): SellReturn {
   return {
@@ -172,11 +189,19 @@ export function toSellReturnRecord(b: BackendSellReturn): SellReturn {
     saleInvoiceNo: b.sale_invoice_no ?? '',
     date: b.date,
     customerId: b.customer_id ?? '',
-    customerName: 'Walk-in Customer',
-    user: b.user_id ?? '',
+    customerName: b.customer_name ?? 'Walk-in Customer',
+    user: b.user_name ?? b.user_id ?? '',
     reason: (b.reason ?? undefined) as SellReturn['reason'],
     refundMethod: b.refund_method as SellReturn['refundMethod'],
-    lines: [],
+    lines: (b.lines ?? []).map((l) => ({
+      productId: l.product_id,
+      name: l.name_at_return ?? '—',
+      sku: l.sku_at_return ?? '',
+      qty: l.qty,
+      unit: l.unit,
+      unitPrice: l.unit_price,
+      refundAmount: l.refund_amount,
+    })),
     total: b.total,
     notes: b.notes ?? undefined,
     manual: !!b.manual,

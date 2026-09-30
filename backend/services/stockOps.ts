@@ -4,6 +4,7 @@ import { newId } from '../core/ids.ts';
 import { recordMovement, weightedAvgCost } from './stock.ts';
 import { logActivity } from './activity.ts';
 import { nextRef } from './sequences.ts';
+import { shopBranchId } from './branch.ts';
 
 // ---------- Stock transfer ----------
 export interface TransferLineInput {
@@ -25,6 +26,19 @@ export interface CreateTransferInput {
 
 export function createTransfer(db: DB, input: CreateTransferInput) {
   return tx(db, () => {
+    // A transfer to the SAME branch took the goods out and put them back with a
+    // document claiming they had moved.
+    if (!input.fromBranch || !input.toBranch || input.fromBranch === input.toBranch) {
+      throw new Error('A transfer needs two different branches.');
+    }
+    if (!input.lines || input.lines.length === 0) {
+      throw new Error('A transfer needs at least one item.');
+    }
+    for (const l of input.lines) {
+      if (!Number.isFinite(l.qty) || l.qty <= 0) {
+        throw new Error('Each transferred item needs a quantity above zero.');
+      }
+    }
     const id = newId('trf');
     const date = input.date ?? new Date().toISOString();
     const refNo = nextRef(db, 'transfer');
@@ -119,15 +133,117 @@ export function receiveTransfer(
   note?: string,
 ) {
   return tx(db, () => {
-    // set received quantities first
-    for (const r of received) {
-      db.prepare(
-        'UPDATE stock_transfer_lines SET received_qty = ? WHERE transfer_id = ? AND product_id = ?',
-      ).run(r.receivedQty, transferId, r.productId);
+    const t = db.prepare('SELECT ref_no, status FROM stock_transfers WHERE id = ?').get(transferId) as
+      | { ref_no: string; status: string }
+      | undefined;
+    if (!t) throw new Error('Transfer not found');
+    /**
+     * A transfer is received ONCE. Receiving it again posted every line into the
+     * destination a second time — stock out of nowhere — and a cancelled
+     * transfer's goods are already back at the source.
+     */
+    if (t.status === 'received') throw new Error(`${t.ref_no} has already been received.`);
+    if (t.status === 'cancelled') throw new Error(`${t.ref_no} was cancelled and cannot be received.`);
+
+    /**
+     * What arrived is between nothing and what was sent, per product. More than
+     * was sent created stock from nothing; a negative figure removed it. When the
+     * same product is on two lines the received figure is filled line by line in
+     * order — the update used to key on product and write the WHOLE figure onto
+     * every line with that product.
+     */
+    const lines = db
+      .prepare('SELECT id, product_id, name, qty FROM stock_transfer_lines WHERE transfer_id = ? ORDER BY rowid')
+      .all(transferId) as { id: string; product_id: string; name: string | null; qty: number }[];
+    const sent = new Map<string, number>();
+    for (const l of lines) sent.set(l.product_id, (sent.get(l.product_id) ?? 0) + l.qty);
+    const got = new Map<string, number>();
+    for (const r of received) got.set(r.productId, (got.get(r.productId) ?? 0) + r.receivedQty);
+    for (const [productId, qty] of got) {
+      const max = sent.get(productId);
+      if (max === undefined) throw new Error(`That item is not on ${t.ref_no}.`);
+      if (!Number.isFinite(qty) || qty < 0) throw new Error('A received quantity cannot be negative.');
+      if (qty > max + 1e-9) {
+        const name = lines.find((l) => l.product_id === productId)?.name ?? 'that item';
+        throw new Error(`Only ${max} of ${name} were sent on ${t.ref_no}; ${qty} cannot arrive.`);
+      }
     }
+    const setReceived = db.prepare('UPDATE stock_transfer_lines SET received_qty = ? WHERE id = ?');
+    const left = new Map(got);
+    for (const l of lines) {
+      if (!left.has(l.product_id)) continue; // not reported → the full line arrived
+      const take = Math.min(l.qty, left.get(l.product_id) ?? 0);
+      setReceived.run(take, l.id);
+      left.set(l.product_id, (left.get(l.product_id) ?? 0) - take);
+    }
+
     const at = new Date().toISOString();
     receiveTransferInternal(db, transferId, userId, at);
     if (note) db.prepare('UPDATE stock_transfers SET receive_note = ? WHERE id = ?').run(note, transferId);
+  });
+}
+
+/**
+ * Cancel a transfer that has not arrived — the goods go back to where they left.
+ *
+ * There was no way to do this, and the screen could only say so: a transfer
+ * dispatched by mistake left its stock "in transit" for ever. Dispatch took the
+ * stock out of the source with a `transfer_out` movement; cancelling puts
+ * exactly that back with an appended `transfer_cancel` movement — nothing is
+ * deleted, so `stock = SUM(movements)` still holds and the history shows both.
+ * A RECEIVED transfer cannot be cancelled: its goods are at the destination, and
+ * moving them back is a new transfer.
+ */
+export function cancelTransfer(db: DB, transferId: string, userId: string, reason?: string) {
+  return tx(db, () => {
+    const t = db.prepare('SELECT * FROM stock_transfers WHERE id = ?').get(transferId) as
+      | Record<string, unknown>
+      | undefined;
+    if (!t) throw new Error('Transfer not found');
+    if (t.status === 'cancelled') return { id: transferId };
+    if (t.status === 'received') {
+      throw new Error(
+        `${t.ref_no as string} has already been received. To move the goods back, make a transfer the other way.`,
+      );
+    }
+    const at = new Date().toISOString();
+    const out = db
+      .prepare(
+        `SELECT product_id, qty, unit, unit_cost FROM stock_movements
+          WHERE ref_type = 'transfer' AND ref_id = ? AND reason = 'transfer_out'`,
+      )
+      .all(transferId) as { product_id: string; qty: number; unit: string; unit_cost: number }[];
+    for (const m of out) {
+      recordMovement(db, {
+        productId: m.product_id,
+        branchId: t.from_branch as string,
+        reason: 'transfer_cancel',
+        qty: -m.qty, // the dispatch was negative; this puts it back
+        unit: m.unit,
+        unitCost: m.unit_cost,
+        refType: 'transfer',
+        refId: transferId,
+        refNo: t.ref_no as string,
+        note: reason ? `cancelled: ${reason}` : 'cancelled',
+        userId,
+        at,
+      });
+    }
+    db.prepare(`UPDATE stock_transfers SET status = 'cancelled', receive_note = ? WHERE id = ?`).run(
+      reason ?? null,
+      transferId,
+    );
+    logActivity(db, {
+      by: userId,
+      branchId: t.from_branch as string,
+      action: 'voided',
+      entity: 'transfer',
+      entityId: transferId,
+      entityRef: t.ref_no as string,
+      message: `Transfer cancelled — ${reason ?? 'no reason'}`,
+      at,
+    });
+    return { id: transferId };
   });
 }
 
@@ -143,15 +259,17 @@ export interface AdjustmentLineInput {
 
 export interface CreateAdjustmentInput {
   date?: string;
-  branchId: string;
+  /** Omitted → the shop's default branch (services/branch.ts). */
+  branchId?: string;
   type: AdjustmentType;
   reason?: string;
   lines: AdjustmentLineInput[];
   createdBy: string;
 }
 
-export function createAdjustment(db: DB, input: CreateAdjustmentInput) {
+export function createAdjustment(db: DB, rawInput: CreateAdjustmentInput) {
   return tx(db, () => {
+    const input = { ...rawInput, branchId: shopBranchId(db, rawInput.branchId) };
     const id = newId('adj');
     const date = input.date ?? new Date().toISOString();
     const refNo = nextRef(db, 'adjustment');

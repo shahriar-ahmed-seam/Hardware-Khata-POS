@@ -116,7 +116,7 @@ export function CustomerPicker({ open, onClose, selectedId, onSelect, startInAdd
                       selectedId === c.id && 'bg-primary/5',
                     )}
                   >
-                    <div className="size-9 rounded-full bg-gradient-to-br from-primary to-accent grid place-items-center text-white text-[11px] font-bold">
+                    <div className="size-9 rounded-full bg-gradient-to-br from-primary to-accent grid place-items-center text-white text-xs font-bold">
                       {c.name
                         .split(' ')
                         .map((n) => n[0])
@@ -137,18 +137,18 @@ export function CustomerPicker({ open, onClose, selectedId, onSelect, startInAdd
                           </Badge>
                         )}
                       </div>
-                      <div className="text-[11px] text-muted-foreground font-mono">{c.phone}</div>
+                      <div className="text-xs text-muted-foreground font-mono">{c.phone}</div>
                     </div>
                     <div className="text-right">
                       {c.due > 0 ? (
-                        <div className="text-xs font-mono tabular text-destructive">
+                        <div className="text-xs tabular text-destructive">
                           Due {formatBDT(c.due, { withSymbol: false })}
                         </div>
                       ) : (
                         <div className="text-xs text-muted-foreground">No dues</div>
                       )}
                       {c.creditLimit ? (
-                        <div className="text-[10px] text-muted-foreground">
+                        <div className="text-xs text-muted-foreground">
                           Limit ৳{c.creditLimit.toLocaleString()}
                         </div>
                       ) : null}
@@ -191,15 +191,15 @@ function NewCustomerForm({
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">Name *</label>
+          <label className="text-xs font-semibold text-muted-foreground">Name *</label>
           <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">Phone</label>
+          <label className="text-xs font-semibold text-muted-foreground">Phone</label>
           <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="01XXX-XXXXXX" />
         </div>
         <div className="md:col-span-2">
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">Group</label>
+          <label className="text-xs font-semibold text-muted-foreground">Group</label>
           <div className="flex items-center gap-1 p-0.5 bg-secondary rounded-md text-xs mt-1">
             {(['Retail', 'Wholesale', 'Contractor'] as Customer['group'][]).map((g) => (
               <button

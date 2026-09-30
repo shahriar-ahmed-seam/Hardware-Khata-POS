@@ -111,7 +111,7 @@ function Header({
       </div>
       <Link
         to={to}
-        className="text-[11px] inline-flex items-center gap-1 text-primary hover:underline shrink-0 mt-1"
+        className="text-xs inline-flex items-center gap-1 text-primary hover:underline shrink-0 mt-1"
       >
         {actionLabel} <ArrowRight className="size-3" />
       </Link>
@@ -146,11 +146,11 @@ function List({
           <div key={r.id} className="flex items-center gap-2 px-3 py-2">
             <Link to={hrefFor(r.id)} className="min-w-0 flex-1 group">
               <div className="text-sm font-medium truncate group-hover:text-primary">{r.name}</div>
-              <div className="text-[11px] text-muted-foreground font-mono truncate">
+              <div className="text-xs text-muted-foreground font-mono truncate">
                 {callable ?? 'No phone on file'}
               </div>
             </Link>
-            <div className="text-sm font-mono tabular font-semibold shrink-0">
+            <div className="text-sm tabular font-semibold shrink-0">
               {formatBDT(r.due, { withSymbol: false })}
             </div>
             {callable && <PhoneAction phone={callable} label={r.name} className="h-8 px-2" />}
@@ -158,7 +158,7 @@ function List({
         );
       })}
       {rows.length > 8 && (
-        <div className="px-3 py-2 text-[11px] text-muted-foreground">
+        <div className="px-3 py-2 text-xs text-muted-foreground">
           and {rows.length - 8} more
         </div>
       )}

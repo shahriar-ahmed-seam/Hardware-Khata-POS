@@ -12,7 +12,10 @@ import {
   isDailyBackupDue,
   isSnapshotName,
 } from '../backend/services/backup.ts';
-import { getDb, closeDb, dbFilePath } from './db.ts';
+import { getDb, closeDb, dbFilePath, initDb } from './db.ts';
+import { LSBLK_COLUMNS, LSBLK_COLUMNS_BASIC, parseLsblk, type UsbDrive } from './drives.ts';
+
+export type { UsbDrive };
 
 /**
  * ELECTRON SIDE OF BACKUP / CLOUD SAVING
@@ -124,20 +127,6 @@ export function classifyFolder(folder: string): { cloud: boolean; label?: string
 
 // -------------------------------------------------------- removable media (USB)
 
-export interface UsbDrive {
-  /** Root path, e.g. 'E:\\'. */
-  root: string;
-  /** Drive letter without the colon, e.g. 'E'. */
-  letter: string;
-  /** Volume label if the drive has one, e.g. 'SANDISK'. */
-  label: string;
-  /** Free bytes, or null when Windows would not report it. */
-  freeBytes: number | null;
-  totalBytes: number | null;
-  /** What the UI shows, e.g. 'E: (SANDISK)'. */
-  display: string;
-}
-
 /**
  * The result of looking for removable drives.
  *
@@ -150,14 +139,95 @@ export interface UsbDrive {
  */
 export interface UsbProbe {
   drives: UsbDrive[];
-  /** 'ok' = the query ran. 'unavailable' = we could not ask Windows at all. */
+  /** 'ok' = the query ran. 'unavailable' = we could not ask the system at all. */
   detection: 'ok' | 'unavailable';
   /** Why detection was unavailable, in words the owner can act on. */
   detail?: string;
+  /** Linux: removable filesystems plugged in but not mounted (no folder to write into yet). */
+  unmounted?: number;
+  /** Linux: removable drives that are mounted but cannot be written to. */
+  readOnly?: number;
+}
+
+/** Run a command and report "it did not run" separately from its output. */
+function runQuiet(
+  file: string,
+  args: string[],
+): Promise<{ stdout: string; failed: string | null }> {
+  return new Promise((resolve) => {
+    execFile(file, args, { timeout: 8000, windowsHide: true }, (err, out) =>
+      resolve({
+        stdout: out ?? '',
+        failed: err ? (err instanceof Error ? err.message : String(err)) : null,
+      }),
+    );
+  });
+}
+
+/**
+ * LINUX: ask `lsblk` (util-linux, on every desktop distribution) which block
+ * devices are removable and where they are mounted. The parsing is pure and
+ * verified (electron/drives.ts); this only runs the command and keeps the
+ * drives the app can actually write to.
+ */
+async function probeLinuxDrives(): Promise<UsbProbe> {
+  let res = await runQuiet('lsblk', ['-J', '-b', '-o', LSBLK_COLUMNS]);
+  // util-linux older than 2.33 rejects the free-space columns outright.
+  if (res.failed) res = await runQuiet('lsblk', ['-J', '-b', '-o', LSBLK_COLUMNS_BASIC]);
+  if (res.failed) {
+    return {
+      drives: [],
+      detection: 'unavailable',
+      detail:
+        'The app could not list the drives on this computer (the lsblk command did not run). Choose the drive folder yourself instead.',
+    };
+  }
+  const parsed = parseLsblk(res.stdout);
+  if (!parsed) {
+    return {
+      drives: [],
+      detection: 'unavailable',
+      detail:
+        'The drive list came back in a form the app could not read. Choose the drive folder yourself instead.',
+    };
+  }
+  // A stick formatted for another system, or with its lock switch on, is
+  // mounted read-only. Offering it would end in a write error half-way.
+  const drives = parsed.drives.filter((d) => {
+    try {
+      fs.accessSync(d.root, fs.constants.W_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  return {
+    drives,
+    detection: 'ok',
+    unmounted: parsed.unmounted,
+    readOnly: parsed.drives.length - drives.length,
+  };
+}
+
+/** The "looked, found nothing" message, in terms of what this system does. */
+function noDriveMessage(probe: UsbProbe): string {
+  if (process.platform === 'win32') {
+    return 'No pendrive found. Plug one into a USB port, wait for Windows to recognise it, then try again.';
+  }
+  if ((probe.readOnly ?? 0) > 0) {
+    return 'The pendrive is plugged in but cannot be written to. It may be write-protected, or formatted in a way this computer can only read.';
+  }
+  if ((probe.unmounted ?? 0) > 0) {
+    return 'A pendrive is plugged in but not opened yet. Open it once in the file manager, then try again.';
+  }
+  return 'No pendrive found. Plug one into a USB port, wait for it to appear in the file manager, then try again.';
 }
 
 /**
  * List plugged-in removable drives (pendrives, SD cards, portable HDDs).
+ *
+ * On Linux the answer comes from `lsblk` (see probeLinuxDrives); the rest of
+ * this comment is about Windows.
  *
  * WHY POWERSHELL
  * Node has no API for "is this drive removable". Windows knows: WMI's
@@ -172,12 +242,13 @@ export interface UsbProbe {
  * themselves instead (see `backupToChosenFolder`).
  */
 export async function probeUsbDrives(): Promise<UsbProbe> {
+  if (process.platform === 'linux') return probeLinuxDrives();
   if (process.platform !== 'win32') {
     return {
       drives: [],
       detection: 'unavailable',
       detail:
-        'Detecting removable drives is only supported on Windows. Choose the drive folder yourself instead.',
+        'Detecting removable drives is not supported on this system. Choose the drive folder yourself instead.',
     };
   }
 
@@ -185,22 +256,16 @@ export async function probeUsbDrives(): Promise<UsbProbe> {
     'Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DriveType=2" | ' +
     'Select-Object DeviceID,VolumeName,FreeSpace,Size | ConvertTo-Json -Compress';
 
-  const { stdout, failed } = await new Promise<{ stdout: string; failed: string | null }>(
-    (resolve) => {
-      execFile(
-        'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
-        { timeout: 8000, windowsHide: true },
-        (err, out) =>
-          resolve({
-            stdout: out ?? '',
-            // An exec error means PowerShell did not run (missing, blocked by
-            // policy, timed out). That is NOT "no drives".
-            failed: err ? (err instanceof Error ? err.message : String(err)) : null,
-          }),
-      );
-    },
-  );
+  // An exec error means PowerShell did not run (missing, blocked by policy,
+  // timed out). That is NOT "no drives".
+  const { stdout, failed } = await runQuiet('powershell.exe', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-Command',
+    script,
+  ]);
 
   if (failed) {
     return {
@@ -311,13 +376,16 @@ export async function backupToUsb(drive?: string): Promise<{
         probe.detection === 'unavailable'
           ? (probe.detail ??
             'The app could not check which drives are removable on this computer.')
-          : 'No pendrive found. Plug one into a USB port, wait for Windows to recognise it, then try again.',
+          : noDriveMessage(probe),
     };
   }
 
   let target = drives[0];
   if (drive) {
-    const wanted = drives.find((d) => d.root.toLowerCase() === drive.toLowerCase());
+    // Drive letters are case-insensitive; Linux mount points are not.
+    const same = (a: string) =>
+      process.platform === 'win32' ? a.toLowerCase() === drive.toLowerCase() : a === drive;
+    const wanted = drives.find((d) => same(d.root));
     if (!wanted) {
       return { ok: false, error: 'That drive is no longer connected.', drives };
     }
@@ -504,14 +572,18 @@ export function applyFolder(folder: string) {
   });
 }
 
-/** Open the backup folder in Explorer so the owner can see the files exist. */
-export function revealBackupFolder(): { ok: boolean; error?: string } {
+/**
+ * Open the backup folder in the file manager so the owner can see the files exist.
+ * `shell.openPath` resolves with an error string rather than throwing, so it is
+ * awaited — a folder the system could not open used to report success.
+ */
+export async function revealBackupFolder(): Promise<{ ok: boolean; error?: string }> {
   const folder = getBackupConfig(getDb()).folder;
   if (!folder) return { ok: false, error: 'No backup folder is set.' };
   try {
     fs.mkdirSync(folder, { recursive: true });
-    void shell.openPath(folder);
-    return { ok: true };
+    const failure = await shell.openPath(folder);
+    return failure ? { ok: false, error: failure } : { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
@@ -608,27 +680,70 @@ export async function restoreFromSnapshot(payload: { file?: string } = {}) {
   const safetyDir = cfg.folder || defaultBackupFolder();
   const safetyCopy = path.join(safetyDir, `pre-restore-${stamp}.sqlite3`);
 
+  // ---- 3. safety copy of the CURRENT data, taken while the DB is still open
+  // so it is a consistent VACUUM INTO image rather than a raw file copy.
   try {
-    // ---- 3. safety copy of the CURRENT data, taken while the DB is still open
-    // so it is a consistent VACUUM INTO image rather than a raw file copy.
     fs.mkdirSync(safetyDir, { recursive: true });
     getDb().prepare('VACUUM INTO ?').run(safetyCopy);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return { ok: false as const, error: `Restore not started — the safety copy failed: ${message}` };
+  }
 
-    // ---- 4. swap ----
-    closeDb();
-    fs.copyFileSync(file, live);
+  /**
+   * ---- 4. swap, atomically.
+   *
+   * It used to close the database and copy the snapshot straight over pos.db.
+   * A copy that failed half-way (disk full, file locked) left a half-written
+   * live database AND the app running with its database closed, so every screen
+   * failed until a restart. Now the snapshot is copied NEXT TO the live file
+   * first; only a complete copy is renamed over it (a rename on the same disk is
+   * all-or-nothing); and on any failure the database is opened again, as it was.
+   */
+  const staged = live + '.restoring';
+  closeDb();
+  try {
+    fs.copyFileSync(file, staged);
     for (const sidecar of [live + '-wal', live + '-shm']) {
       if (fs.existsSync(sidecar)) fs.rmSync(sidecar, { force: true });
     }
+    fs.renameSync(staged, live);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     // eslint-disable-next-line no-console
     console.error('[backup] restore failed:', message);
-    return { ok: false as const, error: `Restore failed: ${message}` };
+    try {
+      if (fs.existsSync(staged)) fs.rmSync(staged, { force: true });
+    } catch {
+      /* the next attempt overwrites it */
+    }
+    try {
+      initDb();
+    } catch (reopen) {
+      // eslint-disable-next-line no-console
+      console.error('[backup] could not reopen the database after a failed restore:', reopen);
+    }
+    return {
+      ok: false as const,
+      error: `Restore failed and nothing was replaced: ${message}. The safety copy is ${safetyCopy}.`,
+    };
   }
 
   // ---- 5. relaunch ----
-  app.relaunch();
+  if (!app.isPackaged) {
+    // In development the Electron process is owned by the Vite dev server: a
+    // relaunched Electron comes up after Vite has exited and loads a dead URL.
+    await dialog.showMessageBox({
+      type: 'info',
+      message: 'Backup restored',
+      detail: 'Start the app again with `npm run dev` to open the restored data.',
+    });
+    app.exit(0);
+    return { ok: true as const, restoredFrom: file, safetyCopy };
+  }
+  // An AppImage runs from a temporary mount that is gone once this process
+  // exits; relaunch the AppImage file itself.
+  app.relaunch(process.env.APPIMAGE ? { execPath: process.env.APPIMAGE } : undefined);
   app.exit(0);
   return { ok: true as const, restoredFrom: file, safetyCopy };
 }
@@ -647,28 +762,43 @@ const TICK_MS = 10 * 60 * 1000;
  * shop PC is usually switched off overnight — an alarm would silently never
  * fire. `isDailyBackupDue` (pure, verified) decides; this just asks it.
  */
+/** The first check, soon after launch (see startAutoBackup). */
+const FIRST_TICK_MS = 60 * 1000;
+let firstTick: NodeJS.Timeout | null = null;
+
+function dailyTick(): void {
+  try {
+    const db = getDb();
+    const cfg = getBackupConfig(db);
+    if (!isDailyBackupDue(cfg, new Date())) return;
+    const res = runBackup(db);
+    // eslint-disable-next-line no-console
+    console.log(`[backup] daily snapshot written: ${res.name} (${res.bytes} bytes)`);
+  } catch (e) {
+    // Never let a failed backup take the app down; the error is recorded in
+    // the config and surfaced on the Backup screen.
+    // eslint-disable-next-line no-console
+    console.error('[backup] daily snapshot failed:', e);
+  }
+}
+
 export function startAutoBackup(): void {
   stopAutoBackup();
-  timer = setInterval(() => {
-    try {
-      const db = getDb();
-      const cfg = getBackupConfig(db);
-      if (!isDailyBackupDue(cfg, new Date())) return;
-      const res = runBackup(db);
-      // eslint-disable-next-line no-console
-      console.log(`[backup] daily snapshot written: ${res.name} (${res.bytes} bytes)`);
-    } catch (e) {
-      // Never let a failed backup take the app down; the error is recorded in
-      // the config and surfaced on the Backup screen.
-      // eslint-disable-next-line no-console
-      console.error('[backup] daily snapshot failed:', e);
-    }
-  }, TICK_MS);
+  // The interval's first run is TEN MINUTES after launch, so a PC switched on
+  // for a quick sale and off again never got its daily snapshot. Check once a
+  // minute after start-up (not immediately: let the shop open first).
+  firstTick = setTimeout(dailyTick, FIRST_TICK_MS);
+  firstTick.unref?.();
+  timer = setInterval(dailyTick, TICK_MS);
   // Don't hold the process open just for the timer.
   timer.unref?.();
 }
 
 export function stopAutoBackup(): void {
+  if (firstTick) {
+    clearTimeout(firstTick);
+    firstTick = null;
+  }
   if (timer) {
     clearInterval(timer);
     timer = null;

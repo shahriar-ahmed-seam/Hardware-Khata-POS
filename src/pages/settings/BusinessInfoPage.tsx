@@ -153,7 +153,7 @@ export default function BusinessInfoPage() {
                 <select
                   value={draft.currencyPosition}
                   onChange={(e) => set('currencyPosition', e.target.value as 'before' | 'after')}
-                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                  className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
                 >
                   <option value="before">{draft.currencySymbol} 100.00</option>
                   <option value="after">100.00 {draft.currencySymbol}</option>
@@ -166,7 +166,7 @@ export default function BusinessInfoPage() {
                 <select
                   value={draft.thousandSeparator}
                   onChange={(e) => set('thousandSeparator', e.target.value as any)}
-                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                  className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
                 >
                   <option value=",">Comma · 1,000</option>
                   <option value=".">Dot · 1.000</option>
@@ -178,7 +178,7 @@ export default function BusinessInfoPage() {
                 <select
                   value={draft.timezone}
                   onChange={(e) => set('timezone', e.target.value)}
-                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                  className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
                 >
                   {TIMEZONES.map((t) => (
                     <option key={t} value={t}>
@@ -191,7 +191,7 @@ export default function BusinessInfoPage() {
                 <select
                   value={draft.dateFormat}
                   onChange={(e) => set('dateFormat', e.target.value)}
-                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                  className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
                 >
                   {DATE_FORMATS.map((f) => (
                     <option key={f} value={f}>
@@ -204,7 +204,7 @@ export default function BusinessInfoPage() {
                 <select
                   value={draft.defaultLanguage}
                   onChange={(e) => set('defaultLanguage', e.target.value as 'en' | 'bn')}
-                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                  className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
                 >
                   <option value="en">English</option>
                   <option value="bn">বাংলা (Bangla)</option>
@@ -214,7 +214,7 @@ export default function BusinessInfoPage() {
                 <select
                   value={draft.fiscalYearStart}
                   onChange={(e) => set('fiscalYearStart', Number(e.target.value))}
-                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                  className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
                 >
                   {FY_MONTHS.map((m, i) => (
                     <option key={i} value={i + 1}>
@@ -227,7 +227,7 @@ export default function BusinessInfoPage() {
                 <select
                   value={draft.defaultBranch ?? ''}
                   onChange={(e) => set('defaultBranch', e.target.value)}
-                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                  className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
                 >
                   {branches.map((b) => (
                     <option key={b.id} value={b.name}>
@@ -264,7 +264,7 @@ export default function BusinessInfoPage() {
                     <div className="text-sm">Click to upload</div>
                     {/* SVG is not offered: the logo is re-encoded to a bitmap so
                         it can be stored with the shop data and printed. */}
-                    <div className="text-[11px] mt-0.5">PNG or JPG · saved with your data</div>
+                    <div className="text-xs mt-0.5">PNG or JPG · saved with your data</div>
                   </div>
                 )}
                 {logoBusy && (
@@ -281,7 +281,7 @@ export default function BusinessInfoPage() {
                 </Button>
               </div>
             )}
-            <div className="text-[11px] text-muted-foreground mt-3">
+            <div className="text-xs text-muted-foreground mt-3">
               Used on receipts, invoice header, splash screen.
             </div>
           </Card>
@@ -289,7 +289,7 @@ export default function BusinessInfoPage() {
           <Card className="p-4 text-xs space-y-1.5 text-muted-foreground">
             <div className="text-sm font-semibold text-foreground">Preview</div>
             <div>
-              <span className="font-mono tabular text-foreground">
+              <span className="tabular text-foreground">
                 {draft.currencyPosition === 'before' ? draft.currencySymbol + ' ' : ''}
                 {(1234.5).toLocaleString('en-IN', {
                   minimumFractionDigits: draft.decimalPlaces,
@@ -329,7 +329,7 @@ function Field({
 }) {
   return (
     <div className={cn(className)}>
-      <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+      <label className="text-xs font-semibold text-muted-foreground">
         {label} {required && <span className="text-destructive">*</span>}
       </label>
       {children}

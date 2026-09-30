@@ -48,7 +48,7 @@ export default function POSPrefsPage() {
             <div className="text-sm font-semibold">Pricing defaults</div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+                <label className="text-xs font-semibold text-muted-foreground">
                   Default markup %
                 </label>
                 <NumberField
@@ -57,7 +57,7 @@ export default function POSPrefsPage() {
                 />
               </div>
               <div>
-                <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+                <label className="text-xs font-semibold text-muted-foreground">
                   Default order tax %
                 </label>
                 <NumberField
@@ -66,7 +66,7 @@ export default function POSPrefsPage() {
                 />
               </div>
             </div>
-            <div className="text-[11px] text-muted-foreground">
+            <div className="text-xs text-muted-foreground">
               These pre-fill new cart lines and the order tax dropdown.
             </div>
           </Card>
@@ -100,7 +100,7 @@ export default function POSPrefsPage() {
 
           <Card className="p-4 space-y-2">
             <div className="text-sm font-semibold">Visible payment methods</div>
-            <div className="text-[11px] text-muted-foreground -mt-1">
+            <div className="text-xs text-muted-foreground -mt-1">
               Only methods toggled on appear in the Payment modal. The default method is always
               shown.
             </div>
@@ -148,7 +148,7 @@ export default function POSPrefsPage() {
 
           <Card className="p-4 space-y-2 border-dashed">
             <div className="text-sm font-semibold">What this affects</div>
-            <ul className="text-[12px] text-muted-foreground list-disc pl-5 space-y-0.5">
+            <ul className="text-sm text-muted-foreground list-disc pl-5 space-y-0.5">
               <li>Markup / tax pre-fill on the POS hero screen</li>
               <li>Payment modal pre-selected method and shown buttons</li>
               <li>Negative stock guard at cart line level</li>

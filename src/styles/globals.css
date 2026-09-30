@@ -122,9 +122,11 @@ body,
   height: 100%;
   background: hsl(var(--background));
   color: hsl(var(--foreground));
-  /* Inter first if it happens to be installed locally, then the fonts every
-     Windows machine ships with. No webfont is downloaded — see index.html. */
-  font-family: 'Inter', system-ui, 'Segoe UI', sans-serif;
+  /* Latin: Inter if installed locally, else Segoe UI (every Windows).
+     Bangla: Noto Sans Bengali, bundled with the app (src/main.tsx) so it looks
+     the same on Windows 7, which has no Nirmala UI. Latin fonts come first so
+     English text never renders in the Bangla face. Nothing is downloaded. */
+  font-family: 'Inter', 'Segoe UI', 'Noto Sans Bengali', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11', 'ss01';
 }
@@ -203,6 +205,79 @@ html.reduce-motion *::after {
 .focus-ring:focus-visible {
   outline: 2px solid hsl(var(--ring));
   outline-offset: 2px;
+}
+
+/* ==========================================================================
+   POS CART LINE (src/components/pos/CartLineRow.tsx)
+   --------------------------------------------------------------------------
+   Narrow cart: a three-line card. Wide cart: ONE row, with the column labels
+   shown once above the list (.cart-line-head in CartPanel). The measuring box
+   is the cart list ([container-type:inline-size]); the break is in rem so it
+   moves with the A− / A+ text size.
+   ========================================================================== */
+.cart-line {
+  display: grid;
+  grid-template-columns: 1.5rem auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'num name  name  total'
+    'num meta  meta  meta'
+    'num qty   price act';
+  column-gap: 0.625rem;
+  row-gap: 0.25rem;
+  align-items: center;
+}
+.cart-line-head {
+  display: none;
+}
+.cl-num {
+  grid-area: num;
+  align-self: start;
+  padding-top: 0.125rem;
+}
+.cl-name {
+  grid-area: name;
+}
+.cl-meta {
+  grid-area: meta;
+}
+.cl-qty {
+  grid-area: qty;
+}
+.cl-price {
+  grid-area: price;
+  justify-self: stretch;
+  max-width: 7rem;
+}
+.cl-total {
+  grid-area: total;
+  text-align: right;
+}
+.cl-act {
+  grid-area: act;
+  justify-self: end;
+}
+@container (min-width: 44rem) {
+  /* Fixed widths (not `auto`) so the header row, a separate grid, lines up
+     with every line: qty = stepper + unit, act = two 2rem buttons. */
+  .cart-line,
+  .cart-line-head {
+    grid-template-columns: 1.5rem minmax(0, 1fr) 10rem 7rem 6.5rem 4.25rem;
+  }
+  .cart-line {
+    grid-template-areas:
+      'num name qty price total act'
+      'num meta qty price total act';
+    row-gap: 0.125rem;
+  }
+  .cart-line-head {
+    display: grid;
+    grid-template-areas: 'num name qty price total act';
+    column-gap: 0.625rem;
+    align-items: end;
+  }
+  .cl-price {
+    max-width: none;
+  }
 }
 
 /* Hide scrollbar but keep scroll */
@@ -399,41 +474,11 @@ input[type='time']::-webkit-calendar-picker-indicator:hover {
 /* ==========================================================================
    LEGIBILITY LAYER (elderly-friendly)
    --------------------------------------------------------------------------
-   The UI was written with ~600 hard-coded pixel font sizes (text-[10px],
-   text-[11px], …) which are far too small to read comfortably and which ignore
-   the Settings → Appearance font-scale slider because px does not inherit.
-
-   Rather than editing 600 call sites, the generated utility classes are
-   redefined here in `rem`. Two wins at once: every label gets bigger, and it
-   now scales with the appearance slider. Selectors are doubled so they always
-   beat Tailwind's own declaration regardless of layer ordering.
+   Text uses the rem scale in tailwind.config.js only (smallest used size is
+   `text-xs` = 14px), so everything follows the Appearance text-size setting.
+   Do not add pixel sizes like text-[10px]: px ignores that setting.
+   Print bodies (PrintSheet, receipts, labels) use pt/mm and are unaffected.
    ========================================================================== */
-
-.text-\[9px\].text-\[9px\] {
-  font-size: 0.75rem; /* 9  → 12 */
-}
-.text-\[10px\].text-\[10px\] {
-  font-size: 0.8125rem; /* 10 → 13 */
-}
-.text-\[11px\].text-\[11px\] {
-  font-size: 0.875rem; /* 11 → 14 */
-}
-.text-\[12px\].text-\[12px\],
-.text-\[12\.5px\].text-\[12\.5px\] {
-  font-size: 0.9375rem; /* 12 → 15 */
-}
-.text-\[13px\].text-\[13px\] {
-  font-size: 1rem; /* 13 → 16 */
-}
-.text-\[14px\].text-\[14px\] {
-  font-size: 1.0625rem; /* 14 → 17 */
-}
-.text-\[18px\].text-\[18px\] {
-  font-size: 1.25rem; /* 18 → 20 */
-}
-.text-\[26px\].text-\[26px\] {
-  font-size: 1.75rem; /* 26 → 28 */
-}
 
 /* Faded text is the other half of the readability problem. Lift the low
    opacity steps so dimmed labels stay legible without losing the hierarchy. */
@@ -453,22 +498,37 @@ input[type='time']::-webkit-calendar-picker-indicator:hover {
   opacity: 0.94;
 }
 
-/* Tiny mono badges (shortcut hints, codes) were the least readable text in the
-   app — give them a floor and a little breathing room. */
-.font-mono {
-  font-size: max(1em, 0.8125rem);
-  letter-spacing: 0.01em;
+/* Mono is for codes only (SKU, barcode, shortcut keys); money and quantities
+   use the normal face with `tabular` digits. The floor lives in the base layer
+   so an explicit size class (text-xs, text-2xl …) on mono text still wins —
+   unlayered, this rule used to override every size class on mono text. */
+@layer base {
+  .font-mono {
+    font-size: max(1em, 0.8125rem);
+    letter-spacing: 0.01em;
+  }
 }
 
-/* Bangla needs a font that actually ships the conjuncts. Nirmala UI is present
-   on every supported Windows build; the others are picked up if installed. */
+/* PRINTED DOCUMENTS (`.print-doc`: receipt, goods-received note, X/Z sheet,
+   barcode labels) keep exactly the mono size they have always printed at —
+   the old unlayered rule above, which beat their pt size classes — but in pt,
+   so paper output no longer changes with the on-screen A− / A+ text size.
+   (13px = 9.75pt at the default size.) Unlayered on purpose, to keep beating
+   the size classes the way the old rule did. */
+.print-doc .font-mono {
+  font-size: max(1em, 9.75pt);
+}
+
+/* Bangla needs a font that ships the conjuncts. Nirmala UI only arrived with
+   Windows 8, so the owner's Windows 7 would fall back to Vrinda; the bundled
+   Noto Sans Bengali (src/main.tsx) is used instead on every machine. Form
+   controls do not inherit the page font, hence the explicit list. */
 [lang='bn'],
 [lang='bn'] input,
 [lang='bn'] textarea,
 [lang='bn'] select,
 [lang='bn'] button {
-  font-family: 'Hind Siliguri', 'Noto Sans Bengali', 'Nirmala UI', 'Inter', system-ui,
-    sans-serif;
+  font-family: 'Inter', 'Segoe UI', 'Noto Sans Bengali', 'Nirmala UI', system-ui, sans-serif;
 }
 
 /* Bangla glyphs are taller than Latin; relax the leading so descenders in
@@ -504,11 +564,18 @@ table {
   scrollbar-width: thin;
 }
 
-/* Modals/drawers must never exceed the window on a small screen. */
-.animate-scale-in,
-.animate-slide-in-right {
-  max-width: 100vw;
-  max-height: 100vh;
+/* Modals/drawers must never exceed the window on a small screen.
+   In the base layer so a popup's own size (max-w-xl, max-h-[90vh] …) wins.
+   Unlayered, this used to beat those classes and stretched EVERY Modal and
+   Drawer to the full window width — a five-field form spread over 1366px, and
+   no backdrop left to click. Popups are already capped by `w-full` inside the
+   full-window overlay, so this is only a fallback for the rest. */
+@layer base {
+  .animate-scale-in,
+  .animate-slide-in-right {
+    max-width: 100vw;
+    max-height: 100vh;
+  }
 }
 
 /* Print sheets are a fixed physical width; allow the preview to scroll rather

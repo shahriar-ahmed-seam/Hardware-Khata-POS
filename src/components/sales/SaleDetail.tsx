@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { saleLineSubtotal } from '@/lib/money';
 import { Link } from 'react-router-dom';
 import {
   Printer,
@@ -20,12 +21,14 @@ import { useSales, type SaleRecord } from '@/stores/sales';
 import { useCustomers } from '@/stores/contacts';
 import { confirm } from '@/stores/confirm';
 import { promptText } from '@/stores/prompt';
+import { toast } from '@/stores/toast';
 import { useCan } from '@/hooks/useCan';
 import { api } from '@/lib/api';
 import { toSaleRecord, type BackendSale } from '@/hooks/saleAdapter';
 import { toCustomer, type BackendCustomer } from '@/hooks/contactAdapter';
 import type { Customer } from '@/types/domain';
 import { cn, formatBDT } from '@/lib/utils';
+import { currentUserId } from '@/lib/actor';
 import { PhoneAction, isCallable } from '@/components/ui/PhoneAction';
 import { AddPaymentModal } from './AddPaymentModal';
 import { InvoicePrintModal } from './InvoicePrintModal';
@@ -48,6 +51,22 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
   // UI-only gating; the IPC boundary is the real gate (see hooks/useCan.ts).
   const canEdit = useCan('sales.edit');
   const canVoid = useCan('sales.void');
+  /**
+   * Returns and shipments against this sale, from the store's full lists
+   * (both load unpaged). The drawer used to read `sale.returnIds` and
+   * `sale.shipmentId`, which nothing ever filled in: the "N return(s)" badge
+   * never showed, and "Create Shipment" stayed on a sale already shipped.
+   */
+  const allReturns = useSales((s) => s.returns);
+  const allShipments = useSales((s) => s.shipments);
+  const saleReturns = useMemo(
+    () => allReturns.filter((r) => r.saleId === saleId),
+    [allReturns, saleId],
+  );
+  const saleShipment = useMemo(
+    () => allShipments.find((x) => x.saleId === saleId),
+    [allShipments, saleId],
+  );
 
   // The store now holds ONE PAGE of sales, so the requested row may simply not
   // be loaded (opened from a search result, a deep link, or another page of the
@@ -173,9 +192,12 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
               {sale.status === 'quotation' && sale.validUntil && (
                 <Badge variant="info">Valid till {new Date(sale.validUntil).toLocaleDateString('en-GB')}</Badge>
               )}
-              {sale.returnIds && sale.returnIds.length > 0 && (
-                <Badge variant="warning">{sale.returnIds.length} return(s)</Badge>
+              {saleReturns.length > 0 && (
+                <Badge variant="warning">
+                  {saleReturns.length === 1 ? '1 return' : `${saleReturns.length} returns`}
+                </Badge>
               )}
+              {saleShipment && <Badge variant="info">Shipment {saleShipment.refNo}</Badge>}
               {/* An "Open full page" link used to sit here pointing at
                   /sales/:id. That route does not exist — App.tsx only routes
                   /sales/:id/edit — so it landed the user on "Not Found". This
@@ -200,7 +222,7 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
                   <div className="font-semibold truncate">{customer?.name ?? sale.customerName}</div>
                   <div className="flex items-center gap-2 mt-0.5">
                     {callablePhone ? (
-                      <span className="text-sm font-mono tabular font-semibold">
+                      <span className="text-sm tabular font-semibold">
                         {callablePhone}
                       </span>
                     ) : (
@@ -223,7 +245,7 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
             {/* Lines */}
             <div className="rounded-lg border border-border overflow-hidden">
               <table className="w-full text-sm">
-                <thead className="text-[10px] uppercase text-muted-foreground bg-secondary/50">
+                <thead className="text-xs text-muted-foreground bg-secondary/50">
                   <tr>
                     <th className="text-left px-3 py-2 font-medium w-10">#</th>
                     <th className="text-left px-2 py-2 font-medium">Item</th>
@@ -234,21 +256,24 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
                 </thead>
                 <tbody>
                   {sale.lines.map((l, i) => {
-                    const sub = l.unitPrice * l.qty - l.discountFlat - l.unitPrice * l.qty * (l.discountPct / 100);
+                    // The same arithmetic the invoice was stored with (clamped at
+                    // zero, rounded) — this cell used to recompute it inline and
+                    // could print a negative subtotal.
+                    const sub = saleLineSubtotal(l);
                     return (
                       <tr key={i} className="border-t border-border">
                         <td className="px-3 py-2 text-xs text-muted-foreground">{i + 1}</td>
                         <td className="px-2 py-2">
                           <div className="font-medium">{l.name}</div>
-                          <div className="text-[11px] text-muted-foreground font-mono">{l.sku}</div>
+                          <div className="text-xs text-muted-foreground font-mono">{l.sku}</div>
                         </td>
-                        <td className="px-2 py-2 text-right font-mono tabular">
+                        <td className="px-2 py-2 text-right tabular">
                           {l.qty} {l.unit}
                         </td>
-                        <td className="px-2 py-2 text-right font-mono tabular">
+                        <td className="px-2 py-2 text-right tabular">
                           {formatBDT(l.unitPrice, { withSymbol: false })}
                         </td>
-                        <td className="px-3 py-2 text-right font-mono tabular font-semibold">
+                        <td className="px-3 py-2 text-right tabular font-semibold">
                           {formatBDT(sub, { withSymbol: false })}
                         </td>
                       </tr>
@@ -273,7 +298,7 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
                 {sale.other > 0 && <Row label="Other" value={formatBDT(sale.other)} />}
                 <div className="border-t border-border pt-2 flex items-center justify-between">
                   <span className="text-sm font-semibold">Total</span>
-                  <span className="text-lg font-bold font-mono tabular">{formatBDT(sale.total)}</span>
+                  <span className="text-lg font-bold tabular">{formatBDT(sale.total)}</span>
                 </div>
               </div>
 
@@ -288,11 +313,11 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
                   <Row label="Profit" value={formatBDT(sale.profit)} tone="success" />
                 )}
                 <div className="border-t border-border pt-2">
-                  <div className="text-[10px] uppercase font-semibold text-muted-foreground mb-1">
+                  <div className="text-xs font-semibold text-muted-foreground mb-1">
                     Payments
                   </div>
                   {sale.payments.length === 0 ? (
-                    <div className="text-[11px] text-muted-foreground">No payments yet</div>
+                    <div className="text-xs text-muted-foreground">No payments yet</div>
                   ) : (
                     sale.payments.map((p) => (
                       <div key={p.id} className="flex items-center justify-between text-xs">
@@ -300,7 +325,7 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
                           {p.method}
                           {p.reference ? <span className="text-muted-foreground"> · {p.reference}</span> : null}
                         </span>
-                        <span className="font-mono tabular">{formatBDT(p.amount)}</span>
+                        <span className="tabular">{formatBDT(p.amount)}</span>
                       </div>
                     ))
                   )}
@@ -310,16 +335,16 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
 
             {/* Audit log */}
             <div className="rounded-lg border border-border bg-card">
-              <div className="px-3 py-2 border-b border-border bg-secondary/40 flex items-center gap-2 text-[11px] uppercase font-semibold text-muted-foreground">
+              <div className="px-3 py-2 border-b border-border bg-secondary/40 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
                 <History className="size-3" /> Audit log
               </div>
               <div className="divide-y divide-border">
                 {sale.audit.map((a) => (
-                  <div key={a.id} className="flex items-center gap-2 px-3 py-1.5 text-[12px]">
+                  <div key={a.id} className="flex items-center gap-2 px-3 py-1.5 text-sm">
                     <Dot action={a.action} />
                     <span className="capitalize">{a.action}</span>
                     {a.note && <span className="text-muted-foreground">— {a.note}</span>}
-                    <span className="ml-auto text-[10px] text-muted-foreground tabular">
+                    <span className="ml-auto text-xs text-muted-foreground tabular">
                       {new Date(a.at).toLocaleString('en-GB')} · {a.by}
                     </span>
                   </div>
@@ -347,7 +372,7 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
               <Undo2 className="size-3.5" /> Create Return
             </Button>
           )}
-          {sale.status === 'final' && !sale.shipmentId && (
+          {sale.status === 'final' && !saleShipment && (
             <Button variant="outline" size="sm" onClick={() => onCreateShipment?.(sale.id)}>
               <Truck className="size-3.5" /> Create Shipment
             </Button>
@@ -374,15 +399,26 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
                     variant: 'destructive',
                   })
                 ) {
-                  deleteSale(sale.id);
-                  onClose();
+                  // Close only once it is really gone; a refusal keeps it open.
+                  if (await deleteSale(sale.id)) {
+                    toast.success(`${sale.invoiceNo} deleted`);
+                    onClose();
+                  }
                 }
               }}
             >
               <Trash2 className="size-3.5" /> Delete
             </Button>
           )}
-          {canVoid && sale.status === 'final' && (
+          {/* A sale with a return cannot be voided (the backend refuses: the void
+              would put the returned goods back twice). The rest is undone by
+              returning it, so the button is not offered. */}
+          {canVoid && sale.status === 'final' && saleReturns.length > 0 && (
+            <span className="text-xs text-muted-foreground">
+              Has a return — return the rest instead of voiding.
+            </span>
+          )}
+          {canVoid && sale.status === 'final' && saleReturns.length === 0 && (
             <Button
               variant="destructive"
               size="sm"
@@ -397,8 +433,8 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
                   variant: 'destructive',
                   required: true,
                 });
-                if (reason !== null) {
-                  voidSale(sale.id, 'Seam', reason);
+                if (reason !== null && (await voidSale(sale.id, currentUserId(), reason))) {
+                  toast.success(`${sale.invoiceNo} voided`);
                 }
               }}
             >
@@ -438,7 +474,7 @@ function Row({
       <span className="text-muted-foreground">{label}</span>
       <span
         className={cn(
-          'font-mono tabular',
+          'tabular',
           tone === 'success' && 'text-success',
           tone === 'destructive' && 'text-destructive',
           tone === 'warning' && 'text-warning',

@@ -96,7 +96,7 @@ export default function Quotations() {
             </div>
           ) : (
           <table className="w-full text-sm">
-            <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50">
+            <thead className="text-xs text-muted-foreground bg-secondary/50">
               <tr>
                 <th className="text-left px-4 py-2.5 font-medium">Reference</th>
                 <th className="text-left px-2 py-2.5 font-medium">Customer</th>
@@ -113,7 +113,7 @@ export default function Quotations() {
                   <tr key={d.id} className="border-t border-border hover:bg-secondary/40 group">
                     <td className="px-4 py-2.5 font-mono text-xs">{d.invoiceNo}</td>
                     <td className="px-2 py-2.5 font-medium">{d.customerName}</td>
-                    <td className="px-2 py-2.5 text-right font-mono tabular font-semibold">
+                    <td className="px-2 py-2.5 text-right tabular font-semibold">
                       {formatBDT(d.total)}
                     </td>
                     <td className="px-2 py-2.5 text-xs text-muted-foreground">

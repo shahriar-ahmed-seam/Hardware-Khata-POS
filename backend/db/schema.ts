@@ -447,6 +447,10 @@ CREATE TABLE IF NOT EXISTS purchases (
   other               REAL NOT NULL DEFAULT 0,
   total               REAL NOT NULL DEFAULT 0,
   paid                REAL NOT NULL DEFAULT 0,
+  -- The part of the bill settled by a CreditAdjust purchase return (a credit
+  -- note from the supplier) rather than by money. The twin of sales.credited.
+  -- INVARIANT: due = max(0, total - paid - credited).
+  credited            REAL NOT NULL DEFAULT 0,
   due                 REAL NOT NULL DEFAULT 0,
   notes               TEXT,
   cancelled_at        TEXT,
@@ -617,7 +621,9 @@ CREATE TABLE IF NOT EXISTS cash_shifts (
   carried_float  REAL,
   open_note      TEXT,
   close_note     TEXT,
-  status         TEXT NOT NULL DEFAULT 'open'
+  status         TEXT NOT NULL DEFAULT 'open',
+  -- v11: who counted and closed the drawer (the opener is often someone else).
+  closed_by      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS cash_movements (
@@ -632,6 +638,26 @@ CREATE TABLE IF NOT EXISTS cash_movements (
   note      TEXT,
   user_id   TEXT,
   at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- v11: money paid ON ACCOUNT, not against one invoice or bill: a customer
+-- settling the opening balance, or paying ahead (an advance); the shop doing the
+-- same with a supplier. Invoice-level money stays in sale_payments /
+-- purchase_payments. Balances subtract these rows (services/ledger.ts).
+-- amount > 0 always: money IN from a customer, money OUT to a supplier.
+CREATE TABLE IF NOT EXISTS account_payments (
+  id          TEXT PRIMARY KEY,
+  ref_no      TEXT,
+  party_type  TEXT NOT NULL CHECK (party_type IN ('customer','supplier')),
+  party_id    TEXT NOT NULL,
+  method      TEXT NOT NULL,
+  amount      REAL NOT NULL CHECK (amount > 0),
+  reference   TEXT,
+  note        TEXT,
+  paid_at     TEXT NOT NULL,
+  branch_id   TEXT REFERENCES branches(id),
+  by_user     TEXT,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS activity_log (

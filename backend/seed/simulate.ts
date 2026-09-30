@@ -8,7 +8,12 @@ import { createExpense } from '../services/expenses.ts';
 import { createAdjustment, createTransfer } from '../services/stockOps.ts';
 import { openShift, closeShift, getOpenShift } from '../services/cash.ts';
 import { recordMovement, stockOnHand } from '../services/stock.ts';
-import { computeSaleLine, computeSaleTotals, computePurchaseTotals } from '../core/calc.ts';
+import {
+  computeSaleLine,
+  computeSaleTotals,
+  computePurchaseTotals,
+  computeReturnRefund,
+} from '../core/calc.ts';
 import { round2 } from '../core/money.ts';
 
 export interface SimulateOptions {
@@ -104,6 +109,25 @@ export function simulate(db: DB, opts: SimulateOptions = {}): SimulateResult {
     const isClosed = dow === 5 && rng.chance(0.5);
     if (isClosed) continue;
 
+    // ----- Open a shift for the day -----
+    // Opened BEFORE the morning restock. Every cash event now lands in a drawer
+    // (the drawer opens itself when none is open — services/cash.ts), so the
+    // day's shift has to exist first or the restock would open one of its own.
+    const openExisting = getOpenShift(db, branch);
+    let shiftId: string;
+    const openAt = new Date(dayStart.getTime() + 9.5 * 3600000).toISOString();
+    if (openExisting) {
+      shiftId = openExisting.id as string;
+    } else {
+      shiftId = openShift(db, {
+        branchId: branch,
+        userId: cashier,
+        openingCash: 5000,
+        at: openAt,
+      });
+      shiftsCount++;
+    }
+
     // ----- Weekly purchase (restock) on ~Saturday or when low -----
     if (rng.chance(0.22)) {
       const supplier = rng.pick(suppliers);
@@ -155,26 +179,14 @@ export function simulate(db: DB, opts: SimulateOptions = {}): SimulateResult {
           branchId: branch,
           userId: manager,
           lines,
-          payments,
+          // A restock is paid from the bank, not the till: a ৳40,000 bill paid
+          // out of a ৳5,000 drawer is not a shop day anyone has. 'Cash' was only
+          // harmless before because no shift was open at 09:00 and the cash was
+          // silently dropped. The draw is kept so the RNG stream is unchanged.
+          payments: payments.map((p) => (p.method === 'Cash' ? { ...p, method: 'Bank' } : p)),
         });
         purchasesCount++;
       }
-    }
-
-    // ----- Open a shift for the day -----
-    const openExisting = getOpenShift(db, branch);
-    let shiftId: string;
-    const openAt = new Date(dayStart.getTime() + 9.5 * 3600000).toISOString();
-    if (openExisting) {
-      shiftId = openExisting.id as string;
-    } else {
-      shiftId = openShift(db, {
-        branchId: branch,
-        userId: cashier,
-        openingCash: 5000,
-        at: openAt,
-      });
-      shiftsCount++;
     }
 
     // ----- Sales through the day -----
@@ -228,11 +240,16 @@ export function simulate(db: DB, opts: SimulateOptions = {}): SimulateResult {
           discountFlat: 0,
         }),
       );
+      // A flat ৳20–200 off a ৳15 item used to make a ৳0 bill with a negative
+      // profit; the services now refuse a discount above the goods
+      // (core/validate.ts). Capped here — the draw above is unchanged.
+      const goods = round2(computedLines.reduce((a, c) => a + c.lineSubtotal, 0));
+      const orderDiscount = Math.min(orderDiscountFlat, Math.floor(goods / 2));
       const st = computeSaleTotals({
         lineSubtotals: computedLines.map((c) => c.lineSubtotal),
         lineGrosses: computedLines.map((c, i) => round2(c.unitPrice * lines[i].qty)),
         orderDiscountPct: 0,
-        orderDiscountFlat,
+        orderDiscountFlat: orderDiscount,
         taxPct: 0,
         shipping: 0,
         other: 0,
@@ -261,9 +278,9 @@ export function simulate(db: DB, opts: SimulateOptions = {}): SimulateResult {
         userId: cashier,
         agentId: group === 'Contractor' && rng.chance(0.5) ? rng.pick(agents) : undefined,
         lines,
-        orderDiscountFlat,
+        orderDiscountFlat: orderDiscount,
         taxPct: 0,
-        payments,
+        payments: payments.filter((p) => p.amount > 0),
       });
       salesCount++;
     }
@@ -271,34 +288,93 @@ export function simulate(db: DB, opts: SimulateOptions = {}): SimulateResult {
     // ----- occasional return -----
     if (rng.chance(0.06)) {
       const recent = db
-        .prepare("SELECT id, branch_id FROM sales WHERE status='final' AND branch_id = ? ORDER BY date DESC LIMIT 30")
-        .all(branch) as { id: string; branch_id: string }[];
+        .prepare(
+          "SELECT id, branch_id, customer_id FROM sales WHERE status='final' AND branch_id = ? ORDER BY date DESC LIMIT 30",
+        )
+        .all(branch) as { id: string; branch_id: string; customer_id: string | null }[];
       if (recent.length > 0) {
         const sale = rng.pick(recent);
         const sLines = db
-          .prepare('SELECT product_id, qty, unit_price FROM sale_lines WHERE sale_id = ?')
-          .all(sale.id) as { product_id: string; qty: number; unit_price: number }[];
+          .prepare('SELECT product_id, qty, unit_price, line_subtotal FROM sale_lines WHERE sale_id = ?')
+          .all(sale.id) as { product_id: string; qty: number; unit_price: number; line_subtotal: number }[];
         if (sLines.length > 0) {
           const l = rng.pick(sLines);
-          const retQty = Math.max(1, Math.floor(l.qty / 2));
+          const reason = rng.pick(['damaged', 'wrong-item', 'changed-mind', 'defective']);
+          const method = rng.pick(['Cash', 'CreditAdjust', 'StoreCredit']);
+          // The random draws above happen whatever is decided below, so the rest
+          // of the simulated year is unchanged by these two rules:
+          //  - a walk-in sale has nobody to hold store credit or a credit note,
+          //    so it is refunded in cash (createSellReturn refuses otherwise);
+          //  - a line can only give back what has not already come back.
+          const alreadyBack =
+            (
+              db
+                .prepare(
+                  `SELECT COALESCE(SUM(qty),0) AS q FROM stock_movements
+                    WHERE ref_type='sale' AND ref_id=? AND reason='sale_return' AND product_id=?`,
+                )
+                .get(sale.id, l.product_id) as { q: number }
+            ).q;
+          const soldQty = sLines
+            .filter((x) => x.product_id === l.product_id)
+            .reduce((a, x) => a + x.qty, 0);
+          const retQty = Math.min(Math.max(1, Math.floor(l.qty / 2)), soldQty - alreadyBack);
           const retDate = new Date(dayStart.getTime() + 15 * 3600000).toISOString();
-          createSellReturn(db, {
-            saleId: sale.id,
-            date: retDate,
-            branchId: branch,
-            userId: cashier,
-            reason: rng.pick(['damaged', 'wrong-item', 'changed-mind', 'defective']),
-            refundMethod: rng.pick(['Cash', 'CreditAdjust', 'StoreCredit']),
-            lines: [
-              {
-                productId: l.product_id,
-                qty: retQty,
-                unitPrice: l.unit_price,
-                refundAmount: round2(retQty * l.unit_price),
-              },
-            ],
-          });
-          returnsCount++;
+          if (retQty > 0) {
+            // Refund what the customer actually paid for those items — the
+            // line's discounted price less its share of any order discount —
+            // the same figure the return screen offers. It used to refund the
+            // pre-discount price.
+            const head = db
+              .prepare('SELECT subtotal, order_discount, tax_pct FROM sales WHERE id = ?')
+              .get(sale.id) as { subtotal: number; order_discount: number; tax_pct: number };
+            const refund = computeReturnRefund({
+              lineSubtotal: l.line_subtotal,
+              lineQty: l.qty,
+              returnQty: retQty,
+              subtotal: head.subtotal,
+              orderDiscount: head.order_discount,
+              taxPct: head.tax_pct,
+            });
+            // A refund can hand back at most what was paid, and a credit note
+            // can settle at most what is still owed (returns.ts). Pick the
+            // method that fits; the random draw above is unchanged.
+            const settle = db.prepare('SELECT paid, due FROM sales WHERE id = ?').get(sale.id) as {
+              paid: number;
+              due: number;
+            };
+            const moneyBack = (
+              db
+                .prepare(
+                  "SELECT COALESCE(SUM(total),0) AS s FROM sell_returns WHERE sale_id = ? AND refund_method != 'CreditAdjust'",
+                )
+                .get(sale.id) as { s: number }
+            ).s;
+            const fitsMoney = refund <= settle.paid - moneyBack + 0.011;
+            const fitsCredit = refund <= settle.due + 0.011;
+            let refundMethod: string | null = sale.customer_id ? method : 'Cash';
+            if (refundMethod === 'CreditAdjust' && !fitsCredit) refundMethod = fitsMoney ? 'Cash' : null;
+            else if (refundMethod !== 'CreditAdjust' && !fitsMoney) {
+              refundMethod = sale.customer_id && fitsCredit ? 'CreditAdjust' : null;
+            }
+            if (refundMethod) createSellReturn(db, {
+              saleId: sale.id,
+              date: retDate,
+              branchId: branch,
+              userId: cashier,
+              reason,
+              refundMethod,
+              lines: [
+                {
+                  productId: l.product_id,
+                  qty: retQty,
+                  unitPrice: l.unit_price,
+                  refundAmount: refund,
+                },
+              ],
+            });
+            if (refundMethod) returnsCount++;
+          }
         }
       }
     }

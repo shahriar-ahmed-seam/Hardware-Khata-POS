@@ -200,7 +200,7 @@ export default function SendSmsPage() {
         <div className="space-y-4">
           {/* Mode toggle */}
           <Card className="p-3">
-            <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em] mb-1.5">
+            <div className="text-xs font-semibold text-muted-foreground mb-1.5">
               Send to
             </div>
             <div className="grid grid-cols-3 gap-2">
@@ -263,7 +263,7 @@ export default function SendSmsPage() {
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="text-sm font-medium truncate">{c.name}</div>
-                          <div className="text-[11px] font-mono text-muted-foreground">{c.phone}</div>
+                          <div className="text-xs font-mono text-muted-foreground">{c.phone}</div>
                         </div>
                       </button>
                     ))}
@@ -278,7 +278,7 @@ export default function SendSmsPage() {
                       className="inline-flex items-center gap-1.5 px-2 h-7 rounded-md bg-secondary text-sm"
                     >
                       <span className="font-medium">{c.name}</span>
-                      <span className="text-[11px] font-mono text-muted-foreground">{c.phone}</span>
+                      <span className="text-xs font-mono text-muted-foreground">{c.phone}</span>
                       <button
                         onClick={() =>
                           setSelectedCustomers((s) => s.filter((x) => x.id !== c.id))
@@ -319,11 +319,11 @@ export default function SendSmsPage() {
                       )}
                     >
                       <div className="font-semibold text-sm">{g.name}</div>
-                      <div className="text-[11px] text-muted-foreground mt-0.5">
+                      <div className="text-xs text-muted-foreground mt-0.5">
                         {g.memberIds.length + (g.manualNumbers?.length ?? 0)} members
                       </div>
                       {g.description && (
-                        <div className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                        <div className="text-xs text-muted-foreground mt-0.5 truncate">
                           {g.description}
                         </div>
                       )}
@@ -344,7 +344,7 @@ export default function SendSmsPage() {
                 placeholder="One per line, or comma-separated:&#10;01711-100001&#10;01711-100002, 01711-100003"
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 resize-y font-mono"
               />
-              <div className="text-[11px] text-muted-foreground">
+              <div className="text-xs text-muted-foreground">
                 BD format: 11 digits starting with <span className="font-mono">01</span>. Hyphens
                 and spaces are stripped automatically.
               </div>
@@ -378,12 +378,12 @@ export default function SendSmsPage() {
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 resize-y"
             />
             <div className="flex flex-wrap gap-1">
-              <span className="text-[11px] text-muted-foreground">Insert:</span>
+              <span className="text-xs text-muted-foreground">Insert:</span>
               {TEMPLATE_VARIABLES.map((v) => (
                 <button
                   key={v}
                   onClick={() => insertVariable(v)}
-                  className="px-2 h-6 rounded border border-border hover:bg-secondary text-[11px] font-mono"
+                  className="px-2 h-6 rounded border border-border hover:bg-secondary text-xs font-mono"
                 >
                   {v}
                 </button>
@@ -409,13 +409,13 @@ export default function SendSmsPage() {
               <Stat label="Encoding" value={unicode ? 'Unicode' : 'GSM-7'} text />
             </div>
             {tooManyParts && (
-              <div className="text-[11px] text-destructive flex items-start gap-1.5">
+              <div className="text-xs text-destructive flex items-start gap-1.5">
                 <AlertCircle className="size-3 mt-0.5 shrink-0" />
                 Exceeds gateway max parts ({gateway.maxPartsPerMessage}). Shorten the message.
               </div>
             )}
             {unicode && (
-              <div className="text-[11px] text-muted-foreground">
+              <div className="text-xs text-muted-foreground">
                 Bangla / Unicode characters detected — each part holds 70 chars instead of 160.
               </div>
             )}
@@ -428,7 +428,7 @@ export default function SendSmsPage() {
             <Row label="Total cost" value={formatBDT(totalCost)} bold />
             <Row label="After send" value={formatBDT(credit.balance - totalCost)} />
             {insufficientCredit && (
-              <div className="text-[11px] text-destructive flex items-start gap-1.5">
+              <div className="text-xs text-destructive flex items-start gap-1.5">
                 <AlertCircle className="size-3 mt-0.5 shrink-0" />
                 Not enough credit.{' '}
                 <Link to="/sms/buy" className="underline">
@@ -438,7 +438,7 @@ export default function SendSmsPage() {
               </div>
             )}
             {!gateway.connected && (
-              <div className="text-[11px] text-warning flex items-start gap-1.5">
+              <div className="text-xs text-warning flex items-start gap-1.5">
                 <AlertCircle className="size-3 mt-0.5 shrink-0" />
                 Gateway not connected. Messages will be marked failed.
               </div>
@@ -493,7 +493,7 @@ function Stat({
         tone === 'destructive' && 'border-destructive/40 bg-destructive/5',
       )}
     >
-      <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+      <div className="text-xs font-semibold text-muted-foreground">
         {label}
       </div>
       <div
@@ -505,7 +505,7 @@ function Stat({
       >
         {value}
       </div>
-      {hint && <div className="text-[10px] text-muted-foreground">{hint}</div>}
+      {hint && <div className="text-xs text-muted-foreground">{hint}</div>}
     </div>
   );
 }

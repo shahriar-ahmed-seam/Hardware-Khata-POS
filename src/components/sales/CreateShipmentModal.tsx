@@ -14,6 +14,7 @@ import {
 } from '@/stores/sales';
 import { useCustomers } from '@/stores/contacts';
 import { api } from '@/lib/api';
+import { toast } from '@/stores/toast';
 import { toSaleRecord, type BackendSale } from '@/hooks/saleAdapter';
 import { toCustomer, type BackendCustomer } from '@/hooks/contactAdapter';
 import type { Customer } from '@/types/domain';
@@ -117,9 +118,14 @@ export function CreateShipmentModal({ open, onClose, saleId }: Props) {
     setAddress((prev) => (prev ? prev : customer.address ?? ''));
   }, [open, customer]);
 
+  // Above the early return (every hook runs on every render).
+  const [saving, setSaving] = useState(false);
+
   if (!sale) return null;
 
-  const submit = () => {
+  // Closes only once the backend has saved it; a refusal keeps what was typed.
+  const submit = async () => {
+    if (saving) return;
     const s: Shipment = {
       id: 'shp_' + Date.now(),
       refNo: nextShipmentNo(),
@@ -135,7 +141,11 @@ export function CreateShipmentModal({ open, onClose, saleId }: Props) {
       notes: notes || undefined,
       createdAt: new Date().toISOString(),
     };
-    addShipment(s);
+    setSaving(true);
+    const ok = await addShipment(s);
+    setSaving(false);
+    if (!ok) return;
+    toast.success('Shipment saved');
     onClose();
   };
 
@@ -151,7 +161,7 @@ export function CreateShipmentModal({ open, onClose, saleId }: Props) {
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={submit}>
+          <Button onClick={() => void submit()} disabled={saving}>
             <Truck className="size-4" /> Save Shipment
           </Button>
         </div>
@@ -171,7 +181,7 @@ export function CreateShipmentModal({ open, onClose, saleId }: Props) {
           <select
             value={status}
             onChange={(e) => setStatus(e.target.value as ShipmentStatus)}
-            className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 capitalize"
+            className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 capitalize"
           >
             {STATUSES.map((s) => (
               <option key={s} value={s}>
@@ -216,7 +226,7 @@ function Field({
 }) {
   return (
     <div className={className}>
-      <label className="text-[10px] uppercase font-semibold text-muted-foreground">{label}</label>
+      <label className="text-xs font-semibold text-muted-foreground">{label}</label>
       {children}
     </div>
   );

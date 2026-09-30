@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { toast } from '@/stores/toast';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -47,9 +48,12 @@ export function AddPurchasePaymentModal({ open, onClose, purchase }: Props) {
 
   const overpaying = amount > purchase.due + 0.005;
 
-  const submit = () => {
-    if (amount <= 0) return;
-    addPayment(purchase.id, {
+  const [saving, setSaving] = useState(false);
+  // Closes only once the backend has taken the payment; a refusal keeps it open.
+  const submit = async () => {
+    if (amount <= 0 || saving) return;
+    setSaving(true);
+    const ok = await addPayment(purchase.id, {
       method,
       amount,
       reference: reference || undefined,
@@ -57,6 +61,9 @@ export function AddPurchasePaymentModal({ open, onClose, purchase }: Props) {
       // cash shift, so the timestamp decides which shift it comes from.
       paidAt: fromLocalInput(paidAt),
     });
+    setSaving(false);
+    if (!ok) return;
+    toast.success('Payment recorded');
     onClose();
   };
 
@@ -74,7 +81,7 @@ export function AddPurchasePaymentModal({ open, onClose, purchase }: Props) {
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={amount <= 0}>
+          <Button onClick={() => void submit()} disabled={amount <= 0 || saving}>
             <Save className="size-4" /> Save Payment
           </Button>
         </div>
@@ -87,7 +94,7 @@ export function AddPurchasePaymentModal({ open, onClose, purchase }: Props) {
           was a number the shop could have believed. Removed rather than faked.
         */}
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+          <label className="text-xs font-semibold text-muted-foreground">
             Paid on *
           </label>
           <DateTimeField value={paidAt} onChange={setPaidAt} />
@@ -96,13 +103,13 @@ export function AddPurchasePaymentModal({ open, onClose, purchase }: Props) {
         {/* Outstanding indicator */}
         <div className="rounded-lg border border-border p-3 flex items-center justify-between">
           <span className="text-sm text-muted-foreground">Outstanding due</span>
-          <span className="font-mono tabular text-base font-semibold text-destructive">
+          <span className="tabular text-base font-semibold text-destructive">
             {formatBDT(purchase.due)}
           </span>
         </div>
 
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">Amount *</label>
+          <label className="text-xs font-semibold text-muted-foreground">Amount *</label>
           <NumberField
             autoFocus
             value={amount}
@@ -112,13 +119,13 @@ export function AddPurchasePaymentModal({ open, onClose, purchase }: Props) {
           <div className="flex items-center gap-1 mt-1">
             <button
               onClick={() => setAmount(purchase.due)}
-              className="text-[10px] px-2 h-6 rounded border border-border hover:bg-secondary"
+              className="text-xs px-2 h-6 rounded border border-border hover:bg-secondary"
             >
               Full due
             </button>
             <button
               onClick={() => setAmount(Math.round(purchase.due / 2))}
-              className="text-[10px] px-2 h-6 rounded border border-border hover:bg-secondary"
+              className="text-xs px-2 h-6 rounded border border-border hover:bg-secondary"
             >
               Half
             </button>
@@ -126,7 +133,7 @@ export function AddPurchasePaymentModal({ open, onClose, purchase }: Props) {
         </div>
 
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+          <label className="text-xs font-semibold text-muted-foreground">
             Payment Method *
           </label>
           <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 mt-1">
@@ -153,7 +160,7 @@ export function AddPurchasePaymentModal({ open, onClose, purchase }: Props) {
 
         {m.needsRef && (
           <div>
-            <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+            <label className="text-xs font-semibold text-muted-foreground">
               {m.label} reference / TxID
             </label>
             <Input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="TX1234567" />
@@ -172,17 +179,17 @@ export function AddPurchasePaymentModal({ open, onClose, purchase }: Props) {
         <div className="rounded-lg border border-border p-3 space-y-1 text-sm">
           <div className="flex items-center justify-between">
             <span className="text-muted-foreground">Already paid</span>
-            <span className="font-mono tabular">{formatBDT(purchase.paid)}</span>
+            <span className="tabular">{formatBDT(purchase.paid)}</span>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-muted-foreground">This payment</span>
-            <span className="font-mono tabular">{formatBDT(amount)}</span>
+            <span className="tabular">{formatBDT(amount)}</span>
           </div>
           <div className="flex items-center justify-between border-t border-border pt-1">
             <span className="font-semibold">Still owing after this</span>
             <span
               className={cn(
-                'font-mono tabular font-bold',
+                'tabular font-bold',
                 Math.max(0, purchase.due - amount) <= 0.005 ? 'text-success' : 'text-destructive',
               )}
             >

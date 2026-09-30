@@ -15,6 +15,7 @@ import { useReport, useBranchId } from '@/hooks/useReport';
 import { hasBackend } from '@/lib/api';
 import { formatBDT } from '@/lib/utils';
 import { cn } from '@/lib/utils';
+import { round2, sum2 } from '@/lib/money';
 
 interface PnLRow {
   label: string;
@@ -36,7 +37,14 @@ interface BackendProfitLoss {
     sellOther: number;
     purchaseReturns: number;
   };
-  moneyOut: { cogs: number; sellReturns: number; expenses: number; stockAdjustment: number };
+  moneyOut: {
+    cogs: number;
+    /** Cost of goods customers brought back; comes OFF the cost of goods sold. */
+    returnedCost?: number;
+    sellReturns: number;
+    expenses: number;
+    stockAdjustment: number;
+  };
   tax: { salesTaxCollected: number; purchaseTaxPaid: number; netVat: number };
   grossProfit: number;
   marginPct: number;
@@ -83,7 +91,8 @@ export default function ProfitLossPage() {
         totalSellOther: be.moneyIn.sellOther,
         totalSellTax: be.tax.salesTaxCollected,
         totalPurchaseReturn: be.moneyIn.purchaseReturns,
-        totalCOGS: be.moneyOut.cogs,
+        // Net of goods returned to the shelf — the figure gross profit uses.
+        totalCOGS: round2(be.moneyOut.cogs - (be.moneyOut.returnedCost ?? 0)),
         totalPurchases: be.totalPurchases,
         totalPurchaseTax: be.tax.purchaseTaxPaid,
         totalSellReturn: be.moneyOut.sellReturns,
@@ -108,7 +117,13 @@ export default function ProfitLossPage() {
       { label: 'Total sales (excl. tax & disc.)', amount: pnl.totalSalesExclTax },
       { label: 'Sell shipping recovered', amount: pnl.totalSellShipping },
       { label: 'Other charges', amount: pnl.totalSellOther },
-      { label: 'Purchase returns', amount: pnl.totalPurchaseReturn },
+      // Cash back from suppliers is NOT profit: the goods went back at cost.
+      // Shown for information, kept out of the block total (amount: null).
+      {
+        label: 'Purchase returns (cash back, not profit)',
+        amount: null,
+        hint: formatBDT(pnl.totalPurchaseReturn),
+      },
       {
         label: 'Closing stock (by sell price)',
         amount: null,
@@ -119,7 +134,7 @@ export default function ProfitLossPage() {
   const moneyOut: PnLBlock = {
     title: 'Money out',
     rows: [
-      { label: 'Cost of goods sold (COGS)', amount: pnl.totalCOGS },
+      { label: 'Cost of goods sold (after returns)', amount: pnl.totalCOGS },
       { label: 'Sell returns', amount: pnl.totalSellReturn },
       { label: 'Expenses', amount: pnl.totalExpense },
       // Signed: a stock loss (negative adjustment) increases money-out.
@@ -182,10 +197,10 @@ export default function ProfitLossPage() {
 
         {/* Formula card */}
         <Card className="p-5 bg-secondary/30">
-          <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em] mb-2">
+          <div className="text-xs font-semibold text-muted-foreground mb-2">
             How net profit is calculated
           </div>
-          <div className="font-mono text-[12px] leading-6 text-muted-foreground">
+          <div className="font-mono text-sm leading-6 text-muted-foreground">
             <span className="text-success">money in</span>{' '}
             <span className="text-foreground">−</span>{' '}
             <span className="text-destructive">money out</span>{' '}
@@ -194,7 +209,7 @@ export default function ProfitLossPage() {
               {formatBDT(pnl.netProfit)}
             </span>
           </div>
-          <div className="text-[12px] text-muted-foreground mt-2">
+          <div className="text-sm text-muted-foreground mt-2">
             Cost of goods sold uses the unit cost recorded at sale time (not the current cost).
             Opening/closing stock-valuation snapshots are not available yet (nightly job pending),
             so those rows show '—' and are excluded from the totals above.
@@ -254,7 +269,7 @@ function KpiCard({
   return (
     <Card className={cn('p-4 border-l-4', tones[tone])}>
       <div className="flex items-center justify-between">
-        <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+        <div className="text-xs font-semibold text-muted-foreground">
           {label}
         </div>
         <Icon className={cn('size-3.5', valueColor[tone])} />
@@ -280,7 +295,7 @@ function BlockCard({
   tone: 'success' | 'destructive';
 }) {
   // Rows without a backend source (amount === null) never contribute to the total.
-  const total = block.rows.reduce((acc, r) => acc + (r.amount ?? 0), 0);
+  const total = sum2(block.rows.map((r) => r.amount ?? 0));
   const arrow = tone === 'success' ? ArrowUpRight : ArrowDownRight;
   const Arrow = arrow;
   return (
@@ -317,7 +332,7 @@ function BlockCard({
           >
             <div>
               <div className="text-sm">{row.label}</div>
-              {row.hint && <div className="text-[11px] text-muted-foreground">{row.hint}</div>}
+              {row.hint && <div className="text-xs text-muted-foreground">{row.hint}</div>}
             </div>
             <div
               className={cn(
@@ -345,7 +360,7 @@ function MiniRow({
 }) {
   return (
     <div className="rounded-md border border-border p-3">
-      <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+      <div className="text-xs font-semibold text-muted-foreground">
         {label}
       </div>
       <div

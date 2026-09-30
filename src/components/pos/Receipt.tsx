@@ -1,6 +1,7 @@
 import type { Customer } from '@/types/domain';
 import { computeTotals, lineSubtotal, unitPrice, type ParkedCart } from './types';
 import { formatBDT } from '@/lib/utils';
+import { round2 } from '@/lib/money';
 import { useSettings } from '@/stores/settings';
 import { useBranches } from '@/stores/branches';
 import type { PaymentResult } from './PaymentModal';
@@ -21,6 +22,20 @@ interface Props {
    * the customer is then holding.
    */
   dateISO?: string;
+  /**
+   * What the document IS. A quotation used to print titled "Invoice", with a
+   * payment block and "Current Due" — a customer handed one was holding
+   * something that looked like a bill.
+   */
+  docType?: 'invoice' | 'quotation' | 'draft';
+  /** Quotations only: the date the prices hold until. */
+  validUntil?: string;
+  /**
+   * True when re-printing a stored invoice. The customer's balance read from the
+   * database ALREADY includes this invoice's due, so "Total Due" must not add it
+   * again; at the counter (a new sale) the balance was read before the sale.
+   */
+  reprint?: boolean;
   /** Optional explicit override; when omitted the identity is read from settings. */
   business?: {
     name: string;
@@ -50,7 +65,14 @@ export function Receipt({
   cashierName,
   business: businessProp,
   dateISO,
+  docType = 'invoice',
+  validUntil,
+  reprint = false,
 }: Props) {
+  const isBill = docType === 'invoice';
+  const heading = docType === 'quotation' ? 'Quotation' : docType === 'draft' ? 'Draft' : 'Invoice';
+  const numberLabel =
+    docType === 'quotation' ? 'Quotation No.' : docType === 'draft' ? 'Draft No.' : 'Invoice No.';
   const settingsBusiness = useSettings((s) => s.business);
   const receipt = useSettings((s) => s.receipt);
   const branches = useBranches((s) => s.items);
@@ -103,7 +125,7 @@ export function Receipt({
        identical on paper no matter what the Settings → Appearance font-scale
        slider is set to (rem/px would ride along with it). Widths are fluid with
        an A4 cap, so the same markup fits a 50mm roll (240px) and A4 (794px). */
-    <div className="bg-white text-black w-full max-w-[820px] mx-auto p-[4mm] font-[Inter,sans-serif] text-[9pt] leading-snug">
+    <div className="print-doc bg-white text-black w-full max-w-[820px] mx-auto p-[4mm] font-[Inter,sans-serif] text-[9pt] leading-snug">
       {/*
         Top strip: date on the left, branch on the right. Both can be turned off
         in Settings → Receipt Template, and the branch shows the branch's own
@@ -141,13 +163,13 @@ export function Receipt({
             {l}
           </div>
         ))}
-        <div className="text-[10pt] font-semibold mt-[2mm]">Invoice</div>
+        <div className="text-[10pt] font-semibold mt-[2mm]">{heading}</div>
       </div>
 
       {/* Invoice meta — label/value rows rather than two columns, so a 50mm roll
           does not squeeze the values into a 2-character sliver. */}
       <div className="border-t border-b border-black/30 py-[1.5mm]">
-        <Row label="Invoice No." value={invoiceNo} labelBold />
+        <Row label={numberLabel} value={invoiceNo} labelBold />
         <Row label="Date" value={date} labelBold />
         <Row label="Customer" value={customerLine} labelBold mono={false} />
         {/* The "Cashier name" setting had no effect before — nothing rendered it. */}
@@ -221,7 +243,20 @@ export function Receipt({
         )}
       </div>
 
+      {/* Not a bill: say so, and print no payments or dues. */}
+      {!isBill && (
+        <div className="mt-[2mm] text-center text-[8pt] font-semibold">
+          {docType === 'quotation' ? 'This is a quotation, not a bill.' : 'Draft — not a bill.'}
+          {docType === 'quotation' && validUntil && (
+            <div className="font-normal">
+              Prices valid until {new Date(validUntil).toLocaleDateString('en-GB')}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Payment summary */}
+      {isBill && (
       <div className="mt-[2mm] ml-auto w-full max-w-[70mm]">
         {payment.payments.map((p, i) => (
           <Row
@@ -239,11 +274,13 @@ export function Receipt({
         {customer && customer.due > 0 && (
           <Row
             label="Total Due"
-            value={`৳ ${formatBDT(customer.due + payment.due, { withSymbol: false })}`}
+            // On a reprint the stored balance already includes this invoice.
+            value={`৳ ${formatBDT(reprint ? customer.due : round2(customer.due + payment.due), { withSymbol: false })}`}
             bold
           />
         )}
       </div>
+      )}
 
       {/* Barcode — width in mm so it never runs off a narrow roll */}
       {receipt.showBarcode && (

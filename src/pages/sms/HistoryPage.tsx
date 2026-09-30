@@ -121,7 +121,7 @@ export default function HistoryPage() {
           <select
             value={status}
             onChange={(e) => setStatus(e.target.value as SmsStatus | '')}
-            className="h-9 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+            className="h-10 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="">All status</option>
             <option value="delivered">Delivered</option>
@@ -132,7 +132,7 @@ export default function HistoryPage() {
         </Card>
 
         <Card className="overflow-hidden">
-          <div className="grid grid-cols-[1.2fr_1.4fr_2fr_0.8fr_0.6fr_0.8fr_0.7fr] gap-2 px-4 py-2.5 border-b border-border bg-secondary/40 text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+          <div className="grid grid-cols-[1.2fr_1.4fr_2fr_0.8fr_0.6fr_0.8fr_0.7fr] gap-2 px-4 py-2.5 border-b border-border bg-secondary/40 text-xs font-semibold text-muted-foreground">
             <div>When</div>
             <div>Recipient</div>
             <div>Message</div>
@@ -159,7 +159,7 @@ export default function HistoryPage() {
                   <div className="text-muted-foreground tabular text-xs">
                     {relativeTime(h.sentAt)}
                   </div>
-                  <div className="text-[11px] text-muted-foreground/60">
+                  <div className="text-xs text-muted-foreground/60">
                     {new Date(h.sentAt).toLocaleString('en-GB', {
                       day: '2-digit',
                       month: 'short',
@@ -170,14 +170,14 @@ export default function HistoryPage() {
                 </div>
                 <div className="min-w-0">
                   {h.toName && <div className="font-medium truncate">{h.toName}</div>}
-                  <div className="text-[11px] font-mono text-muted-foreground">{h.toPhone}</div>
+                  <div className="text-xs font-mono text-muted-foreground">{h.toPhone}</div>
                 </div>
                 <div className="min-w-0">
                   <div className="text-xs truncate text-muted-foreground" title={h.body}>
                     {h.body}
                   </div>
                   {h.errorReason && (
-                    <div className="text-[11px] text-destructive mt-0.5 truncate">
+                    <div className="text-xs text-destructive mt-0.5 truncate">
                       {h.errorReason}
                     </div>
                   )}
@@ -236,7 +236,7 @@ export default function HistoryPage() {
               <Row label="Error" value={view.errorReason} tone="destructive" />
             )}
             <div>
-              <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em] mb-1">
+              <div className="text-xs font-semibold text-muted-foreground mb-1">
                 Message
               </div>
               <div className="rounded-md bg-muted p-3 text-sm whitespace-pre-wrap">
@@ -261,7 +261,7 @@ function Kpi({
 }) {
   return (
     <Card className="p-4">
-      <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+      <div className="text-xs font-semibold text-muted-foreground">
         {label}
       </div>
       <div
@@ -289,7 +289,7 @@ function Row({
 }) {
   return (
     <div className="flex items-center justify-between gap-3 text-sm">
-      <span className="text-muted-foreground text-[10px] uppercase tracking-[0.06em]">
+      <span className="text-muted-foreground text-xs">
         {label}
       </span>
       <span className={cn('truncate', tone === 'destructive' && 'text-destructive')}>{value}</span>

@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { Plus, Search, Eye, ArrowRight, Truck, Inbox, Ban, CheckCircle2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Plus, Search, ArrowRight, Truck, Inbox, Ban, CheckCircle2 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
 import { Pagination } from '@/components/ui/Pagination';
+import { toast } from '@/stores/toast';
 import { useStock, type StockTransfer, type TransferStatus } from '@/stores/stock';
 import { useBranches } from '@/stores/branches';
 import { confirm } from '@/stores/confirm';
@@ -163,7 +164,7 @@ export default function StockTransfers() {
           ) : (
           <>
           <table className="w-full text-sm">
-            <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50">
+            <thead className="text-xs text-muted-foreground bg-secondary/50">
               <tr>
                 <th className="text-left px-4 py-2.5 font-medium">Ref</th>
                 <th className="text-left px-2 py-2.5 font-medium">Date</th>
@@ -197,7 +198,7 @@ export default function StockTransfers() {
                       </span>
                     </td>
                     <td className="px-2 py-2.5 text-right tabular">{items}</td>
-                    <td className="px-2 py-2.5 text-right font-mono tabular">
+                    <td className="px-2 py-2.5 text-right tabular">
                       {formatBDT(value, { withSymbol: false })}
                     </td>
                     <td className="px-2 py-2.5 text-xs text-muted-foreground">{t.createdBy}</td>
@@ -211,19 +212,19 @@ export default function StockTransfers() {
                             <Inbox className="size-3.5" /> Receive
                           </Button>
                         )}
-                        <Link
-                          to={`/stock/transfers/${t.id}`}
-                          className="size-7 grid place-items-center rounded hover:bg-secondary"
-                          title="View"
-                        >
-                          <Eye className="size-3.5" />
-                        </Link>
-                        {t.status === 'pending' && (
+                        {/* The Eye link here went to /stock/transfers/:id, which is
+                            not a route — every click landed on "Not Found". The
+                            row already shows the transfer; Receive shows its lines. */}
+                        {/* Anything not yet received can be called back: the goods
+                            return to the sending branch. A received transfer is
+                            reversed with a new transfer the other way. */}
+                        {(t.status === 'pending' || t.status === 'in-transit') && (
                           <button
                             onClick={async () => {
                               if (
                                 await confirm({
                                   title: `Cancel transfer ${t.refNo}?`,
+                                  message: 'The items go back into stock at the sending branch.',
                                   confirmLabel: 'Cancel transfer',
                                   cancelLabel: 'Keep it',
                                   variant: 'destructive',
@@ -290,8 +291,12 @@ function ReceiveTransferModal({
   );
   const [note, setNote] = useState('');
 
-  const submit = () => {
-    receive(
+  const [saving, setSaving] = useState(false);
+  // Closes only once the backend has received it; a refusal keeps the counts.
+  const submit = async () => {
+    if (saving) return;
+    setSaving(true);
+    const ok = await receive(
       transfer.id,
       transfer.lines.map((l) => ({
         productId: l.productId,
@@ -299,6 +304,9 @@ function ReceiveTransferModal({
       })),
       note || undefined,
     );
+    setSaving(false);
+    if (!ok) return;
+    toast.success(`${transfer.refNo} received`);
     onClose();
   };
 
@@ -320,7 +328,7 @@ function ReceiveTransferModal({
             <span className="text-muted-foreground">Variance: </span>
             <span
               className={cn(
-                'font-mono tabular font-semibold',
+                'tabular font-semibold',
                 variance === 0 ? 'text-success' : variance < 0 ? 'text-destructive' : 'text-warning',
               )}
             >
@@ -333,7 +341,7 @@ function ReceiveTransferModal({
             <Button variant="outline" onClick={onClose}>
               Cancel
             </Button>
-            <Button onClick={submit}>
+            <Button onClick={() => void submit()} disabled={saving}>
               <CheckCircle2 className="size-4" /> Mark Received
             </Button>
           </div>
@@ -343,7 +351,7 @@ function ReceiveTransferModal({
       <div className="p-4 space-y-4">
         <div className="rounded-lg border border-border overflow-hidden">
           <table className="w-full text-sm">
-            <thead className="text-[10px] uppercase text-muted-foreground bg-secondary/40">
+            <thead className="text-xs text-muted-foreground bg-secondary/40">
               <tr>
                 <th className="text-left px-3 py-2 font-medium">Item</th>
                 <th className="text-right px-2 py-2 font-medium">Sent</th>
@@ -359,9 +367,9 @@ function ReceiveTransferModal({
                   <tr key={l.productId} className="border-t border-border">
                     <td className="px-3 py-2">
                       <div className="font-medium">{l.name}</div>
-                      <div className="text-[11px] text-muted-foreground font-mono">{l.sku}</div>
+                      <div className="text-xs text-muted-foreground font-mono">{l.sku}</div>
                     </td>
-                    <td className="px-2 py-2 text-right font-mono tabular">
+                    <td className="px-2 py-2 text-right tabular">
                       {l.qty} {l.unit}
                     </td>
                     <td className="px-2 py-2 text-right">
@@ -375,7 +383,7 @@ function ReceiveTransferModal({
                     </td>
                     <td
                       className={cn(
-                        'px-3 py-2 text-right font-mono tabular',
+                        'px-3 py-2 text-right tabular',
                         diff === 0
                           ? 'text-muted-foreground'
                           : diff < 0
@@ -393,7 +401,7 @@ function ReceiveTransferModal({
           </table>
         </div>
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+          <label className="text-xs font-semibold text-muted-foreground">
             Receive note
           </label>
           <textarea
@@ -412,7 +420,7 @@ function ReceiveTransferModal({
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <Card className="p-4">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="text-xs text-muted-foreground">{label}</div>
       <div className="text-lg font-bold mt-0.5 tabular">{value}</div>
     </Card>
   );

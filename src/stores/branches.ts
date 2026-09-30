@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { currentUserId } from '@/lib/actor';
 import { persist } from 'zustand/middleware';
 import { api } from '@/lib/api';
 import { toast } from '@/stores/toast';
@@ -16,7 +17,6 @@ export interface Branch {
   active?: boolean;
 }
 
-const CURRENT_USER = 'u_admin';
 
 interface State {
   items: Branch[];
@@ -63,7 +63,7 @@ export const useBranches = create<State>()(
           manager: data.manager,
           isDefault: data.isDefault,
           active: data.active,
-          userId: CURRENT_USER,
+          userId: currentUserId(),
         })
           .then(() => get().hydrate())
           .catch((e: unknown) => {

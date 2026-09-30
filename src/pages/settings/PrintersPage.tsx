@@ -69,14 +69,14 @@ export default function PrintersPage() {
                 {!p.isDefault && (
                   <button
                     onClick={() => setDefault(p.id)}
-                    className="text-[11px] px-2 h-7 rounded border border-border hover:bg-secondary"
+                    className="text-xs px-2 h-7 rounded border border-border hover:bg-secondary"
                   >
                     Set default
                   </button>
                 )}
                 <button
                   onClick={() => toast.success(`Test print sent to "${p.name}"`)}
-                  className="text-[11px] px-2 h-7 rounded border border-border hover:bg-secondary inline-flex items-center gap-1"
+                  className="text-xs px-2 h-7 rounded border border-border hover:bg-secondary inline-flex items-center gap-1"
                 >
                   <Send className="size-3" /> Test
                 </button>
@@ -169,7 +169,7 @@ function Form({
             <select
               value={branch}
               onChange={(e) => setBranch(e.target.value)}
-              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+              className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
             >
               <option value="">Any</option>
               {branches.map((b) => (
@@ -183,7 +183,7 @@ function Form({
             <select
               value={connection}
               onChange={(e) => setConnection(e.target.value as PrinterProfile['connection'])}
-              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+              className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
             >
               <option value="USB">USB</option>
               <option value="Network">Network (IP)</option>
@@ -204,7 +204,7 @@ function Form({
             <select
               value={paperWidth}
               onChange={(e) => setPaperWidth(Number(e.target.value) as PrinterProfile['paperWidth'])}
-              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+              className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
             >
               <option value={50}>50 mm</option>
               <option value={58}>58 mm</option>
@@ -216,7 +216,7 @@ function Form({
             <select
               value={encoding}
               onChange={(e) => setEncoding(e.target.value as PrinterProfile['encoding'])}
-              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+              className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
             >
               <option value="UTF-8">UTF-8 (Bangla works)</option>
               <option value="GB18030">GB18030</option>
@@ -252,7 +252,7 @@ function Field({
 }) {
   return (
     <div className={cn('w-full')}>
-      <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+      <label className="text-xs font-semibold text-muted-foreground">
         {label} {required && <span className="text-destructive">*</span>}
       </label>
       {children}

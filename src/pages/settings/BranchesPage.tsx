@@ -65,7 +65,7 @@ export default function BranchesPage() {
                 <div className="flex items-center gap-2">
                   <span className="font-semibold">{b.name}</span>
                   {b.code && (
-                    <span className="text-[10px] font-mono text-muted-foreground bg-secondary px-1.5 rounded">
+                    <span className="text-xs font-mono text-muted-foreground bg-secondary px-1.5 rounded">
                       {b.code}
                     </span>
                   )}
@@ -86,7 +86,7 @@ export default function BranchesPage() {
                 {!b.isDefault && (
                   <button
                     onClick={() => setDefault(b.id)}
-                    className="text-[11px] px-2 h-7 rounded border border-border hover:bg-secondary"
+                    className="text-xs px-2 h-7 rounded border border-border hover:bg-secondary"
                     title="Set as default"
                   >
                     Set default
@@ -244,7 +244,7 @@ function Field({
 }) {
   return (
     <div className={cn(className)}>
-      <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+      <label className="text-xs font-semibold text-muted-foreground">
         {label} {required && <span className="text-destructive">*</span>}
       </label>
       {children}

@@ -97,7 +97,7 @@ export default function Drafts() {
             </div>
           ) : (
           <table className="w-full text-sm">
-            <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50">
+            <thead className="text-xs text-muted-foreground bg-secondary/50">
               <tr>
                 <th className="text-left px-4 py-2.5 font-medium">Reference</th>
                 <th className="text-left px-2 py-2.5 font-medium">Customer</th>
@@ -115,7 +115,7 @@ export default function Drafts() {
                   <td className="px-2 py-2.5 text-right tabular">
                     {d.lines.reduce((s, l) => s + l.qty, 0)}
                   </td>
-                  <td className="px-2 py-2.5 text-right font-mono tabular font-semibold">
+                  <td className="px-2 py-2.5 text-right tabular font-semibold">
                     {formatBDT(d.total)}
                   </td>
                   <td className="px-2 py-2.5 text-xs text-muted-foreground">
@@ -131,7 +131,7 @@ export default function Drafts() {
                         <Eye className="size-3.5" />
                       </button>
                       <button
-                        onClick={() => nav(`/sales/${d.id}/edit`)}
+                        onClick={() => nav(`/sales/${d.id}/edit?convert=true`)}
                         className="size-7 grid place-items-center rounded hover:bg-secondary"
                         title="Convert to Sale"
                       >

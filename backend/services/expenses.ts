@@ -5,6 +5,7 @@ import { round2 } from '../core/money.ts';
 import { postCashToOpenShift } from './cash.ts';
 import { logActivity } from './activity.ts';
 import { nextRef } from './sequences.ts';
+import { canonicalMethod } from '../core/validate.ts';
 
 export interface CreateExpenseInput {
   date?: string;
@@ -67,7 +68,12 @@ export function createExpense(db: DB, input: CreateExpenseInput) {
     const id = newId('exp');
     const date = input.date ?? new Date().toISOString();
     const refNo = nextRef(db, 'expense');
-    const method = input.paymentMethod ?? 'Cash';
+    // A negative amount used to become a cash-OUT through Math.abs, and 'cash'
+    // in lower case skipped the drawer.
+    if (!Number.isFinite(input.amount) || input.amount <= 0) {
+      throw new Error('An expense amount must be above zero.');
+    }
+    const method = canonicalMethod(input.paymentMethod ?? 'Cash');
 
     db.prepare(
       `INSERT INTO expenses (id, ref_no, date, category_id, amount, payment_method, reference, note, branch_id, user_id, attachment_name, recurring, frequency, recurring_end)
@@ -130,6 +136,12 @@ export interface UpdateExpenseInput {
  * (A no-op when neither old nor new is Cash, or when there's no open shift.)
  */
 export function updateExpense(db: DB, id: string, patch: UpdateExpenseInput) {
+  if (patch.amount !== undefined && patch.amount !== null && (!Number.isFinite(patch.amount) || patch.amount <= 0)) {
+    throw new Error('An expense amount must be above zero.');
+  }
+  if (patch.paymentMethod !== undefined && patch.paymentMethod !== null) {
+    patch = { ...patch, paymentMethod: canonicalMethod(patch.paymentMethod) };
+  }
   return tx(db, () => {
     const cur = db.prepare('SELECT * FROM expenses WHERE id = ?').get(id) as
       | Record<string, unknown>

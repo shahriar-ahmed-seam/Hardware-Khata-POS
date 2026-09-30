@@ -18,10 +18,27 @@ interface Props extends Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'o
   value: number;
   onChangeNumber: (n: number) => void;
   allowNegative?: boolean;
+  /**
+   * Select the whole value when the field gets focus, so typing replaces it
+   * (no "10" becoming "105" by accident). On by default.
+   */
+  selectOnFocus?: boolean;
 }
 
 export const NumberField = forwardRef<HTMLInputElement, Props>(
-  ({ value, onChangeNumber, allowNegative = false, className, placeholder, ...rest }, ref) => {
+  (
+    {
+      value,
+      onChangeNumber,
+      allowNegative = false,
+      selectOnFocus = true,
+      className,
+      placeholder,
+      onFocus,
+      ...rest
+    },
+    ref,
+  ) => {
     const [text, setText] = useState<string>(value === 0 ? '' : String(value));
 
     // Keep internal text synced when the external value changes externally
@@ -53,8 +70,12 @@ export const NumberField = forwardRef<HTMLInputElement, Props>(
             if (Number.isFinite(n)) onChangeNumber(n);
           }
         }}
+        onFocus={(e) => {
+          if (selectOnFocus) e.currentTarget.select();
+          onFocus?.(e);
+        }}
         className={cn(
-          'h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none transition placeholder:text-muted-foreground focus:ring-2 focus:ring-ring/50 focus:border-ring/60 disabled:opacity-50 font-mono tabular',
+          'h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none transition placeholder:text-muted-foreground focus:ring-2 focus:ring-ring/50 focus:border-ring/60 disabled:opacity-50 tabular',
           className,
         )}
         {...rest}

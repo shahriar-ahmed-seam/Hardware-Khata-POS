@@ -45,7 +45,7 @@ export function Shortcuts({ onOpenProfit }: Props) {
     >
       {(close) => (
         <div className="py-2">
-          <div className="px-3 py-1 text-[10px] font-semibold uppercase text-muted-foreground">
+          <div className="px-3 py-1 text-xs font-semibold text-muted-foreground">
             Quick Actions
           </div>
           {more.map((it) => {
@@ -62,7 +62,7 @@ export function Shortcuts({ onOpenProfit }: Props) {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium">{it.label}</div>
-                  <div className="text-[10px] text-muted-foreground">{it.desc}</div>
+                  <div className="text-xs text-muted-foreground">{it.desc}</div>
                 </div>
               </Link>
             );

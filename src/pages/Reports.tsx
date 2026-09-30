@@ -20,6 +20,7 @@ import {
   BarChart3,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useBranches } from '@/stores/branches';
 
 interface Tile {
   to: string;
@@ -74,17 +75,20 @@ const GROUP_TITLES: Record<Tile['group'], { label: string; icon: any }> = {
 };
 
 export default function Reports() {
+  // Stock Transfers (between branches) only means something with 2+ branches.
+  const multiBranch = useBranches((s) => s.items.length > 1);
+  const shown = multiBranch ? tiles : tiles.filter((t) => t.to !== '/reports/stock-transfers');
   return (
     <div>
       <PageHeader title="Reports" subtitle="Insights into sales, stock, money, and people" />
       <div className="p-6 space-y-6 max-w-6xl">
         {(Object.keys(GROUP_TITLES) as Tile['group'][]).map((g) => {
-          const list = tiles.filter((t) => t.group === g);
+          const list = shown.filter((t) => t.group === g);
           if (list.length === 0) return null;
           const Icon = GROUP_TITLES[g].icon;
           return (
             <section key={g}>
-              <div className="flex items-center gap-2 mb-2 text-[11px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+              <div className="flex items-center gap-2 mb-2 text-xs font-semibold text-muted-foreground">
                 <Icon className="size-3.5" />
                 {GROUP_TITLES[g].label}
               </div>

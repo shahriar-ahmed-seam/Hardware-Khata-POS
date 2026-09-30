@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { currentUserId } from '@/lib/actor';
 import { api } from '@/lib/api';
 import { toast } from '@/stores/toast';
 import { branchNameOf, requireBranchId } from '@/lib/branch';
@@ -17,6 +18,7 @@ export type MovementReason =
   | 'purchase_return'
   | 'transfer_out'
   | 'transfer_in'
+  | 'transfer_cancel'
   | 'damage'
   | 'theft'
   | 'sample'
@@ -95,16 +97,16 @@ interface State {
   loading: boolean;
 
   hydrate: () => Promise<void>;
-  addTransfer: (t: StockTransfer) => void;
+  // Each write resolves true only once the backend accepted it.
+  addTransfer: (t: StockTransfer) => Promise<boolean>;
   receiveTransfer: (
     id: string,
     receivedLines: { productId: string; receivedQty: number }[],
     note?: string,
     receivedBy?: string,
-  ) => void;
-  cancelTransfer: (id: string) => void;
-
-  addAdjustment: (a: StockAdjustment) => void;
+  ) => Promise<boolean>;
+  cancelTransfer: (id: string, reason?: string) => Promise<boolean>;
+  addAdjustment: (a: StockAdjustment) => Promise<boolean>;
 }
 
 let transferCounter = 100;
@@ -118,7 +120,6 @@ export function nextAdjustmentRef() {
   return `ADJ-${new Date().getFullYear()}-${String(adjustmentCounter).padStart(4, '0')}`;
 }
 
-const CURRENT_USER = 'u_admin';
 
 /** Build an id→name resolver from the branches store for display mapping. */
 const branchIdToName = branchNameOf;
@@ -150,7 +151,7 @@ export const useStock = create<State>((set, get) => ({
     }
   },
 
-  addTransfer: (t) => {
+  addTransfer: async (t) => {
     // Branch NAME -> ID before every write: the backend feeds these straight
     // into recordMovement as the branch key; sending a name would land the
     // movement on a non-existent branch.
@@ -166,9 +167,9 @@ export const useStock = create<State>((set, get) => ({
       toBranch = requireBranchId(t.toBranch);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'No branch is available yet');
-      return;
+      return false;
     }
-    void api('transfers.create', {
+    return settleStock(get, api('transfers.create', {
       date: t.date,
       fromBranch,
       toBranch,
@@ -180,36 +181,32 @@ export const useStock = create<State>((set, get) => ({
         unit: l.unit,
         unitCost: l.unitCost,
       })),
-      createdBy: CURRENT_USER,
-    })
-      .then(() => get().hydrate())
-      .catch((e: unknown) => {
-        toast.error(e instanceof Error ? e.message : 'Failed to save transfer');
-        void get().hydrate();
-      });
+      createdBy: currentUserId(),
+    }), 'Failed to save transfer');
   },
-  receiveTransfer: (id, receivedLines, note) => {
-    void api('transfers.receive', {
-      transferId: id,
-      received: receivedLines.map((r) => ({ productId: r.productId, receivedQty: r.receivedQty })),
-      userId: CURRENT_USER,
-      note,
-    })
-      .then(() => get().hydrate())
-      .catch((e: unknown) => {
-        toast.error(e instanceof Error ? e.message : 'Failed to receive transfer');
-        void get().hydrate();
-      });
+  receiveTransfer: (id, receivedLines, note) =>
+    settleStock(
+      get,
+      api('transfers.receive', {
+        transferId: id,
+        received: receivedLines.map((r) => ({ productId: r.productId, receivedQty: r.receivedQty })),
+        userId: currentUserId(),
+        note,
+      }),
+      'Failed to receive transfer',
+    ),
+  // The backend puts the dispatched goods back at the source with appended
+  // movements; a received transfer is refused there (its goods have arrived).
+  cancelTransfer: async (id, reason) => {
+    const ok = await settleStock(
+      get,
+      api('transfers.cancel', { transferId: id, userId: currentUserId(), reason }),
+      'Failed to cancel transfer',
+    );
+    if (ok) toast.success('Transfer cancelled — the goods are back at the sending branch');
+    return ok;
   },
-  cancelTransfer: () => {
-    // DEFERRED: there is NO backend handler to cancel/reverse a transfer. A real
-    // cancel would have to reverse the transfer_out (and any transfer_in) stock
-    // movements, which only the backend can do safely. Flipping the status here
-    // would desync stock (movements stay applied), so we do nothing destructive.
-    toast.info('Transfer cancel not yet supported with the database');
-  },
-
-  addAdjustment: (a) => {
+  addAdjustment: async (a) => {
     // Branch NAME -> ID before the write (see addTransfer note). qty is signed
     // and passed through unchanged; the backend records the signed movement.
     let branchId: string;
@@ -217,9 +214,9 @@ export const useStock = create<State>((set, get) => ({
       branchId = requireBranchId(a.branch);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'No branch is available yet');
-      return;
+      return false;
     }
-    void api('adjustments.create', {
+    return settleStock(get, api('adjustments.create', {
       date: a.date,
       branchId,
       type: a.type,
@@ -230,12 +227,24 @@ export const useStock = create<State>((set, get) => ({
         unit: l.unit,
         unitCost: l.unitCost,
       })),
-      createdBy: CURRENT_USER,
-    })
-      .then(() => get().hydrate())
-      .catch((e: unknown) => {
-        toast.error(e instanceof Error ? e.message : 'Failed to save adjustment');
-        void get().hydrate();
-      });
+      createdBy: currentUserId(),
+    }), 'Failed to save adjustment');
   },
 }));
+
+/** Wait for a stock write, then re-read either way. True only when accepted. */
+async function settleStock(
+  get: () => { hydrate: () => Promise<void> },
+  write: Promise<unknown>,
+  failure: string,
+): Promise<boolean> {
+  try {
+    await write;
+    void get().hydrate();
+    return true;
+  } catch (e: unknown) {
+    toast.error(e instanceof Error ? e.message : failure);
+    void get().hydrate();
+    return false;
+  }
+}

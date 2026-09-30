@@ -194,7 +194,7 @@ export default function CustomerDues() {
 
         <Card className="overflow-hidden">
           <table className="w-full text-sm">
-            <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50">
+            <thead className="text-xs text-muted-foreground bg-secondary/50">
               <tr>
                 <th className="w-10 px-3 py-2.5">
                   <input type="checkbox" checked={allSelected} onChange={toggleAll} />
@@ -247,10 +247,10 @@ export default function CustomerDues() {
                         {r.c.group}
                       </Badge>
                     </td>
-                    <td className="px-2 py-2.5 text-right font-mono tabular font-semibold text-destructive">
+                    <td className="px-2 py-2.5 text-right tabular font-semibold text-destructive">
                       {formatBDT(r.c.due, { withSymbol: false })}
                     </td>
-                    <td className="px-2 py-2.5 text-right font-mono tabular text-muted-foreground">
+                    <td className="px-2 py-2.5 text-right tabular text-muted-foreground">
                       {r.c.creditLimit ? formatBDT(r.c.creditLimit, { withSymbol: false }) : '—'}
                       {overLimit && <AlertTriangle className="size-3 inline ml-1 text-destructive" />}
                     </td>
@@ -260,7 +260,7 @@ export default function CustomerDues() {
                     <td className="px-2 py-2.5 text-right">
                       <span
                         className={cn(
-                          'text-[11px] font-medium px-2 py-0.5 rounded-full',
+                          'text-xs font-medium px-2 py-0.5 rounded-full',
                           r.bucketTag === '90+'
                             ? 'bg-destructive/15 text-destructive'
                             : r.bucketTag === '60-90'
@@ -328,17 +328,17 @@ function Bucket({
         active ? 'border-primary bg-primary/5 shadow-sm' : 'border-border hover:bg-secondary/40',
       )}
     >
-      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="text-xs text-muted-foreground">{label}</div>
       <div
         className={cn(
-          'text-lg font-bold mt-0.5 font-mono tabular',
+          'text-lg font-bold mt-0.5 tabular',
           tone === 'destructive' && 'text-destructive',
           tone === 'warning' && 'text-warning',
         )}
       >
         {value}
       </div>
-      <div className="text-[10px] mt-1 text-muted-foreground inline-flex items-center gap-1">
+      <div className="text-xs mt-1 text-muted-foreground inline-flex items-center gap-1">
         Filter <ArrowRight className="size-3" />
       </div>
     </button>

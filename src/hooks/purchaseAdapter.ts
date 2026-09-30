@@ -3,7 +3,66 @@ import type {
   PurchaseLine,
   PurchasePayment,
   PurchaseAuditEntry,
+  PurchaseReturn,
 } from '@/stores/purchases';
+
+/** A `purchaseReturns.list` / `purchaseReturns.get` row. */
+export interface BackendPurchaseReturn {
+  id: string;
+  ref_no: string;
+  purchase_id: string | null;
+  purchase_ref_no: string | null;
+  date: string;
+  supplier_id: string | null;
+  supplier_name: string | null;
+  user_id: string | null;
+  user_name?: string | null;
+  reason: string | null;
+  refund_method: string;
+  total: number;
+  notes: string | null;
+  /** Only on `purchaseReturns.get`. */
+  lines?: {
+    product_id: string;
+    name: string | null;
+    sku: string | null;
+    qty: number;
+    unit: string;
+    unit_cost: number;
+    refund_amount: number;
+  }[];
+}
+
+/**
+ * Maps a purchase-return row. There was no adapter at all — nothing ever loaded
+ * `purchaseReturns.list`, so the Purchase Returns screen was always empty and a
+ * return that had been saved looked as if it had done nothing.
+ */
+export function toPurchaseReturnRecord(b: BackendPurchaseReturn): PurchaseReturn {
+  return {
+    id: b.id,
+    refNo: b.ref_no,
+    purchaseId: b.purchase_id ?? '',
+    purchaseRefNo: b.purchase_ref_no ?? '',
+    date: b.date,
+    supplierId: b.supplier_id ?? '',
+    supplierName: b.supplier_name ?? '—',
+    user: b.user_name ?? b.user_id ?? '',
+    reason: (b.reason ?? undefined) as PurchaseReturn['reason'],
+    refundMethod: b.refund_method as PurchaseReturn['refundMethod'],
+    lines: (b.lines ?? []).map((l) => ({
+      productId: l.product_id,
+      name: l.name ?? '—',
+      sku: l.sku ?? '',
+      qty: l.qty,
+      unit: l.unit,
+      unitCost: l.unit_cost,
+      refundAmount: l.refund_amount,
+    })),
+    total: b.total,
+    notes: b.notes ?? undefined,
+  };
+}
 
 /**
  * Maps a backend purchase (snake_case, with nested lines/payments/audit) into the
@@ -16,6 +75,8 @@ interface BackendPurchaseLine {
   sku: string;
   qty: number;
   unit: string;
+  /** Pieces per purchase unit (schema v9). 1 when bought by the piece. */
+  unit_factor?: number | null;
   imei: string | null;
   unit_cost_before_disc: number;
   discount_pct: number;
@@ -61,6 +122,8 @@ export interface BackendPurchase {
   other: number;
   total: number;
   paid: number;
+  /** Optional: rows written before schema v10 have no value for it. */
+  credited?: number | null;
   due: number;
   notes: string | null;
   lines?: BackendPurchaseLine[];
@@ -75,6 +138,9 @@ function mapLine(l: BackendPurchaseLine): PurchaseLine {
     sku: l.sku,
     qty: l.qty,
     unit: l.unit,
+    // Dropped before, so a "5 dozen" line read back as 5 pieces — and a
+    // correction would have re-sent it that way.
+    unitFactor: l.unit_factor && l.unit_factor > 0 ? l.unit_factor : 1,
     imei: l.imei ?? undefined,
     unitCostBeforeDisc: l.unit_cost_before_disc,
     discountPct: l.discount_pct,
@@ -109,6 +175,8 @@ export function toPurchaseRecord(b: BackendPurchase): PurchaseRecord {
     other: b.other,
     total: b.total,
     paid: b.paid,
+    // Settled by a supplier credit note rather than money (schema v10).
+    credited: b.credited ?? 0,
     due: b.due,
     payments: (b.payments ?? []).map(
       (p): PurchasePayment => ({

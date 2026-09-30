@@ -82,7 +82,7 @@ export default function CustomerGroups() {
                       <Star className="size-3" /> Default
                     </Badge>
                   )}
-                  <span className="text-[11px] text-muted-foreground inline-flex items-center gap-1">
+                  <span className="text-xs text-muted-foreground inline-flex items-center gap-1">
                     <Users className="size-3" />{' '}
                     {loadingCounts ? 'counting customers…' : `${customerCount(g.name)} customers`}
                   </span>
@@ -91,13 +91,13 @@ export default function CustomerGroups() {
                 <div className="flex items-center gap-3 mt-2 text-xs">
                   {g.defaultCreditLimit ? (
                     <span className="text-muted-foreground">
-                      Default credit: <span className="text-foreground font-mono tabular">{formatBDT(g.defaultCreditLimit)}</span>
+                      Default credit: <span className="text-foreground tabular">{formatBDT(g.defaultCreditLimit)}</span>
                     </span>
                   ) : null}
                   {g.defaultDiscountPct ? (
                     <span className="text-muted-foreground inline-flex items-center gap-1">
                       <Percent className="size-3" />
-                      <span className="text-foreground font-mono tabular">{g.defaultDiscountPct}%</span>
+                      <span className="text-foreground tabular">{g.defaultDiscountPct}%</span>
                       default discount
                     </span>
                   ) : null}
@@ -189,23 +189,23 @@ function Form({
     >
       <div className="flex-1 overflow-auto p-4 space-y-3">
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">Name *</label>
+          <label className="text-xs font-semibold text-muted-foreground">Name *</label>
           <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="VIP / Member / etc." />
         </div>
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">Notes</label>
+          <label className="text-xs font-semibold text-muted-foreground">Notes</label>
           <Input value={notes} onChange={(e) => setNotes(e.target.value)} />
         </div>
 
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+            <label className="text-xs font-semibold text-muted-foreground">
               Default credit limit (৳)
             </label>
             <NumberField value={defaultCreditLimit} onChangeNumber={setDefaultCreditLimit} />
           </div>
           <div>
-            <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+            <label className="text-xs font-semibold text-muted-foreground">
               Default discount %
             </label>
             <NumberField value={defaultDiscountPct} onChangeNumber={setDefaultDiscountPct} />

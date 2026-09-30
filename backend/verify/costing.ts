@@ -60,7 +60,13 @@ export function runCosting(s: Suite) {
       version: number;
     }[]
   ).map((r) => r.version);
-  s.eq('every migration up to the head is recorded', versions.join(','), '1,2,3,4,5,6,7,8,9');
+  s.eq('every migration up to the head is recorded', versions.join(','), '1,2,3,4,5,6,7,8,9,10,11');
+  s.ok(
+    'purchases.credited exists (v10)',
+    new Set(
+      (db.prepare('PRAGMA table_info(purchases)').all() as { name: string }[]).map((c) => c.name),
+    ).has('credited'),
+  );
   s.ok(
     'purchase_lines.unit_factor exists (v9)',
     new Set(
@@ -546,6 +552,34 @@ export function runCosting(s: Suite) {
   s.ok('products.listPage exposes avg_cost', paged !== undefined && 'avg_cost' in paged);
   const got = call('products.get', { id }) as Record<string, any>;
   s.ok('products.get exposes avg_cost', 'avg_cost' in got);
+
+  // ---------------- the product screen's edit goes through the history (R25)
+  // products.update used to write `cost` straight into the column, so the
+  // history and the average drifted from the price the screen showed.
+  s.section('costing-product-edit-records-history');
+  {
+    const editId = createProduct(db, { sku: 'COST-EDIT', name: 'Edited price', cost: 100, price: 150 }).id;
+    const before = listCostHistory(db, editId).length;
+    call('products.update', { id: editId, patch: { name: 'Edited price', cost: 100, price: 155, userId: 'u_admin' } });
+    s.eq('re-saving the same buying price records nothing', listCostHistory(db, editId).length, before);
+    call('products.update', { id: editId, patch: { cost: 130, userId: 'u_admin' } });
+    const hist = listCostHistory(db, editId);
+    s.eq('a changed buying price adds one history entry', hist.length, before + 1);
+    s.eq('marked as a manual change', hist[0].source, 'manual');
+    s.eq('recording who changed it', hist[0].userId, 'u_admin');
+    s.money('the cached cost is the new price', costOf(db, editId), 130);
+    s.money('the average includes both prices', computeAvgCost(db, editId), 115);
+    const row = db.prepare('SELECT avg_cost AS a FROM products WHERE id = ?').get(editId) as { a: number };
+    s.money('and the cached average agrees with the history', row.a, 115);
+    let refused = false;
+    try {
+      call('products.update', { id: editId, patch: { cost: -5 } });
+    } catch {
+      refused = true;
+    }
+    s.ok('a negative buying price is refused on edit too', refused);
+    s.money('and nothing changed', costOf(db, editId), 130);
+  }
 
   db.close();
 

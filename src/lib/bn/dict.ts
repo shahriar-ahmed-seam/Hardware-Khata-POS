@@ -3276,3 +3276,291 @@ Object.assign(BN, {
   'What the supplier is quoting — the price is per one of these':
     'সাপ্লায়ার যে হিসেবে দাম বলছেন — দামটি এর প্রতিটির জন্য',
 });
+
+// ---------------------------------------------------------------------------
+// APPEND-ONLY BLOCK — the September 2026 fix pass: sign-in and lock refusals,
+// the return / transfer / payment guards (their error text reaches the screen
+// through toasts), return quantities and refunds, quotation and draft
+// printing, the returns detail drawer, the Close Shift gate now naming the
+// owner or a manager, Profit & Loss returns rows, and pendrive detection on
+// Linux.
+//
+// Messages with a number or name interpolated into them are deliberately
+// absent: the translation layer matches whole text nodes, and those are
+// assembled at render time. 'Close shift', 'Loading sale…', 'Refund via',
+// 'Quotation', 'Draft', 'Shipment' and 'Cancel transfer' are already
+// translated in earlier blocks.
+// ---------------------------------------------------------------------------
+Object.assign(BN, {
+  // --- sign-in, lock and file guards (electron/guard.ts, ipc.ts)
+  'Finish the first-run setup before signing in.': 'সাইন ইন করার আগে প্রথমবারের সেটআপ সম্পন্ন করুন।',
+  'Not signed in — please sign in to perform this action.': 'সাইন ইন করা নেই — এই কাজটি করতে সাইন ইন করুন।',
+  'The screen is locked. Unlock it to continue.': 'স্ক্রিন লক করা আছে। চালিয়ে যেতে আনলক করুন।',
+  'Too many wrong attempts. Please wait and try again.': 'অনেকবার ভুল চেষ্টা হয়েছে। একটু অপেক্ষা করে আবার চেষ্টা করুন।',
+  'Only saved invoice PDFs can be opened.': 'শুধু সংরক্ষিত ইনভয়েস পিডিএফ খোলা যায়।',
+
+  // --- returns: guards
+  'A return needs at least one item.': 'ফেরতে অন্তত একটি পণ্য থাকতে হবে।',
+  'Each returned item needs a quantity above zero.': 'ফেরত দেওয়া প্রতিটি পণ্যের পরিমাণ শূন্যের বেশি হতে হবে।',
+  'A refund cannot be negative.': 'ফেরতের টাকা ঋণাত্মক হতে পারে না।',
+  'Store credit or a credit note needs a named customer. Refund a walk-in sale in cash.':
+    'দোকানের ক্রেডিট বা বাকি সমন্বয়ের জন্য নাম থাকা গ্রাহক লাগবে। সাধারণ গ্রাহকের বিক্রয়ের ফেরত নগদে দিন।',
+  'A credit note needs the supplier it is against.': 'বাকি সমন্বয়ের জন্য সংশ্লিষ্ট সরবরাহকারী লাগবে।',
+  'Sale not found': 'বিক্রয় পাওয়া যায়নি',
+  'Purchase not found': 'ক্রয় পাওয়া যায়নি',
+
+  // --- returns: the two return windows
+  'Can return': 'ফেরতযোগ্য',
+  'Everything on this invoice has already been returned.': 'এই ইনভয়েসের সবকিছু আগেই ফেরত দেওয়া হয়েছে।',
+  'Everything on this bill has already been returned.': 'এই বিলের সবকিছু আগেই ফেরত দেওয়া হয়েছে।',
+  'Return saved': 'ফেরত সংরক্ষিত হয়েছে',
+  'Purchase return saved': 'ক্রয় ফেরত সংরক্ষিত হয়েছে',
+
+  // --- returns: detail drawer
+  'Loading return…': 'ফেরত লোড হচ্ছে…',
+  'That return could not be found.': 'ফেরতটি পাওয়া যায়নি।',
+  Against: 'যার বিপরীতে',
+  'Recorded by': 'লিপিবদ্ধ করেছেন',
+  'Total refund': 'মোট ফেরত',
+  'No items are recorded on this return.': 'এই ফেরতে কোনো পণ্য লিপিবদ্ধ নেই।',
+
+  // --- void / cancel / delete / pay guards
+  'Has a return — return the rest instead of voiding.': 'এতে ফেরত আছে — বাতিল না করে বাকিটা ফেরত নিন।',
+  '1 return': '১টি ফেরত',
+  'A payment must be more than zero.': 'পরিশোধের পরিমাণ শূন্যের বেশি হতে হবে।',
+  'This purchase has payments recorded against it, so it is kept. Cancel it instead.':
+    'এই ক্রয়ের বিপরীতে পরিশোধ লিপিবদ্ধ আছে, তাই এটি রেখে দেওয়া হলো। এর বদলে ক্রয়টি বাতিল করুন।',
+  'Goods were returned against this purchase, so it is kept as the record.':
+    'এই ক্রয়ের বিপরীতে পণ্য ফেরত দেওয়া হয়েছে, তাই রেকর্ড হিসেবে এটি রেখে দেওয়া হলো।',
+  'This shift is already closed.': 'এই শিফট আগেই বন্ধ হয়েছে।',
+
+  // --- editing a sale or purchase
+  'That sale could not be found.': 'বিক্রয়টি পাওয়া যায়নি।',
+  'A voided sale cannot be edited — its stock and cash have already been reversed.':
+    'বাতিল বিক্রয় সম্পাদনা করা যায় না — এর স্টক ও টাকা আগেই ফিরিয়ে নেওয়া হয়েছে।',
+  'A saved purchase cannot be changed here': 'সংরক্ষিত ক্রয় এখানে বদলানো যায় না',
+  'To correct a purchase, cancel it (the stock and any cash paid are reversed) and enter it again. To send some items back to the supplier, use Create Return on the purchase.':
+    'ক্রয় সংশোধন করতে সেটি বাতিল করুন (স্টক ও পরিশোধিত টাকা ফিরিয়ে নেওয়া হবে) এবং আবার লিখুন। কিছু পণ্য সরবরাহকারীকে ফেরত পাঠাতে ক্রয়টিতে “ফেরত তৈরি করুন” ব্যবহার করুন।',
+  'Back to purchases': 'ক্রয় তালিকায় ফিরুন',
+  'No branch is available yet': 'এখনো কোনো শাখা নেই',
+
+  // --- drafts and quotations
+  'Saving makes a new sale from this quotation. The quotation is kept as it was.':
+    'সংরক্ষণ করলে এই দরপত্র থেকে একটি নতুন বিক্রয় তৈরি হবে। দরপত্রটি যেমন ছিল তেমনই থাকবে।',
+  'Saving turns this draft into a sale with its own invoice number.':
+    'সংরক্ষণ করলে এই খসড়াটি নিজস্ব ইনভয়েস নম্বরসহ একটি বিক্রয় হয়ে যাবে।',
+  'Failed to convert to a sale': 'বিক্রয়ে রূপান্তর করা যায়নি',
+  'Quotation No.': 'দরপত্র নম্বর',
+  'Draft No.': 'খসড়া নম্বর',
+  'This is a quotation, not a bill.': 'এটি দরপত্র, বিল নয়।',
+  'Draft — not a bill.': 'খসড়া — বিল নয়।',
+  // Followed by the date in its own text node.
+  'Prices valid until': 'দামের মেয়াদ:',
+  'Not a bill — no payment is recorded on it.': 'বিল নয় — এতে কোনো পরিশোধ লিপিবদ্ধ হয় না।',
+
+  // --- transfers
+  'A transfer needs two different branches.': 'স্থানান্তরের জন্য দুটি ভিন্ন শাখা লাগবে।',
+  'A transfer needs at least one item.': 'স্থানান্তরে অন্তত একটি পণ্য থাকতে হবে।',
+  'Each transferred item needs a quantity above zero.': 'স্থানান্তরিত প্রতিটি পণ্যের পরিমাণ শূন্যের বেশি হতে হবে।',
+  'A received quantity cannot be negative.': 'গৃহীত পরিমাণ ঋণাত্মক হতে পারে না।',
+  'Transfer not found': 'স্থানান্তর পাওয়া যায়নি',
+  'The items go back into stock at the sending branch.': 'পণ্যগুলো পাঠানো শাখার স্টকে ফিরে যাবে।',
+  'Transfer cancelled — the goods are back at the sending branch': 'স্থানান্তর বাতিল — পণ্য পাঠানো শাখায় ফিরে গেছে',
+  'Failed to cancel transfer': 'স্থানান্তর বাতিল করা যায়নি',
+
+  // --- Close Shift: the variance gate names the owner or a manager
+  'Close with a large variance?': 'বড় গরমিল নিয়ে বন্ধ করবেন?',
+  'Close with a variance?': 'গরমিল নিয়ে বন্ধ করবেন?',
+  'Count again': 'আবার গুনুন',
+  'Explain it in the note before closing.': 'বন্ধ করার আগে নোটে কারণ লিখুন।',
+  'Go back to Notes and explain the variance before closing.': 'বন্ধ করার আগে নোটে ফিরে গিয়ে গরমিলের কারণ লিখুন।',
+  'The count is over the variance limit. Only the owner or a manager can close this shift.':
+    'গণনাটি গরমিলের সীমা ছাড়িয়ে গেছে। শুধু মালিক বা একজন ম্যানেজার এই শিফট বন্ধ করতে পারবেন।',
+  'Count again, or ask the owner or a manager to sign in and close this shift.':
+    'আবার গুনুন, অথবা মালিক বা একজন ম্যানেজারকে সাইন ইন করে এই শিফট বন্ধ করতে বলুন।',
+  'Owner or manager must close a shift over the block limit': 'সীমার বেশি গরমিলের শিফট মালিক বা ম্যানেজারকে বন্ধ করতে হবে',
+  'A cashier cannot close a shift whose variance is at or over the block limit. The owner or a manager signs in and closes it.':
+    'গরমিল আটকানোর সীমার সমান বা বেশি হলে ক্যাশিয়ার শিফট বন্ধ করতে পারবেন না। মালিক বা একজন ম্যানেজার সাইন ইন করে বন্ধ করবেন।',
+  'The owner or a manager must close it (if enabled).': 'মালিক বা একজন ম্যানেজারকে বন্ধ করতে হবে (চালু থাকলে)।',
+  'Variance is the difference between expected drawer and counted cash on shift close. Below warn → silent. Between warn and block → yellow warning, can still close. Above block → red, needs the owner or a manager if enabled.':
+    'শিফট বন্ধের সময় বাক্সে থাকা উচিত এমন টাকা ও গুনে পাওয়া টাকার পার্থক্যই গরমিল। সতর্কতার নিচে → কিছু হবে না। সতর্কতা ও আটকানোর সীমার মাঝে → হলুদ সতর্কতা, তবুও বন্ধ করা যাবে। আটকানোর সীমার উপরে → লাল, চালু থাকলে মালিক বা একজন ম্যানেজার লাগবে।',
+
+  // --- reports and dashboard
+  'Cost of goods sold (after returns)': 'বিক্রীত পণ্যের ক্রয়মূল্য (ফেরতের পর)',
+  'Purchase returns (cash back, not profit)': 'ক্রয় ফেরত (ফেরত পাওয়া টাকা, লাভ নয়)',
+  'Nothing to compare with yesterday': 'গতকালের সঙ্গে তুলনা করার কিছু নেই',
+
+  // --- pendrive backup on Linux
+  'No pendrive found. Plug one into a USB port, wait for it to appear in the file manager, then try again.':
+    'কোনো পেনড্রাইভ পাওয়া যায়নি। ইউএসবি পোর্টে একটি লাগান, ফাইল ম্যানেজারে দেখা না যাওয়া পর্যন্ত অপেক্ষা করুন, তারপর আবার চেষ্টা করুন।',
+  'A pendrive is plugged in but not opened yet. Open it once in the file manager, then try again.':
+    'একটি পেনড্রাইভ লাগানো আছে, কিন্তু এখনো খোলা হয়নি। ফাইল ম্যানেজারে একবার খুলুন, তারপর আবার চেষ্টা করুন।',
+  'The pendrive is plugged in but cannot be written to. It may be write-protected, or formatted in a way this computer can only read.':
+    'পেনড্রাইভ লাগানো আছে, কিন্তু তাতে লেখা যাচ্ছে না। এটি হয়তো লেখা-সুরক্ষিত, অথবা এমনভাবে ফরম্যাট করা যে এই কম্পিউটার শুধু পড়তে পারে।',
+  'The app could not list the drives on this computer (the lsblk command did not run). Choose the drive folder yourself instead.':
+    'অ্যাপটি এই কম্পিউটারের ড্রাইভের তালিকা পায়নি (lsblk কমান্ড চলেনি)। এর বদলে ড্রাইভের ফোল্ডার নিজে বেছে নিন।',
+  'Detecting removable drives is not supported on this system. Choose the drive folder yourself instead.':
+    'এই সিস্টেমে খুলে নেওয়া যায় এমন ড্রাইভ খোঁজা সমর্থিত নয়। এর বদলে ড্রাইভের ফোল্ডার নিজে বেছে নিন।',
+  'Your pendrive is still fine to use. Pick it in the next window and the copy will be written to it. It is listed under its name or its drive letter.':
+    'আপনার পেনড্রাইভ ব্যবহার করা যাবে। পরের উইন্ডোতে সেটি বেছে নিন, কপিটি তাতেই লেখা হবে। এটি নিজের নামে বা ড্রাইভ লেটারে তালিকায় থাকবে।',
+});
+
+/**
+ * Owner decisions (September 2026) and the audit-round-2 P0 fixes: the cash
+ * drawer that opens itself, backend validation messages, purchase correction,
+ * writes that wait for the backend, the switched-off importers and payments on
+ * account.
+ */
+Object.assign(BN, {
+  'The drawer opens by itself': 'ক্যাশ বাক্স নিজে থেকেই খোলে',
+  'The next cash sale, payment or expense starts the drawer, with the cash the last shift left in it. Nothing has to be opened first.':
+    'পরের নগদ বিক্রি, টাকা গ্রহণ বা খরচেই বাক্স চালু হয়, আগের শিফটে যত টাকা রেখে যাওয়া হয়েছিল তা দিয়ে। আগে কিছু খুলতে হয় না।',
+  'Count the drawer and start now': 'বাক্স গুনে এখনই শুরু করুন',
+  'Count the drawer': 'বাক্স গুনুন',
+  'Start the drawer': 'বাক্স শুরু করুন',
+  'Cash in the drawer now (৳)': 'এখন বাক্সে নগদ (৳)',
+  'Filled in with what the last shift left. Change it if your count is different.':
+    'আগের শিফট যা রেখে গেছে তা দিয়ে বসানো। আপনার গণনা আলাদা হলে বদলে দিন।',
+  'Drawer ready': 'বাক্স প্রস্তুত',
+  'The drawer opens with the next cash sale.': 'পরের নগদ বিক্রিতেই বাক্স খুলবে।',
+  'Every cash sale, customer payment, refund, supplier payment and expense goes into this drawer. Nothing has to be opened first.':
+    'প্রতিটি নগদ বিক্রি, গ্রাহকের পরিশোধ, ফেরত, সরবরাহকারীকে পরিশোধ ও খরচ এই বাক্সেই যায়। আগে কিছু খুলতে হয় না।',
+  'Close the shift when you count the drawer. The next cash entry starts a new drawer with the cash you left in it.':
+    'বাক্স গোনার সময় শিফট বন্ধ করুন। পরের নগদ লেনদেনে আপনার রেখে যাওয়া টাকা দিয়ে নতুন বাক্স শুরু হবে।',
+  'A small difference only warns. A difference at or over the block limit in Settings → Cash Register needs the owner or a manager.':
+    'ছোট পার্থক্যে শুধু সতর্ক করা হয়। সেটিংস → ক্যাশ বাক্সের আটকানোর সীমার সমান বা বেশি পার্থক্যে মালিক বা একজন ম্যানেজার লাগবে।',
+  'Enter an amount above zero.': 'শূন্যের বেশি একটি অঙ্ক লিখুন।',
+  'Could not start the drawer': 'বাক্স শুরু করা যায়নি',
+  'Choose cash in or cash out.': 'নগদ জমা বা নগদ উত্তোলন বেছে নিন।',
+  'Opening cash cannot be negative.': 'প্রারম্ভিক নগদ ঋণাত্মক হতে পারে না।',
+  'A sale needs at least one item.': 'বিক্রিতে অন্তত একটি পণ্য লাগবে।',
+  'A purchase needs at least one item.': 'ক্রয়ে অন্তত একটি পণ্য লাগবে।',
+  'The order discount is more than the items are worth.': 'অর্ডারের ছাড় পণ্যগুলোর দামের চেয়ে বেশি।',
+  'Money left owing needs a named customer. Choose the customer, or take the full amount.':
+    'বাকি রাখতে হলে নির্দিষ্ট গ্রাহক লাগবে। গ্রাহক বেছে নিন, অথবা পুরো টাকা নিন।',
+  'A walk-in customer cannot pay more than the bill. Enter the bill amount; give the rest back as change.':
+    'সাধারণ গ্রাহক বিলের চেয়ে বেশি দিতে পারবেন না। বিলের অঙ্ক লিখুন; বাকিটা খুচরা হিসেবে ফেরত দিন।',
+  'Paying more than the bill needs a supplier to hold the advance. Choose the supplier.':
+    'বিলের চেয়ে বেশি দিতে হলে অগ্রিম রাখার জন্য সরবরাহকারী লাগবে। সরবরাহকারী বেছে নিন।',
+  'A walk-in customer cannot pay more than is owing on the bill.':
+    'সাধারণ গ্রাহক বিলের বাকির চেয়ে বেশি দিতে পারবেন না।',
+  'That customer does not exist.': 'এই গ্রাহক নেই।',
+  'That branch does not exist.': 'এই শাখা নেই।',
+  'That supplier does not exist.': 'এই সরবরাহকারী নেই।',
+  'The sale has no branch.': 'বিক্রিটির কোনো শাখা নেই।',
+  'The purchase has no branch.': 'ক্রয়টির কোনো শাখা নেই।',
+  'An expense amount must be above zero.': 'খরচের অঙ্ক শূন্যের বেশি হতে হবে।',
+  'The order discount must be flat or a percentage.': 'অর্ডারের ছাড় নির্দিষ্ট টাকা বা শতাংশ হতে হবে।',
+  'Payments must be a list.': 'পরিশোধগুলো একটি তালিকা হতে হবে।',
+  'No branch is set up yet. Add one in Settings → Branches.':
+    'এখনো কোনো শাখা সেট করা হয়নি। সেটিংস → শাখায় একটি যোগ করুন।',
+  'Nothing is owed on this bill, so a credit note has nothing to settle. Refund it another way.':
+    'এই বিলে কিছু বাকি নেই, তাই বাকি সমন্বয়ে মেটানোর কিছু নেই। অন্যভাবে ফেরত দিন।',
+  'No money was paid on this invoice, so there is nothing to hand back. Use a credit note to take it off what is owed.':
+    'এই ইনভয়েসে কোনো টাকা দেওয়া হয়নি, তাই ফেরত দেওয়ার কিছু নেই। বাকি থেকে বাদ দিতে বাকি সমন্বয় ব্যবহার করুন।',
+  'Nothing was paid on this bill, so there is no money to get back. Use a credit note to take it off what is owed.':
+    'এই বিলে কিছু দেওয়া হয়নি, তাই ফেরত পাওয়ার টাকা নেই। বাকি থেকে বাদ দিতে বাকি সমন্বয় ব্যবহার করুন।',
+  'A return must be made against the sale it came from.':
+    'ফেরত অবশ্যই যে বিক্রি থেকে এসেছে তার বিপরীতে করতে হবে।',
+  'A purchase return must be made against the bill the goods came on.':
+    'ক্রয় ফেরত অবশ্যই যে বিলে মাল এসেছিল তার বিপরীতে করতে হবে।',
+  'Loading purchase…': 'ক্রয় লোড হচ্ছে…',
+  'That purchase could not be found.': 'ক্রয়টি পাওয়া যায়নি।',
+  'Only the owner or a manager can edit a saved purchase':
+    'সংরক্ষিত ক্রয় শুধু মালিক বা একজন ম্যানেজার সম্পাদনা করতে পারবেন',
+  'A cancelled purchase cannot be edited': 'বাতিল ক্রয় সম্পাদনা করা যায় না',
+  'Enter a new purchase instead.': 'এর বদলে নতুন একটি ক্রয় লিখুন।',
+  'The stock and buying prices from the original bill are replaced by the corrected ones. Payments already made stay on the bill.':
+    'মূল বিলের স্টক ও ক্রয়মূল্য সংশোধিত মান দিয়ে বদলে যাবে। আগে করা পরিশোধ বিলেই থাকবে।',
+  'Recorded on the bill so the change is traceable.':
+    'বিলে লিখে রাখা হয়, যাতে পরিবর্তনটি খুঁজে পাওয়া যায়।',
+  'e.g. supplier invoice showed a different price': 'যেমন সরবরাহকারীর ইনভয়েসে অন্য দাম ছিল',
+  'Mark received': 'গৃহীত হিসেবে চিহ্নিত করুন',
+  'Its items go into stock now, as entered on the bill.':
+    'বিলে যেমন লেখা আছে, সেভাবে এর পণ্য এখনই স্টকে যাবে।',
+  'Goods received — stock updated': 'মাল গ্রহণ হয়েছে — স্টক হালনাগাদ',
+  'Failed to receive the goods': 'মাল গ্রহণ করা যায়নি',
+  'A reason is required to edit a purchase.': 'ক্রয় সম্পাদনা করতে একটি কারণ লাগবে।',
+  'Use Cancel to cancel a purchase, so the reversal is recorded as a cancellation.':
+    'ক্রয় বাতিল করতে বাতিল বোতাম ব্যবহার করুন, যাতে ফেরানোটা বাতিল হিসেবে লিপিবদ্ধ হয়।',
+  'Payment recorded': 'পরিশোধ লিপিবদ্ধ হয়েছে',
+  'Shipment saved': 'চালান সংরক্ষিত হয়েছে',
+  'Expense saved': 'খরচ সংরক্ষিত হয়েছে',
+  'Expense updated': 'খরচ হালনাগাদ হয়েছে',
+  'Expense deleted': 'খরচ মুছে ফেলা হয়েছে',
+  'Transfer saved': 'স্থানান্তর সংরক্ষিত হয়েছে',
+  'Adjustment saved': 'সমন্বয় সংরক্ষিত হয়েছে',
+  'Signing out did not reach the app core. Close the app to be sure.':
+    'সাইন আউট অ্যাপের মূল অংশে পৌঁছায়নি। নিশ্চিত হতে অ্যাপটি বন্ধ করুন।',
+  'The lock did not reach the app core. Sign out to be sure.':
+    'লক অ্যাপের মূল অংশে পৌঁছায়নি। নিশ্চিত হতে সাইন আউট করুন।',
+  'Failed to record the payment': 'পরিশোধ লিপিবদ্ধ করা যায়নি',
+  'Bringing records in from a spreadsheet is not available yet.': 'স্প্রেডশিট থেকে তথ্য আনা এখনো চালু হয়নি।',
+  'Spreadsheet import is not ready yet': 'স্প্রেডশিট ইম্পোর্ট এখনো প্রস্তুত নয়',
+  'These importers are switched off so nothing can look imported when it was not saved. Until they are ready, add records on their own screens. Exports work: use Export all on Sales, Purchases, Customers, Suppliers and Expenses, or Settings → Backup.':
+    'এই ইম্পোর্টগুলো বন্ধ রাখা হয়েছে, যাতে সংরক্ষিত না হওয়া কিছু ইম্পোর্ট হয়েছে বলে না দেখায়। প্রস্তুত না হওয়া পর্যন্ত নিজ নিজ পাতায় তথ্য যোগ করুন। রপ্তানি কাজ করে: বিক্রয়, ক্রয়, গ্রাহক, সরবরাহকারী ও খরচের পাতায় "সব রপ্তানি করুন" ব্যবহার করুন, অথবা সেটিংস → ব্যাকআপ।',
+  'Not available yet': 'এখনো চালু নয়',
+  'Add a product instead': 'এর বদলে একটি পণ্য যোগ করুন',
+  'Enter opening stock when you add the product': 'পণ্য যোগ করার সময় প্রারম্ভিক স্টক লিখুন',
+  'Add customers, with their opening due': 'প্রারম্ভিক বাকিসহ গ্রাহক যোগ করুন',
+  'Add suppliers, with their opening balance': 'প্রারম্ভিক ব্যালেন্সসহ সরবরাহকারী যোগ করুন',
+  'Enter a sale instead': 'এর বদলে একটি বিক্রি লিখুন',
+  'Enter a purchase instead': 'এর বদলে একটি ক্রয় লিখুন',
+  'Add expenses instead': 'এর বদলে খরচ যোগ করুন',
+  'Write every customer to a CSV file in your backup folder':
+    'সব গ্রাহক আপনার ব্যাকআপ ফোল্ডারে একটি CSV ফাইলে লিখুন',
+  'Write every supplier to a CSV file in your backup folder':
+    'সব সরবরাহকারী আপনার ব্যাকআপ ফোল্ডারে একটি CSV ফাইলে লিখুন',
+  'Write every expense to a CSV file in your backup folder':
+    'সব খরচ আপনার ব্যাকআপ ফোল্ডারে একটি CSV ফাইলে লিখুন',
+  'Kept as an advance on the account': 'খাতায় অগ্রিম হিসেবে জমা থাকবে',
+  'Kept as an advance with the supplier': 'সরবরাহকারীর কাছে অগ্রিম হিসেবে থাকবে',
+  'No open invoices. The payment goes to the opening balance first; anything more is kept as an advance on the account.':
+    'কোনো খোলা ইনভয়েস নেই। টাকা আগে প্রারম্ভিক ব্যালেন্সে যাবে; এর বেশি যা থাকবে তা খাতায় অগ্রিম হিসেবে জমা থাকবে।',
+  'No open bills. The payment goes to the opening balance first; anything more is kept as an advance with the supplier.':
+    'কোনো খোলা বিল নেই। টাকা আগে প্রারম্ভিক ব্যালেন্সে যাবে; এর বেশি যা থাকবে তা সরবরাহকারীর কাছে অগ্রিম হিসেবে থাকবে।',
+  'A walk-in customer has no account. Take the money against the invoice instead.':
+    'সাধারণ গ্রাহকের কোনো হিসাব নেই। এর বদলে ইনভয়েসের বিপরীতে টাকা নিন।',
+  'Each amount applied must be zero or more.': 'প্রতিটি বসানো অঙ্ক শূন্য বা তার বেশি হতে হবে।',
+  'The same document is listed twice.': 'একই কাগজ দুবার তালিকায় আছে।',
+  'The amounts applied add up to more than the payment.': 'বসানো অঙ্কগুলোর যোগফল পরিশোধের চেয়ে বেশি।',
+});
+
+// UI foundation (docs/09-UI-AUDIT.md step 0): titlebar text size, popups, shell.
+Object.assign(BN, {
+  'Smaller text': 'ছোট লেখা',
+  'Larger text': 'বড় লেখা',
+  'Text size': 'লেখার আকার',
+  Normal: 'স্বাভাবিক',
+  'Applies to the whole app. Also on the A− / A+ buttons at the top of the screen.':
+    'পুরো অ্যাপে কাজ করে। স্ক্রিনের ওপরের A− / A+ বোতাম দিয়েও বদলানো যায়।',
+  'Clear search': 'খোঁজা মুছুন',
+  Minimize: 'ছোট করুন',
+  Maximize: 'বড় করুন',
+  'Close (Esc)': 'বন্ধ করুন (Esc)',
+});
+
+// UI foundation: words behind raw data keys (src/lib/labels.ts) and the switch state.
+Object.assign(BN, {
+  On: 'চালু',
+  'On the way': 'পথে আছে',
+  'Not delivered': 'পৌঁছানো যায়নি',
+  Compact: 'ঘন',
+  Comfortable: 'আরামদায়ক',
+  Weight: 'ওজন',
+  Length: 'দৈর্ঘ্য',
+  Volume: 'আয়তন',
+  Pack: 'প্যাক',
+  'Changed mind': 'মত বদলেছেন',
+});
+
+// POS compact cart line and product cards (user-reported fixes, September 2026).
+Object.assign(BN, {
+  'Price changed': 'দাম বদলানো হয়েছে',
+  'Discount %': 'ছাড় %',
+  'Discount ৳': 'ছাড় ৳',
+  SPR: 'নির্ধারিত দাম',
+  'Selling price before markup': 'বাড়তি দামের আগের বিক্রয় মূল্য',
+  "Price for this sale only — the product's price does not change":
+    'শুধু এই বিক্রির দাম — পণ্যের দাম বদলাবে না',
+});

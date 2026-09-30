@@ -1,6 +1,5 @@
 import { ipcMain } from 'electron';
 import { buildApi, API_CHANNELS } from '../backend/api.ts';
-import { CHANNEL_PERMISSIONS } from './permissions.ts';
 import { getDb } from './db.ts';
 import {
   applyFolder,
@@ -29,8 +28,22 @@ import {
   updateState,
 } from './updater.ts';
 import { readPerfFlags, writePerfFlags, type PerfFlags } from './perf.ts';
+import {
+  AttemptThrottle,
+  TOO_MANY_ATTEMPTS,
+  isInternalOnlyChannel,
+  loginThrottleKey,
+  permissionError as gateError,
+  settingsSetError,
+  stampActor,
+  varianceGateError,
+  type GateSession,
+} from './guard.ts';
 
 const api = buildApi();
+
+/** Wrong-PIN/password throttle for sign-in and unlock (see electron/guard.ts). */
+const throttle = new AttemptThrottle();
 
 /**
  * Backup channels handled in THIS file rather than by buildApi(), because each
@@ -44,8 +57,8 @@ const ELECTRON_BACKUP_CHANNELS = new Set([
   'backup.reveal',
   'backup.revealPdfFolder',
   'backup.restore',
-  // Removable media. Detecting whether a drive is a pendrive needs Windows
-  // (WMI via PowerShell), so it cannot live in buildApi() either.
+  // Removable media. Detecting whether a drive is a pendrive asks the OS (WMI
+  // via PowerShell on Windows, lsblk on Linux), so it cannot live in buildApi().
   'backup.usbDrives',
   'backup.toUsb',
   // The escape hatch when Windows will not tell us which drives are removable.
@@ -110,14 +123,8 @@ const ELECTRON_PERF_CHANNELS = new Set(['perf.get', 'perf.set']);
  *   4. Writes before any login return { ok:false, error:'Not signed in …' }.
  */
 
-interface Session {
-  userId: string;
-  roleId: string;
-  permissions: Set<string>;
-}
-
 // Module-level session — main-process memory only. Null until the renderer logs in.
-let session: Session | null = null;
+let session: GateSession | null = null;
 
 interface SanitizedSessionUser {
   id: string;
@@ -134,34 +141,16 @@ interface SanitizedSessionUser {
 /** Shape returned to the renderer for session.* channels. */
 function currentSessionPayload(user: SanitizedSessionUser | null) {
   if (!session || !user) return null;
-  return { user, permissions: [...session.permissions] };
-}
-
-/** Whether the channel is a mutating/write channel (i.e. it is gated). */
-function isWriteChannel(channel: string): boolean {
-  return channel in CHANNEL_PERMISSIONS;
+  return { user, permissions: [...session.permissions], locked: session.locked };
 }
 
 /**
- * Decide whether `channel` may run given the current session.
- * Returns null when allowed, or an error string when denied.
- * (auth.* / session.* are handled before this is ever called.)
+ * Decide whether `channel` may run given the current session. Returns null when
+ * allowed, or an error string when denied. The decision itself is the pure
+ * `permissionError` in electron/guard.ts, which the verify harness tests.
  */
 function permissionError(channel: string): string | null {
-  const required = CHANNEL_PERMISSIONS[channel];
-  if (!required) {
-    // Not in the map → OPEN read. Allowed even with no session so the app can
-    // boot and render data before the renderer wires up login.
-    return null;
-  }
-  // A write channel: there must be a session, and it must hold the permission.
-  if (!session) {
-    return 'Not signed in — please sign in to perform this action.';
-  }
-  if (!session.permissions.has(required)) {
-    return `Permission denied: ${required}`;
-  }
-  return null;
+  return gateError(channel, session);
 }
 
 export function registerIpc(): void {
@@ -182,6 +171,13 @@ export function registerIpc(): void {
     }
     if (channel === 'session.unlock') {
       return handleUnlock(payload);
+    }
+    // The lock screen went up. Until the PIN is entered again, the session
+    // refuses every write (electron/guard.ts) — the overlay alone never stopped
+    // anything reaching the database.
+    if (channel === 'session.lock') {
+      if (session) session.locked = true;
+      return { ok: true, data: null };
     }
 
     // ---- 1b. First-run SETUP channels (the ONE bootstrap exception) ----
@@ -240,19 +236,49 @@ export function registerIpc(): void {
       return { ok: false, error: `Unknown API channel: ${channel}` };
     }
 
-    // auth.* channels are always allowed (credential verification helpers). They
-    // never appear in CHANNEL_PERMISSIONS, so this is mostly documentation, but
-    // we keep it explicit so future auth.* additions are never accidentally gated.
-    if (!channel.startsWith('auth.')) {
-      const denied = permissionError(channel);
-      if (denied) {
-        // Return a structured error (do NOT throw) so the renderer can toast it.
-        return { ok: false, error: denied };
+    // auth.* are INTERNAL. They used to be callable with no session at all, and
+    // `auth.setSecret` is a write: it let the renderer set the owner's PIN and
+    // then sign in as the owner. session.login / session.unlock call them from
+    // inside this process; nothing else needs to.
+    if (isInternalOnlyChannel(channel)) {
+      return { ok: false, error: `Unknown API channel: ${channel}` };
+    }
+
+    const denied = permissionError(channel);
+    if (denied) {
+      // Return a structured error (do NOT throw) so the renderer can toast it.
+      return { ok: false, error: denied };
+    }
+
+    // settings.set writes a raw settings_kv row, and that table also holds the
+    // first-run latch, the backup config and the invoice-number counters.
+    if (channel === 'settings.set') {
+      const badKey = settingsSetError(payload);
+      if (badKey) return { ok: false, error: badKey };
+    }
+
+    // A count past the hard variance limit needs the owner or a manager
+    // (Settings → Cash Register). The variance is worked out HERE from the
+    // backend's own expected figure, never taken from the renderer.
+    if (channel === 'cash.closeShift' && session) {
+      try {
+        const p = (payload ?? {}) as { shiftId?: string; countedCash?: number };
+        const totals = api['cash.shiftTotals'](getDb(), { shiftId: p.shiftId }) as { expected: number };
+        const variance = Math.round((Number(p.countedCash ?? 0) - totals.expected) * 100) / 100;
+        const prefs = api['settings.get'](getDb(), { key: 'cashRegister' });
+        const blocked = varianceGateError({ variance, prefs, permissions: session.permissions });
+        if (blocked) return { ok: false, error: blocked };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }
     }
 
     try {
-      const data = handler(getDb(), payload);
+      // Who did it comes from the session, never from the renderer — see
+      // ACTOR_FIELDS in electron/guard.ts. (A gated channel always has a
+      // session by this point; an open read has no actor field.)
+      const input = session ? stampActor(channel, payload, session.userId) : payload;
+      const data = handler(getDb(), input);
 
       // Automatic backup trigger. A shift close is the end of the trading day,
       // so it is the recommended moment to capture a snapshot. Done HERE rather
@@ -285,14 +311,30 @@ interface AuthResult {
 /** session.login → verify via the backend auth handler, then set the session. */
 function handleLogin(payload: unknown) {
   try {
+    // Before the first-run wizard has finished, the only account is the seed's
+    // owner with its well-known default PIN. Signing in is not how a new shop
+    // starts — the wizard is — so refuse rather than hand that PIN a session.
+    const status = api['setup.status'](getDb(), undefined) as { complete: boolean };
+    if (!status.complete) {
+      return { ok: false, error: 'Finish the first-run setup before signing in.' };
+    }
+
+    const key = loginThrottleKey(payload);
+    if (!throttle.check(key, Date.now()).allowed) {
+      return { ok: false, error: TOO_MANY_ATTEMPTS };
+    }
+
     const result = api['auth.authenticate'](getDb(), payload) as AuthResult;
     if (!result.ok || !result.user) {
+      throttle.fail(key, Date.now());
       return { ok: false, error: result.error ?? 'Login failed' };
     }
+    throttle.succeed(key);
     session = {
       userId: result.user.id,
       roleId: result.user.role_id,
       permissions: new Set(result.permissions ?? []),
+      locked: false,
     };
     return { ok: true, data: { user: result.user, permissions: result.permissions ?? [] } };
   } catch (err) {
@@ -301,13 +343,23 @@ function handleLogin(payload: unknown) {
   }
 }
 
-/** session.unlock → verify the current session user's PIN (no session change). */
+/** session.unlock → verify the current session user's PIN, then lift the lock. */
 function handleUnlock(payload: unknown) {
   if (!session) return { ok: false, error: 'No active session' };
   const pin = (payload as { pin?: string } | undefined)?.pin ?? '';
+  // Same key as a PIN sign-in: the lock screen must not be a way around the wait.
+  const key = loginThrottleKey({ mode: 'pin', userId: session.userId });
   try {
+    if (!throttle.check(key, Date.now()).allowed) {
+      return { ok: false, error: TOO_MANY_ATTEMPTS };
+    }
     const okPin = api['auth.verifyPin'](getDb(), { userId: session.userId, pin }) as boolean;
-    if (!okPin) return { ok: false, error: 'Incorrect PIN' };
+    if (!okPin) {
+      throttle.fail(key, Date.now());
+      return { ok: false, error: 'Incorrect PIN' };
+    }
+    throttle.succeed(key);
+    session.locked = false;
     return { ok: true, data: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -360,6 +412,7 @@ function handleSetupComplete(payload: unknown) {
       userId: result.adminUserId,
       roleId: result.user.role_id,
       permissions: new Set(result.permissions ?? []),
+      locked: false,
     };
     return { ok: true, data: { user: result.user, permissions: result.permissions ?? [] } };
   } catch (err) {
@@ -402,10 +455,10 @@ async function handleElectronBackup(channel: string, payload: unknown) {
       }
 
       case 'backup.reveal':
-        return { ok: true, data: revealBackupFolder() };
+        return { ok: true, data: await revealBackupFolder() };
 
       case 'backup.revealPdfFolder':
-        return { ok: true, data: revealPdfFolder() };
+        return { ok: true, data: await revealPdfFolder() };
 
       case 'backup.restore': {
         const file = (payload as { file?: string } | undefined)?.file;
@@ -500,7 +553,7 @@ async function handleElectronInvoice(channel: string, payload: unknown) {
 
       case 'invoice.openPdf': {
         const file = (payload as { file?: string } | undefined)?.file;
-        return { ok: true, data: openPdf(file ?? '') };
+        return { ok: true, data: await openPdf(file ?? '') };
       }
 
       default:

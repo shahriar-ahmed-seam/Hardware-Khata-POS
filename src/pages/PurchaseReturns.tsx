@@ -7,14 +7,17 @@ import { Badge } from '@/components/ui/Badge';
 import { Pagination } from '@/components/ui/Pagination';
 import { usePurchases } from '@/stores/purchases';
 import { formatBDT } from '@/lib/utils';
+import { sum2 } from '@/lib/money';
 import { hasBackend } from '@/lib/api';
 import { SkeletonTable } from '@/components/ui/Skeleton';
+import { ReturnDetail } from '@/components/returns/ReturnDetail';
 
 export default function PurchaseReturns() {
   const returns = usePurchases((s) => s.returns);
   const loading = usePurchases((s) => s.loading);
   const hydrate = usePurchases((s) => s.hydrate);
   const [q, setQ] = useState('');
+  const [viewing, setViewing] = useState<string | null>(null);
   const backend = hasBackend();
 
   // Client-side paging: `purchaseReturns.list` is header-only and this list
@@ -22,11 +25,9 @@ export default function PurchaseReturns() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
 
-  // Mirror Purchases.tsx: hydrate from the backend on mount so the store is
-  // populated when this page is the entry point.
-  // NOTE (deferred): the store's hydrate() currently loads purchases only — it
-  // does not yet map backend purchase_returns into `returns` (no return adapter
-  // + detail fetch exists yet). Wired with the Contacts/Returns slice.
+  // Mirror Purchases.tsx: hydrate from the backend on mount. The store's
+  // hydrate() loads `purchaseReturns.list` into `returns` (it used to load
+  // purchases only, so this screen was always empty).
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
@@ -55,7 +56,7 @@ export default function PurchaseReturns() {
 
   // Summed over the FULL filtered set, not just this page — all rows are in
   // memory, so there is no reason to scope this to the visible slice.
-  const total = list.reduce((s, r) => s + r.total, 0);
+  const total = sum2(list.map((r) => r.total));
 
   return (
     <div>
@@ -85,7 +86,7 @@ export default function PurchaseReturns() {
           ) : (
           <>
           <table className="w-full text-sm">
-            <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50">
+            <thead className="text-xs text-muted-foreground bg-secondary/50">
               <tr>
                 <th className="text-left px-4 py-2.5 font-medium">Date</th>
                 <th className="text-left px-2 py-2.5 font-medium">Return #</th>
@@ -110,13 +111,14 @@ export default function PurchaseReturns() {
                   <td className="px-2 py-2.5 text-xs">
                     <Badge variant="default">{r.refundMethod}</Badge>
                   </td>
-                  <td className="px-2 py-2.5 text-right font-mono tabular font-semibold text-warning">
+                  <td className="px-2 py-2.5 text-right tabular font-semibold text-warning">
                     {formatBDT(r.total)}
                   </td>
                   <td className="px-4 py-2.5">
                     <button
                       className="size-7 grid place-items-center rounded hover:bg-secondary"
                       title="View"
+                      onClick={() => setViewing(r.id)}
                     >
                       <Eye className="size-3.5" />
                     </button>
@@ -144,6 +146,8 @@ export default function PurchaseReturns() {
           )}
         </Card>
       </div>
+
+      <ReturnDetail kind="purchase" id={viewing} open={!!viewing} onClose={() => setViewing(null)} />
     </div>
   );
 }

@@ -97,7 +97,7 @@ export default function Shipments() {
 
         <Card className="overflow-hidden">
           <table className="w-full text-sm">
-            <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50">
+            <thead className="text-xs text-muted-foreground bg-secondary/50">
               <tr>
                 <th className="text-left px-4 py-2.5 font-medium">Ref</th>
                 <th className="text-left px-2 py-2.5 font-medium">Invoice</th>
@@ -131,7 +131,7 @@ export default function Shipments() {
                     <select
                       value={s.status}
                       onChange={(e) => updateShipment(s.id, { status: e.target.value as ShipmentStatus })}
-                      className="h-7 px-2 rounded-md border border-input bg-background text-[11px] outline-none capitalize"
+                      className="h-7 px-2 rounded-md border border-input bg-background text-xs outline-none capitalize"
                     >
                       {(['pending', 'in-transit', 'delivered', 'failed'] as ShipmentStatus[]).map((st) => (
                         <option key={st} value={st}>

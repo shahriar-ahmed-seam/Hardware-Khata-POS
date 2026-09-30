@@ -110,7 +110,7 @@ export default function GatewayPage() {
                   )}
                 >
                   <div className="font-semibold text-sm">{p.label}</div>
-                  <div className="text-[11px] text-muted-foreground mt-0.5">{p.hint}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">{p.hint}</div>
                 </button>
               ))}
             </div>
@@ -121,7 +121,7 @@ export default function GatewayPage() {
             <Card className="p-5 space-y-3">
               <div className="text-sm font-semibold">Credentials</div>
               <div>
-                <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+                <label className="text-xs font-semibold text-muted-foreground">
                   API user / Username
                 </label>
                 <Input
@@ -131,7 +131,7 @@ export default function GatewayPage() {
                 />
               </div>
               <div>
-                <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+                <label className="text-xs font-semibold text-muted-foreground">
                   API key
                 </label>
                 <div className="relative">
@@ -150,12 +150,12 @@ export default function GatewayPage() {
                     {showKey ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
                   </button>
                 </div>
-                <div className="text-[11px] text-muted-foreground mt-0.5">
+                <div className="text-xs text-muted-foreground mt-0.5">
                   Stored encrypted in OS keychain by backend (never plaintext on disk).
                 </div>
               </div>
               <div>
-                <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+                <label className="text-xs font-semibold text-muted-foreground">
                   Sender ID <span className="text-destructive">*</span>
                 </label>
                 <Input
@@ -164,13 +164,13 @@ export default function GatewayPage() {
                   placeholder="e.g. HARDWAREPOS"
                   className="font-mono"
                 />
-                <div className="text-[11px] text-muted-foreground mt-0.5">
+                <div className="text-xs text-muted-foreground mt-0.5">
                   Pre-approved alphabetic ID by your provider (BTRC requirement). Max 11 chars.
                 </div>
               </div>
               {gateway.provider === 'custom' && (
                 <div>
-                  <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+                  <label className="text-xs font-semibold text-muted-foreground">
                     API URL
                   </label>
                   <Input
@@ -189,7 +189,7 @@ export default function GatewayPage() {
             <Card className="p-5 space-y-3">
               <div className="text-sm font-semibold">Test connection</div>
               <div>
-                <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+                <label className="text-xs font-semibold text-muted-foreground">
                   Test phone number
                 </label>
                 <Input
@@ -205,7 +205,7 @@ export default function GatewayPage() {
                   {testing ? 'Testing…' : 'Send test SMS'}
                 </Button>
                 {gateway.lastTestedAt && (
-                  <span className="text-[11px] text-muted-foreground">
+                  <span className="text-xs text-muted-foreground">
                     Last tested {new Date(gateway.lastTestedAt).toLocaleString('en-GB')}
                   </span>
                 )}
@@ -237,7 +237,7 @@ export default function GatewayPage() {
             <div className="text-sm font-semibold">Sending defaults</div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+                <label className="text-xs font-semibold text-muted-foreground">
                   Default language
                 </label>
                 <select
@@ -245,14 +245,14 @@ export default function GatewayPage() {
                   onChange={(e) =>
                     setGateway({ defaultLanguage: e.target.value as 'en' | 'bn' })
                   }
-                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                  className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
                 >
                   <option value="en">English</option>
                   <option value="bn">বাংলা</option>
                 </select>
               </div>
               <div>
-                <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+                <label className="text-xs font-semibold text-muted-foreground">
                   Unicode mode
                 </label>
                 <select
@@ -262,7 +262,7 @@ export default function GatewayPage() {
                       unicodeMode: e.target.value as 'auto' | 'always' | 'never',
                     })
                   }
-                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                  className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
                 >
                   <option value="auto">Auto (recommended)</option>
                   <option value="always">Always Unicode</option>
@@ -270,14 +270,14 @@ export default function GatewayPage() {
                 </select>
               </div>
               <div className="col-span-2">
-                <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+                <label className="text-xs font-semibold text-muted-foreground">
                   Max parts per message
                 </label>
                 <NumberField
                   value={gateway.maxPartsPerMessage}
                   onChangeNumber={(v) => setGateway({ maxPartsPerMessage: Math.max(1, v) })}
                 />
-                <div className="text-[11px] text-muted-foreground mt-0.5">
+                <div className="text-xs text-muted-foreground mt-0.5">
                   Block sends that would split into more than this many parts (cost guardrail).
                 </div>
               </div>
@@ -315,7 +315,7 @@ export default function GatewayPage() {
             />
           </Card>
 
-          <Card className="p-4 bg-secondary/30 text-[12px] text-muted-foreground">
+          <Card className="p-4 bg-secondary/30 text-sm text-muted-foreground">
             <div className="font-semibold text-foreground mb-1">BD provider tips</div>
             <ul className="list-disc pl-4 space-y-0.5">
               <li>Most providers need pre-approved sender IDs (alphabetic, 3-11 chars)</li>

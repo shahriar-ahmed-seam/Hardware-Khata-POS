@@ -389,7 +389,13 @@ export function runE2E(s: Suite) {
     // ----- Reports vs raw -----
     const pl = call('reports.profitLoss', today) as {
       moneyIn: { totalSalesExclTaxDisc: number; sellShipping: number; sellOther: number; purchaseReturns: number };
-      moneyOut: { cogs: number; sellReturns: number; expenses: number; stockAdjustment: number };
+      moneyOut: {
+        cogs: number;
+        returnedCost: number;
+        sellReturns: number;
+        expenses: number;
+        stockAdjustment: number;
+      };
       grossProfit: number;
       netProfit: number;
     };
@@ -404,18 +410,20 @@ export function runE2E(s: Suite) {
     );
     s.money('P/L sell-returns == Σ sellReturns.list totals', pl.moneyOut.sellReturns, rawSellReturns);
 
-    // grossProfit identity = revenue − cogs − sellReturns
+    // grossProfit identity = revenue − (COGS − returned-goods cost) − refunds.
+    // The day's one return put 4 of p1 back on the shelf; their cost comes off COGS.
+    s.gt('the returned goods carry a cost', pl.moneyOut.returnedCost, 0);
     s.money(
-      'P/L grossProfit == revenue − COGS − sellReturns',
+      'P/L grossProfit == revenue − (COGS − returned cost) − refunds',
       pl.grossProfit,
-      round2(rawNet - rawCogs - rawSellReturns),
+      round2(rawNet - rawCogs + pl.moneyOut.returnedCost - rawSellReturns),
     );
-    // netProfit identity recomputed from the SAME primitives the report exposes
+    // netProfit identity recomputed from the SAME primitives the report exposes.
+    // Supplier refunds are NOT profit in a COGS-based P&L.
     const recomputedNet = round2(
       pl.grossProfit +
         pl.moneyIn.sellShipping +
-        pl.moneyIn.sellOther +
-        pl.moneyIn.purchaseReturns -
+        pl.moneyIn.sellOther -
         pl.moneyOut.expenses +
         pl.moneyOut.stockAdjustment,
     );

@@ -18,11 +18,13 @@ import { PaymentModal, type PaymentMethod, type PaymentResult } from '@/componen
 import { HeldList } from '@/components/pos/HeldList';
 import { ReceiptModal } from '@/components/pos/ReceiptModal';
 import { ShortcutsOverlay } from '@/components/pos/ShortcutsOverlay';
-import { api, apiSafe, hasBackend } from '@/lib/api';
+import { api, hasBackend } from '@/lib/api';
 import { useProducts } from '@/hooks/useProducts';
+import { useDefaultBranchId } from '@/lib/branch';
 import { useCustomersQuery } from '@/hooks/useCustomers';
 import { useBelow } from '@/hooks/useBreakpoint';
 import { useAuth } from '@/stores/auth';
+import { currentUserId } from '@/lib/actor';
 import { useSales } from '@/stores/sales';
 import { useCashRegister } from '@/stores/cashRegister';
 import { toast } from '@/stores/toast';
@@ -105,7 +107,7 @@ export default function POS() {
   // Mock product/customer seeds were removed: an empty result now renders an
   // empty grid (ProductPanel/CartPanel handle that) instead of fake stock.
   const qc = useQueryClient();
-  const productsQuery = useProducts('br_mp');
+  const productsQuery = useProducts(useDefaultBranchId());
   const customersQuery = useCustomersQuery();
   const products = productsQuery.data ?? [];
   const customers: Customer[] = customersQuery.data ?? [];
@@ -160,6 +162,8 @@ export default function POS() {
   const [heldOpen, setHeldOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
+  // The line last scanned/tapped — CartPanel scrolls it into view and flashes it.
+  const [touched, setTouched] = useState<{ cartId: string; productId: string; n: number } | null>(null);
   const [paymentStartMode, setPaymentStartMode] = useState<'single' | 'split'>('single');
   const [paymentStartMethod, setPaymentStartMethod] = useState<PaymentMethod>('Cash');
   const [receipt, setReceipt] = useState<{
@@ -217,7 +221,7 @@ export default function POS() {
     () => (productId, group) => {
       const p = products.find((x) => x.id === productId);
       if (!p) return undefined;
-      return { price: priceForProduct(p, group), name: p.name, sku: p.sku };
+      return { price: priceForProduct(p, group), name: p.name, sku: p.sku, unit: p.unit };
     },
     // `priceForProduct` is pure over its arguments; only the catalogue matters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -275,6 +279,7 @@ export default function POS() {
       };
       setActiveCart({ ...active, lines: [...active.lines, newLine] });
     }
+    setTouched((t) => ({ cartId: active.id, productId, n: (t?.n ?? 0) + 1 }));
   }
 
   const bestMatch = useMemo(() => {
@@ -378,14 +383,14 @@ export default function POS() {
     // fabricated in the renderer.
     const now = new Date().toISOString();
     const total = computeTotals(snapshot).total;
-    const userId = useAuth.getState().currentUserId ?? 'u_admin';
+    const userId = currentUserId();
     const payload = {
       status: 'final' as const,
       date: now,
       // Walk-in ('cu1') persists as no customer (undefined → null server-side);
       // any other id is a real backend customer id.
       customerId: snapshot.customerId === 'cu1' ? undefined : snapshot.customerId,
-      branchId: 'br_mp',
+      // No branchId: the backend books it to the shop's default branch.
       userId,
       ...buildSalePayloadBase(snapshot),
       payments: buildSalePayments(result, total, now),
@@ -437,17 +442,9 @@ export default function POS() {
       // Reflect stock-out, the new sale, and any drawer movement.
       void qc.invalidateQueries({ queryKey: ['products'] });
       void useSales.getState().hydrate();
+      // The drawer opens itself for cash (backend/services/cash.ts), so there is
+      // no "no open shift" warning any more: the cash is always recorded.
       void useCashRegister.getState().hydrate();
-      // One-line nicety: cash taken but no open shift → not drawer-tracked.
-      const hasCash = payload.payments.some((p) => p.method === 'Cash');
-      if (hasCash) {
-        const shift = await apiSafe('cash.openShiftFor', { branchId: 'br_mp' });
-        if (!shift) {
-          toast.info(
-            'No open shift — cash not tracked in a drawer. Open a shift from Cash Register.',
-          );
-        }
-      }
     } catch (e) {
       // Keep the cart intact so the cashier can retry.
       toast.error(e instanceof Error ? e.message : 'Failed to record sale');
@@ -483,12 +480,12 @@ export default function POS() {
     // Drafts/quotations are persisted by the backend only; the local
     // "[Draft]/[Quote] held cart" mock path was removed.
     const now = new Date().toISOString();
-    const userId = useAuth.getState().currentUserId ?? 'u_admin';
+    const userId = currentUserId();
     const payload = {
       status,
       date: now,
       customerId: active.customerId === 'cu1' ? undefined : active.customerId,
-      branchId: 'br_mp',
+      // No branchId: the backend books it to the shop's default branch.
       userId,
       ...buildSalePayloadBase(active),
       // drafts/quotations carry no payments (they touch neither stock nor cash)
@@ -630,6 +627,7 @@ export default function POS() {
       busy={submitting}
       costOf={costOf}
       listPriceOf={listPriceOf}
+      touched={touched}
       onPickCustomer={onPickCustomer}
       onPay={(m) => openPay(m)}
       onSplitPay={openSplitPay}

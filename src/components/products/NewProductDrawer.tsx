@@ -47,7 +47,8 @@ export function NewProductDrawer({
   onClose,
   onCreated,
   lockStock,
-  branchId = 'br_mp',
+  // No branchId → the backend records opening stock at the default branch.
+  branchId,
   title = 'Add New Product',
   subtitle,
 }: Props) {

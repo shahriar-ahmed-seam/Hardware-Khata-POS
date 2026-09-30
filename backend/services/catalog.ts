@@ -3,6 +3,9 @@ import { tx } from '../db/connection.ts';
 import { newId } from '../core/ids.ts';
 import { recordMovement, stockOnHand } from './stock.ts';
 import { logActivity } from './activity.ts';
+import { shopBranchId } from './branch.ts';
+import { setProductCost } from './costing.ts';
+import { round2 } from '../core/money.ts';
 
 /**
  * Catalog CRUD: products, categories, brands. Keeps the FTS index in sync and
@@ -162,12 +165,16 @@ export function createProduct(db: DB, input: ProductInput) {
       });
     }
 
-    if (input.openingStock && input.openingStock !== 0 && input.branchId) {
+    // Opening stock used to be DROPPED SILENTLY when no branch was sent. It goes
+    // to the shop's default branch now (services/branch.ts).
+    const openingQty = input.openingStock ?? 0;
+    if (openingQty !== 0) {
+      input = { ...input, branchId: shopBranchId(db, input.branchId) };
       recordMovement(db, {
         productId: id,
-        branchId: input.branchId,
+        branchId: input.branchId!,
         reason: 'opening_stock',
-        qty: input.openingStock,
+        qty: openingQty,
         unit: input.unit ?? 'pc',
         unitCost: input.cost ?? 0,
         refType: 'opening',
@@ -194,11 +201,19 @@ export function createProduct(db: DB, input: ProductInput) {
 export function updateProduct(db: DB, id: string, patch: Partial<ProductInput>) {
   return tx(db, () => {
     if ('imageUrl' in patch) assertStorableImage(patch.imageUrl);
-    const existing = db.prepare('SELECT id FROM products WHERE id = ?').get(id);
+    const existing = db.prepare('SELECT id, cost FROM products WHERE id = ?').get(id) as
+      | { id: string; cost: number }
+      | undefined;
     if (!existing) throw new Error('Product not found');
     const now = new Date().toISOString();
 
     // Map camelCase patch keys to columns; only set provided keys.
+    //
+    // `cost` is deliberately NOT here. A buying price is never written as a
+    // plain column: it goes through setProductCost below, which appends to the
+    // price history and recomputes the average (rule 12). Editing it here used
+    // to overwrite the column directly, so the history and `avg_cost` drifted
+    // from what the product screen showed.
     const colMap: Record<string, string> = {
       sku: 'sku',
       barcode: 'barcode',
@@ -206,7 +221,6 @@ export function updateProduct(db: DB, id: string, patch: Partial<ProductInput>) 
       categoryId: 'category_id',
       brandId: 'brand_id',
       unit: 'unit',
-      cost: 'cost',
       price: 'price',
       wholesalePrice: 'wholesale_price',
       contractorPrice: 'contractor_price',
@@ -242,7 +256,24 @@ export function updateProduct(db: DB, id: string, patch: Partial<ProductInput>) 
 
     if ('name' in patch || 'sku' in patch || 'barcode' in patch) syncProductFts(db, id);
 
+    // A changed buying price becomes a history entry (an unchanged one, which
+    // the edit form always re-sends, records nothing).
+    if (patch.cost !== undefined && patch.cost !== null) {
+      const next = round2(Number(patch.cost));
+      if (Math.abs(next - round2(existing.cost)) > 0.005) {
+        setProductCost(db, {
+          productId: id,
+          cost: next,
+          userId: patch.userId,
+          source: 'manual',
+          note: 'Edited on the product screen',
+          at: now,
+        });
+      }
+    }
+
     logActivity(db, {
+      by: patch.userId,
       action: 'edited',
       entity: 'product',
       entityId: id,

@@ -62,6 +62,12 @@ interface Props {
    * live-lookup reasoning as `costOf`.
    */
   listPriceOf?: (productId: string) => number | null;
+  /**
+   * The product last scanned or tapped (added, or its quantity bumped), with a
+   * counter so the same product twice in a row still counts. Its line scrolls
+   * into view and flashes.
+   */
+  touched?: { cartId: string; productId: string; n: number } | null;
   // Actions
   onPickCustomer: () => void;
   onPay: (startWith?: PaymentMethod) => void;
@@ -84,6 +90,7 @@ export function CartPanel({
   busy = false,
   costOf,
   listPriceOf,
+  touched = null,
   onPickCustomer,
   onPay,
   onSplitPay,
@@ -155,7 +162,7 @@ export function CartPanel({
               {/* Item count only once there IS something in the cart — an empty
                   cart used to render a bare "0" next to its name. */}
               {c.lines.length > 0 && (
-                <span className="text-2xs opacity-70 tabular shrink-0">{c.lines.length}</span>
+                <span className="text-xs opacity-70 tabular shrink-0">{c.lines.length}</span>
               )}
               {carts.length > 1 && (
                 <X
@@ -190,7 +197,7 @@ export function CartPanel({
           <div className="flex-1 min-w-0">
             <div className="text-xs font-semibold truncate">{customer?.name ?? 'Walk-in'}</div>
             {customer && (
-              <div className="text-2xs text-muted-foreground truncate">
+              <div className="text-xs text-muted-foreground truncate">
                 {customer.phone} · {customer.group}
               </div>
             )}
@@ -207,7 +214,7 @@ export function CartPanel({
         </button>
 
         {/* Price group selector */}
-        <div className="flex items-center gap-0.5 p-0.5 min-w-0 bg-secondary rounded-md text-2xs h-10">
+        <div className="flex items-center gap-0.5 p-0.5 min-w-0 bg-secondary rounded-md text-xs h-10">
           {(['retail', 'wholesale', 'contractor'] as PriceGroup[]).map((g) => (
             <button
               key={g}
@@ -225,20 +232,36 @@ export function CartPanel({
         </div>
 
         {/* Scan placeholder */}
-        <div className="flex items-center gap-2 min-w-0 px-2.5 h-10 rounded-md border border-dashed border-border text-muted-foreground text-2xs">
+        <div className="flex items-center gap-2 min-w-0 px-2.5 h-10 rounded-md border border-dashed border-border text-muted-foreground text-xs">
           <ScanBarcode className="size-4 shrink-0" />
           <span className="truncate">Scanner ready · or press F2 to search</span>
         </div>
       </div>
 
-      {/* Cart lines */}
-      <div className="flex-1 overflow-auto scroll-hide min-h-0 py-1">
+      {/* Cart lines. The list is the measuring box for the line layout
+          (.cart-line in globals.css); the scrollbar is visible so a long cart
+          reads as scrollable. */}
+      <div className="flex-1 overflow-auto min-h-0 pb-1 [container-type:inline-size]">
+        {active.lines.length > 0 && (
+          // Column labels once, above the list — shown only in the one-row
+          // (wide) layout. Sticky so they stay while the list scrolls.
+          <div
+            className="cart-line-head sticky top-0 z-[1] mx-2 px-2.5 py-1.5 border border-transparent bg-background text-xs font-medium text-muted-foreground"
+            aria-hidden
+          >
+            <span className="[grid-area:num]">#</span>
+            <span className="[grid-area:name]">Item</span>
+            <span className="[grid-area:qty]">Qty</span>
+            <span className="[grid-area:price] text-right pr-2">Price</span>
+            <span className="[grid-area:total] text-right">Total</span>
+          </div>
+        )}
         {active.lines.length === 0 ? (
           <div className="h-full grid place-items-center text-center p-6 text-muted-foreground">
             <div>
               <ScanBarcode className="size-12 mx-auto opacity-30" />
               <div className="mt-3 text-sm">Scan or pick a product to start</div>
-              <div className="text-2xs mt-1">Press F2 to focus search</div>
+              <div className="text-xs mt-1">Press F2 to focus search</div>
             </div>
           </div>
         ) : (
@@ -249,6 +272,9 @@ export function CartPanel({
                 key={l.productId + i}
                 index={i}
                 line={l}
+                flash={
+                  touched?.cartId === active.id && touched.productId === l.productId ? touched.n : 0
+                }
                 cost={prices?.cost ?? null}
                 avgCost={prices?.avgCost ?? null}
                 listPrice={listPriceOf?.(l.productId) ?? null}
@@ -269,12 +295,12 @@ export function CartPanel({
         <div className="p-3 space-y-2.5 [container-type:inline-size]">
           <div className="flex items-center justify-between gap-2 text-sm">
             <span className="text-muted-foreground shrink-0">Subtotal</span>
-            <span className="font-mono tabular min-w-0 truncate">{formatBDT(totals.subtotal)}</span>
+            <span className="tabular min-w-0 truncate">{formatBDT(totals.subtotal)}</span>
           </div>
           {totals.totalLineDiscount > 0 && (
             <div className="flex items-center justify-between gap-2 text-sm">
               <span className="text-muted-foreground shrink-0">Line Discounts</span>
-              <span className="font-mono tabular text-success min-w-0 truncate">
+              <span className="tabular text-success min-w-0 truncate">
                 − {formatBDT(totals.totalLineDiscount)}
               </span>
             </div>
@@ -362,7 +388,7 @@ export function CartPanel({
               and it truncates instead of overflowing. */}
           <div className="rounded-lg border border-border bg-gradient-to-br from-primary/5 to-primary/10 px-3.5 py-2.5 flex items-center justify-between gap-2 edge-top">
             <span className="text-sm font-semibold tracking-tight shrink-0">Total Payable</span>
-            <span className="font-mono tabular text-xl [@container_(min-width:340px)]:text-2xl leading-none font-bold text-primary tracking-tight min-w-0 truncate text-right">
+            <span className="tabular text-xl [@container_(min-width:340px)]:text-2xl leading-none font-bold text-primary tracking-tight min-w-0 truncate text-right">
               <span className="font-bold mr-0.5">৳</span>
               {formatBDT(totals.total, { withSymbol: false })}
             </span>
@@ -420,7 +446,7 @@ function Row({
       <span className="text-muted-foreground min-w-0 truncate">{label}</span>
       <span
         className={cn(
-          'font-mono tabular shrink-0',
+          'tabular shrink-0',
           tone === 'success' && 'text-success',
           tone === 'destructive' && 'text-destructive',
         )}
@@ -444,7 +470,7 @@ function ChargeInput({
 }) {
   return (
     <div className="flex flex-col gap-1 min-w-0">
-      <label className="text-2xs font-semibold uppercase text-muted-foreground tracking-[0.06em] inline-flex items-center gap-1 leading-none min-w-0">
+      <label className="text-xs font-semibold text-muted-foreground inline-flex items-center gap-1 leading-none min-w-0">
         <Icon className="size-3 shrink-0" />
         <span className="truncate">{label}</span>
       </label>
@@ -527,7 +553,7 @@ function MoreActions({
         width="w-64"
         align="right"
         // Opens upward: the trigger is pinned to the bottom edge of the screen.
-        className="bottom-full mb-2 mt-0"
+        side="top"
         trigger={(_o, set) => (
           <button
             onClick={() => set(true)}
@@ -624,7 +650,7 @@ function MenuRow({
     >
       <Icon className="size-4 shrink-0" />
       <span className="min-w-0 truncate">{label}</span>
-      {hint && <kbd className="ml-auto shrink-0 font-mono text-2xs opacity-60">{hint}</kbd>}
+      {hint && <kbd className="ml-auto shrink-0 font-mono text-xs opacity-60">{hint}</kbd>}
     </button>
   );
 }
@@ -649,7 +675,7 @@ function PrimaryCTA({ onClick, disabled }: { onClick?: () => void; disabled?: bo
       )}
       title="Pay (F8)"
     >
-      Pay <span className="opacity-70 text-2xs font-mono ml-0.5">F8</span>
+      Pay <span className="opacity-70 text-xs font-mono ml-0.5">F8</span>
       <ArrowRight className="size-4 ml-0.5 shrink-0" />
     </button>
   );

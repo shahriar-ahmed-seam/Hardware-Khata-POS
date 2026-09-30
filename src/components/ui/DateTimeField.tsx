@@ -85,7 +85,7 @@ export const DateTimeField = forwardRef<HTMLInputElement, BaseProps>(function Da
         disabled={disabled}
         title={title}
         onChange={(e) => onChange(e.target.value)}
-        className="h-9 flex-1 min-w-0 rounded-md border border-input bg-background px-3 text-sm outline-none transition focus:ring-2 focus:ring-ring/50 focus:border-ring/60 disabled:opacity-50 tabular"
+        className="h-10 flex-1 min-w-0 rounded-md border border-input bg-background px-3 text-sm outline-none transition focus:ring-2 focus:ring-ring/50 focus:border-ring/60 disabled:opacity-50 tabular"
       />
       {showNowButton && (
         <button
@@ -94,7 +94,7 @@ export const DateTimeField = forwardRef<HTMLInputElement, BaseProps>(function Da
           disabled={disabled}
           title="Set to right now"
           aria-label="Set to right now"
-          className="h-9 w-9 shrink-0 grid place-items-center rounded-md border border-border text-muted-foreground hover:border-primary hover:bg-primary/10 hover:text-primary transition disabled:opacity-50"
+          className="h-10 w-10 shrink-0 grid place-items-center rounded-md border border-border text-muted-foreground hover:border-primary hover:bg-primary/10 hover:text-primary transition disabled:opacity-50"
         >
           <Clock className="size-4" />
         </button>
@@ -105,7 +105,7 @@ export const DateTimeField = forwardRef<HTMLInputElement, BaseProps>(function Da
         disabled={disabled}
         title="Pick from a calendar"
         aria-label="Pick from a calendar"
-        className="h-9 w-9 shrink-0 grid place-items-center rounded-md border border-border text-muted-foreground hover:border-primary hover:bg-primary/10 hover:text-primary transition disabled:opacity-50"
+        className="h-10 w-10 shrink-0 grid place-items-center rounded-md border border-border text-muted-foreground hover:border-primary hover:bg-primary/10 hover:text-primary transition disabled:opacity-50"
       >
         <CalendarDays className="size-4" />
       </button>
@@ -150,7 +150,7 @@ export const DateField = forwardRef<HTMLInputElement, BaseProps>(function DateFi
         disabled={disabled}
         title={title}
         onChange={(e) => onChange(e.target.value)}
-        className="h-9 flex-1 min-w-0 rounded-md border border-input bg-background px-3 text-sm outline-none transition focus:ring-2 focus:ring-ring/50 focus:border-ring/60 disabled:opacity-50 tabular"
+        className="h-10 flex-1 min-w-0 rounded-md border border-input bg-background px-3 text-sm outline-none transition focus:ring-2 focus:ring-ring/50 focus:border-ring/60 disabled:opacity-50 tabular"
       />
       {showNowButton && (
         <button
@@ -159,7 +159,7 @@ export const DateField = forwardRef<HTMLInputElement, BaseProps>(function DateFi
           disabled={disabled}
           title="Set to today"
           aria-label="Set to today"
-          className="h-9 w-9 shrink-0 grid place-items-center rounded-md border border-border text-muted-foreground hover:border-primary hover:bg-primary/10 hover:text-primary transition disabled:opacity-50"
+          className="h-10 w-10 shrink-0 grid place-items-center rounded-md border border-border text-muted-foreground hover:border-primary hover:bg-primary/10 hover:text-primary transition disabled:opacity-50"
         >
           <Clock className="size-4" />
         </button>
@@ -170,7 +170,7 @@ export const DateField = forwardRef<HTMLInputElement, BaseProps>(function DateFi
         disabled={disabled}
         title="Pick from a calendar"
         aria-label="Pick from a calendar"
-        className="h-9 w-9 shrink-0 grid place-items-center rounded-md border border-border text-muted-foreground hover:border-primary hover:bg-primary/10 hover:text-primary transition disabled:opacity-50"
+        className="h-10 w-10 shrink-0 grid place-items-center rounded-md border border-border text-muted-foreground hover:border-primary hover:bg-primary/10 hover:text-primary transition disabled:opacity-50"
       >
         <CalendarDays className="size-4" />
       </button>

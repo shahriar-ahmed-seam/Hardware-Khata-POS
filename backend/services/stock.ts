@@ -157,11 +157,26 @@ export function stockLevels(db: DB, branchId?: string): Map<string, number> {
  * Falls back to the product's `cost` column when there are no inbound movements.
  */
 export function weightedAvgCost(db: DB, productId: string): number {
+  /**
+   * A CANCELLED purchase is not an acquisition. Its receipt movement stays in the
+   * ledger (the cancel appends a reversal rather than deleting it), and the
+   * reversal is a negative `purchase_return` that the `qty > 0` filter skips —
+   * so a bill keyed at the wrong price and cancelled a minute later kept pulling
+   * the average, and with it the COGS of every sale after it. Same principle as
+   * the retracted buying price (rule 19), applied to the figure that drives COGS.
+   */
   const row = db
     .prepare(
-      `SELECT COALESCE(SUM(qty),0) AS q, COALESCE(SUM(qty * unit_cost),0) AS v
-         FROM stock_movements
-        WHERE product_id = ? AND reason IN ('purchase','opening_stock','transfer_in','recount') AND qty > 0`,
+      `SELECT COALESCE(SUM(m.qty),0) AS q, COALESCE(SUM(m.qty * m.unit_cost),0) AS v
+         FROM stock_movements m
+        WHERE m.product_id = ?
+          AND ((m.reason IN ('purchase','opening_stock','transfer_in','recount') AND m.qty > 0)
+               -- A corrected purchase appends a reversal of its OLD receipt
+               -- (purchases.updatePurchase). Counting it nets the old receipt out,
+               -- so only the corrected quantity and price stay in the average.
+               OR m.reason = 'purchase_edit')
+          AND NOT (m.reason IN ('purchase','purchase_edit') AND m.ref_type = 'purchase'
+                   AND m.ref_id IN (SELECT id FROM purchases WHERE status = 'cancelled'))`,
     )
     .get(productId) as { q: number; v: number };
   if (row.q > 0) return round2(row.v / row.q);

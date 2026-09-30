@@ -235,7 +235,7 @@ function IconAction({
       title={title}
       aria-label={title}
       className={cn(
-        'h-9 w-9 grid place-items-center rounded-md border transition',
+        'h-10 w-10 grid place-items-center rounded-md border transition',
         active
           ? 'bg-primary text-primary-foreground border-primary shadow-sm'
           : 'border-border hover:bg-secondary text-muted-foreground hover:text-foreground',

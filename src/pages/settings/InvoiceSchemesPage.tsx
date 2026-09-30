@@ -69,7 +69,7 @@ export default function InvoiceSchemesPage() {
                 </div>
                 <div className="mt-2 inline-flex items-center gap-2 text-xs">
                   <span className="text-muted-foreground">Next:</span>
-                  <span className="font-mono tabular bg-secondary/60 px-2 py-0.5 rounded">
+                  <span className="tabular bg-secondary/60 px-2 py-0.5 rounded">
                     {previewSchemeNumber(s)}
                   </span>
                 </div>
@@ -178,15 +178,15 @@ function SchemeForm({
       <div className="flex-1 overflow-auto p-4 space-y-3">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
-            <label className="text-[10px] uppercase font-semibold text-muted-foreground">Name *</label>
+            <label className="text-xs font-semibold text-muted-foreground">Name *</label>
             <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} />
           </div>
           <div>
-            <label className="text-[10px] uppercase font-semibold text-muted-foreground">Document type</label>
+            <label className="text-xs font-semibold text-muted-foreground">Document type</label>
             <select
               value={docType}
               onChange={(e) => setDocType(e.target.value as DocType)}
-              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+              className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
             >
               {(Object.keys(DOC_LABEL) as DocType[]).map((d) => (
                 <option key={d} value={d}>
@@ -196,19 +196,19 @@ function SchemeForm({
             </select>
           </div>
           <div>
-            <label className="text-[10px] uppercase font-semibold text-muted-foreground">Prefix</label>
+            <label className="text-xs font-semibold text-muted-foreground">Prefix</label>
             <Input value={prefix} onChange={(e) => setPrefix(e.target.value.toUpperCase())} />
           </div>
           <div>
-            <label className="text-[10px] uppercase font-semibold text-muted-foreground">Separator</label>
+            <label className="text-xs font-semibold text-muted-foreground">Separator</label>
             <Input value={separator} onChange={(e) => setSeparator(e.target.value.slice(0, 1))} />
           </div>
           <div>
-            <label className="text-[10px] uppercase font-semibold text-muted-foreground">Year format</label>
+            <label className="text-xs font-semibold text-muted-foreground">Year format</label>
             <select
               value={yearFormat}
               onChange={(e) => setYearFormat(e.target.value as InvoiceScheme['yearFormat'])}
-              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+              className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
             >
               <option value="none">No year</option>
               <option value="YY">YY (26)</option>
@@ -216,15 +216,15 @@ function SchemeForm({
             </select>
           </div>
           <div>
-            <label className="text-[10px] uppercase font-semibold text-muted-foreground">Counter padding</label>
+            <label className="text-xs font-semibold text-muted-foreground">Counter padding</label>
             <NumberField value={counterPadding} onChangeNumber={setCounterPadding} />
           </div>
           <div>
-            <label className="text-[10px] uppercase font-semibold text-muted-foreground">Reset</label>
+            <label className="text-xs font-semibold text-muted-foreground">Reset</label>
             <select
               value={resetRule}
               onChange={(e) => setResetRule(e.target.value as InvoiceScheme['resetRule'])}
-              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+              className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
             >
               <option value="never">Never</option>
               <option value="yearly">Yearly</option>
@@ -232,14 +232,14 @@ function SchemeForm({
             </select>
           </div>
           <div>
-            <label className="text-[10px] uppercase font-semibold text-muted-foreground">Start number</label>
+            <label className="text-xs font-semibold text-muted-foreground">Start number</label>
             <NumberField value={startNumber} onChangeNumber={setStartNumber} />
           </div>
         </div>
 
         <div className="rounded-lg border border-border p-3 bg-secondary/40">
-          <div className="text-[10px] uppercase font-semibold text-muted-foreground">Live preview</div>
-          <div className="font-mono tabular text-base mt-1 break-all">
+          <div className="text-xs font-semibold text-muted-foreground">Live preview</div>
+          <div className="tabular text-base mt-1 break-all">
             {previewSchemeNumber(previewObj)}
           </div>
         </div>

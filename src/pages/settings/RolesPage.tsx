@@ -77,7 +77,7 @@ export default function RolesPage() {
         <div className="grid grid-cols-[260px_1fr] gap-4">
           {/* Roles list */}
           <Card className="overflow-hidden">
-            <div className="px-3 py-2 border-b border-border text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+            <div className="px-3 py-2 border-b border-border text-xs font-semibold text-muted-foreground">
               Roles ({roles.length})
             </div>
             {roles.map((r) => {
@@ -104,7 +104,7 @@ export default function RolesPage() {
                     {r.isSystem && <Lock className="size-3 text-muted-foreground" />}
                   </div>
                   {r.description && (
-                    <div className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                    <div className="text-xs text-muted-foreground mt-0.5 truncate">
                       {r.description}
                     </div>
                   )}
@@ -112,7 +112,7 @@ export default function RolesPage() {
                     <Badge variant="default">
                       {r.permissions.length}/{ALL_PERMISSIONS.length} perms
                     </Badge>
-                    <span className="text-[10px] text-muted-foreground">
+                    <span className="text-xs text-muted-foreground">
                       {userCountByRole[r.id] ?? 0} users
                     </span>
                   </div>
@@ -172,7 +172,7 @@ export default function RolesPage() {
                 </div>
               </div>
 
-              <div className="px-4 py-2 border-b border-border bg-secondary/30 flex items-center gap-2 flex-wrap text-[12px]">
+              <div className="px-4 py-2 border-b border-border bg-secondary/30 flex items-center gap-2 flex-wrap text-sm">
                 <span className="text-muted-foreground">Quick:</span>
                 <button
                   onClick={() => setRolePerms(activeRole.id, ALL_PERMISSIONS)}
@@ -216,7 +216,7 @@ export default function RolesPage() {
                             {someOn && <span className="size-1.5 bg-primary-foreground rounded" />}
                           </button>
                           <span className="text-sm font-semibold">{group.label}</span>
-                          <span className="text-[11px] text-muted-foreground">
+                          <span className="text-xs text-muted-foreground">
                             {onCount}/{ids.length}
                           </span>
                         </div>
@@ -238,7 +238,7 @@ export default function RolesPage() {
                               <span className={cn('truncate', checked ? '' : 'text-muted-foreground')}>
                                 {a.label}
                               </span>
-                              <span className="ml-auto text-[10px] font-mono text-muted-foreground/60">
+                              <span className="ml-auto text-xs font-mono text-muted-foreground/60">
                                 {a.id}
                               </span>
                             </label>
@@ -315,13 +315,13 @@ function RoleMetaForm({
       className="flex flex-col gap-3 p-4"
     >
       <div>
-        <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+        <label className="text-xs font-semibold text-muted-foreground">
           Name <span className="text-destructive">*</span>
         </label>
         <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} />
       </div>
       <div>
-        <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+        <label className="text-xs font-semibold text-muted-foreground">
           Description
         </label>
         <Input

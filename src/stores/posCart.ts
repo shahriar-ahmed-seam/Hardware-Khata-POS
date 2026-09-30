@@ -77,7 +77,7 @@ function renumber(carts: ParkedCart[]): ParkedCart[] {
 export type PriceResolver = (
   productId: string,
   group: PriceGroup,
-) => { price: number; name: string; sku: string } | undefined;
+) => { price: number; name: string; sku: string; /** base unit */ unit?: string } | undefined;
 
 export interface RevalidationResult {
   /** Lines dropped because the product no longer exists in the catalogue. */
@@ -267,13 +267,17 @@ export const usePOSCart = create<State>()(
             // it was agreed with a customer, so "the catalogue moved" is not a
             // reason to change it behind the cashier's back. The product still
             // has to exist, which is checked above.
+            // Back to the product's base unit: the unit picker is gone (a pack
+            // price is not built, so "2 dz" sold and deducted 2 pieces), and a
+            // cart saved while it existed must not carry "dz" into a sale.
+            const unit = hit.unit ?? l.unit;
             if (l.priceOverride) {
-              lines.push({ ...l, name: hit.name, sku: hit.sku });
+              lines.push({ ...l, unit, name: hit.name, sku: hit.sku });
             } else if (Math.abs(hit.price - l.basePrice) > 0.001) {
               result.repriced.push({ name: hit.name, from: l.basePrice, to: hit.price });
-              lines.push({ ...l, basePrice: hit.price, name: hit.name, sku: hit.sku });
+              lines.push({ ...l, unit, basePrice: hit.price, name: hit.name, sku: hit.sku });
             } else {
-              lines.push({ ...l, name: hit.name, sku: hit.sku });
+              lines.push({ ...l, unit, name: hit.name, sku: hit.sku });
             }
           }
           return { ...cart, lines };

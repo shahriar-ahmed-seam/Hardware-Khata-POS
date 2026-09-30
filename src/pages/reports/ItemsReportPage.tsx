@@ -199,7 +199,7 @@ export default function ItemsReportPage() {
         </Card>
 
         <Card className="overflow-hidden">
-          <div className="grid grid-cols-[2fr_1fr_0.8fr_0.5fr_0.9fr_0.9fr_0.7fr_0.5fr_0.6fr] gap-2 px-4 py-2.5 border-b border-border bg-secondary/40 text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+          <div className="grid grid-cols-[2fr_1fr_0.8fr_0.5fr_0.9fr_0.9fr_0.7fr_0.5fr_0.6fr] gap-2 px-4 py-2.5 border-b border-border bg-secondary/40 text-xs font-semibold text-muted-foreground">
             <div>Product</div>
             <div>Category</div>
             <div>Brand</div>
@@ -227,7 +227,7 @@ export default function ItemsReportPage() {
             >
               <div className="min-w-0">
                 <div className="font-medium truncate">{r.name}</div>
-                <div className="text-[11px] font-mono text-muted-foreground">
+                <div className="text-xs font-mono text-muted-foreground">
                   {r.sku} · {r.barcode}
                 </div>
               </div>
@@ -279,7 +279,7 @@ function Kpi({
 }) {
   return (
     <Card className="p-4">
-      <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+      <div className="text-xs font-semibold text-muted-foreground">
         {label}
       </div>
       <div

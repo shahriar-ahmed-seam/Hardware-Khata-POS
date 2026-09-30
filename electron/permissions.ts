@@ -16,8 +16,12 @@
  *    gating destructive/mutating operations, keeping reads simple and safe.
  *  - Any channel NOT in this map is treated as OPEN (read).
  *  - Admins (role with ALL_PERMISSIONS) satisfy every entry automatically.
- *  - auth.* and session.* channels are ALWAYS allowed (handled in ipc.ts); they
- *    are how a user signs in, so they can never be gated.
+ *  - session.* channels are handled in ipc.ts; they are how a user signs in.
+ *  - auth.* channels are INTERNAL: the renderer can never call them (one of
+ *    them, auth.setSecret, writes a PIN). See electron/guard.ts.
+ *  - A locked session refuses every channel in this map until it is unlocked.
+ *  - backend/verify/security.ts fails if a buildApi channel that is not a read
+ *    is missing from this map.
  */
 export const CHANNEL_PERMISSIONS: Record<string, string> = {
   // ----- sales -----
@@ -28,7 +32,12 @@ export const CHANNEL_PERMISSIONS: Record<string, string> = {
   // must not be able to quietly correct it themselves — the owner does that, and
   // the reason is recorded in sale_audit.
   'sales.update': 'sales.edit',
+  // Converting a draft or quotation is SELLING (a cashier finishing a sale they
+  // started), not correcting a finalised invoice — so it is `sales.create`.
+  'sales.convert': 'sales.create',
   'sales.addPayment': 'sales.payment',
+  // Receiving money on a customer's account is the same act as on an invoice.
+  'customers.pay': 'sales.payment',
   'sales.void': 'sales.void',
   'sales.delete': 'sales.void', // destructive purge of a draft/quotation
   'sellReturns.create': 'sales.return',
@@ -45,12 +54,17 @@ export const CHANNEL_PERMISSIONS: Record<string, string> = {
   'purchases.addPayment': 'purchases.payBill',
   'purchases.cancel': 'purchases.edit',
   'purchases.delete': 'purchases.edit',
+  // Correcting a saved bill is the admin's (the owner decided, Sept 2026).
+  'purchases.update': 'purchases.edit',
+  // Goods arriving on an ordered bill is everyday work, like entering it.
+  'purchases.receive': 'purchases.create',
   'purchaseReturns.create': 'purchases.return',
   'suppliers.pay': 'purchases.payBill',
 
   // ----- stock operations -----
   'transfers.create': 'stock.transfer',
   'transfers.receive': 'stock.transfer',
+  'transfers.cancel': 'stock.transfer',
   'adjustments.create': 'stock.adjustment',
 
   // ----- products / catalog -----

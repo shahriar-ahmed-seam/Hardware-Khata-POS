@@ -89,20 +89,20 @@ export default function BuySmsPage() {
                 <Wallet className="size-6" />
               </div>
               <div className="flex-1">
-                <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+                <div className="text-xs font-semibold text-muted-foreground">
                   Current balance
                 </div>
                 <div className="tabular font-bold text-2xl text-primary">
                   {formatBDT(credit.balance)}
                 </div>
-                <div className="text-[11px] text-muted-foreground mt-0.5">
+                <div className="text-xs text-muted-foreground mt-0.5">
                   ≈ {formatNumber(Math.floor(credit.balance / credit.smsRate))} messages at{' '}
                   {formatBDT(credit.smsRate)}/SMS
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3 text-right">
                 <div>
-                  <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+                  <div className="text-xs font-semibold text-muted-foreground">
                     Purchased
                   </div>
                   <div className="tabular font-semibold">
@@ -110,7 +110,7 @@ export default function BuySmsPage() {
                   </div>
                 </div>
                 <div>
-                  <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+                  <div className="text-xs font-semibold text-muted-foreground">
                     Spent
                   </div>
                   <div className="tabular font-semibold text-warning">
@@ -148,11 +148,11 @@ export default function BuySmsPage() {
                     )}
                     <div className="tabular font-bold text-lg">{formatBDT(pack.bdt)}</div>
                     {pack.bonus && pack.bonus > 0 && (
-                      <div className="text-[11px] text-success font-semibold mt-0.5">
+                      <div className="text-xs text-success font-semibold mt-0.5">
                         + {formatBDT(pack.bonus)} bonus
                       </div>
                     )}
-                    <div className="text-[11px] text-muted-foreground mt-1">
+                    <div className="text-xs text-muted-foreground mt-1">
                       ≈ {formatNumber(Math.floor((pack.bdt + (pack.bonus ?? 0)) / credit.smsRate))} messages
                     </div>
                   </button>
@@ -166,7 +166,7 @@ export default function BuySmsPage() {
             <div className="text-sm font-semibold">Or custom amount</div>
             <div className="grid grid-cols-[1fr_auto] gap-2 items-end">
               <div>
-                <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+                <label className="text-xs font-semibold text-muted-foreground">
                   Amount (BDT)
                 </label>
                 <NumberField
@@ -178,13 +178,13 @@ export default function BuySmsPage() {
                   }}
                 />
               </div>
-              <div className="text-[11px] text-muted-foreground pb-2">
+              <div className="text-xs text-muted-foreground pb-2">
                 {custom > 0
                   ? `≈ ${formatNumber(Math.floor(custom / credit.smsRate))} messages`
                   : 'min ৳ 50'}
               </div>
             </div>
-            <div className="text-[11px] text-muted-foreground">
+            <div className="text-xs text-muted-foreground">
               Bonus credit applies to packs only. Custom top-ups don't get bonus.
             </div>
           </Card>
@@ -230,7 +230,7 @@ export default function BuySmsPage() {
                 tone="muted"
               />
             </div>
-            <div className="rounded-md bg-secondary/40 p-3 text-[11px]">
+            <div className="rounded-md bg-secondary/40 p-3 text-xs">
               <div className="font-semibold text-foreground mb-1">Payment method</div>
               <div className="text-muted-foreground capitalize">
                 {METHODS.find((m) => m.id === method)?.label}
@@ -244,7 +244,7 @@ export default function BuySmsPage() {
             >
               <ShoppingCart className="size-4" /> Buy {formatBDT(totalAmount)}
             </Button>
-            <div className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+            <div className="text-xs text-muted-foreground flex items-start gap-1.5">
               <CheckCircle2 className="size-3 mt-0.5 shrink-0 text-success" />
               Credit added instantly to your balance after payment confirmation.
             </div>

@@ -1,10 +1,14 @@
 # Continue Here — Session Handoff
 
 > **New session? Read this file first, then `04-AGENT-HANDOFF.md` for the rules.**
-> The most recent work is **§3d** (the gap-clearing session); §3, §3b and §3c are
-> earlier sessions, newest first. §4 is the gap list — every numbered gap in it is
-> now closed, and §4a records the one judgement call that needed deciding rather
-> than just fixing.
+> **UI work in progress:** `docs/09-UI-AUDIT.md` is the UI/UX plan. Step 0 (the shared
+> foundation) is done — read its *Step 0 status* for the new shared pieces (`FormField`,
+> `Select`, `Segmented`, `IconButton`, `Switch`, `labelFor`, `formatDate`). Next is
+> step 1 (POS). Uncommitted.
+> Before that: **§3i** (the owner's decisions + the audit-round-2 P0
+> items, uncommitted), on top of **§3h** (the September 2026 fix pass, also
+> uncommitted). §4 is the gap list; `TASKS.md` "Audit round 2" is the live
+> checklist (R1–R112, ticked where done). §5 rules 37–44 are new.
 
 ---
 
@@ -16,11 +20,11 @@
 
 ```bash
 npm install                        # if node_modules is missing — READ THE NPM NOTE BELOW
-npm run backend:verify:all         # must print 1,161 checks across EIGHT suites
-npx tsc --noEmit -p tsconfig.json  # frontend typecheck — clean
+npm run backend:verify:all         # must print 1,605 checks across NINE suites
+npx tsc --noEmit -p tsconfig.json  # frontend + electron/ typecheck — clean
 npx tsc --noEmit -p tsconfig.backend.json
 npm run build                      # renderer + main + preload
-npm run i18n:check                 # 32 checks, 2,420 Bangla phrases
+npm run i18n:check                 # 32 checks, 2,594 Bangla phrases
 npm run rebuild:electron           # LEAVE IT ON THE ELECTRON ABI (see §6)
 ```
 
@@ -40,15 +44,16 @@ Expected per-suite counts:
 
 | Suite | Checks | Covers |
 |-------|-------:|--------|
-| `all.ts` | 446 | scenarios + determinism + file-DB smoke + identities, incl. correcting an invoice's payments and **stock never going negative** |
-| `api.ts` | 216 | the `buildApi()` facade — **152 channels** |
-| `run.ts` | 105 | identities on a 365-day dataset, custom date ranges, **Saturday week start**, **payment detail rows == report total** |
-| `e2e.ts` | 68 | one full shop day |
+| `all.ts` | 760 | scenarios + determinism + file-DB smoke + identities, incl. correcting an invoice's payments and **stock never going negative**. Runs **`chain.ts` (311)** too: the self-opening drawer, input validation, refund caps, purchase edits, one branch, payments on account, migrations, and every refusal the fix pass added (over-return, void after return, payments on dead documents, transfers), purchases `credited`, local-time buckets, dashboard deltas |
+| `api.ts` | 216 | the `buildApi()` facade — **162 channels** |
+| `run.ts` | 110 | identities on a 365-day dataset, **every khata ending at the stated balance**, custom date ranges, **Saturday week start**, **payment detail rows == report total**, **dashboard gross profit == P&L gross profit after returns** |
+| `e2e.ts` | 69 | one full shop day |
 | `paging.ts` | 91 | paginated list reads + Paid/Partial/Due filtering |
-| `backup.ts` | 120 | backup, cloud, CSV export, invoice PDFs, pendrive copies |
-| `costing.ts` | 95 | purchase-price history, purchases feeding it, a cancelled purchase retracting its price, **a product born on a purchase not being priced twice**, migration head (**v7**) |
-| `mirror.ts` | 20 | **the renderer's money math vs `core/calc.ts`** — 800 randomised baskets and bills, must agree to the paisa |
-| **total** | **1,161** | |
+| `backup.ts` | 138 | backup, cloud, CSV export, invoice PDFs, pendrive copies, **`lsblk` parsing** (`electron/drives.ts`) |
+| `costing.ts` | 105 | purchase-price history, purchases feeding it, a cancelled purchase retracting its price, **a product born on a purchase not being priced twice**, **a product-screen price edit going through the history**, migration head (**v11**) |
+| `mirror.ts` | 23 | **the renderer's money math vs `core/calc.ts`** — randomised baskets, bills and return refunds, must agree to the paisa |
+| `security.ts` | 93 | **the IPC gate** (`electron/guard.ts`): internal-only channels, settings allow-list, lock, PIN throttle, actor stamping, variance gate, `backup.configure` fields |
+| **total** | **1,605** | |
 
 > `mirror.ts` is the only suite that touches `src/`. It imports `src/lib/money.ts`
 > (which deliberately has NO imports of its own) and drives it against
@@ -56,7 +61,12 @@ Expected per-suite counts:
 > `npm run backend:mirror`.
 
 Single suites: `backend:verify`, `backend:scenarios`, `backend:e2e`,
-`backend:paging`, `backend:backup`, `backend:costing`.
+`backend:paging`, `backend:backup`, `backend:costing`, `backend:mirror`,
+`backend:security`, `backend:chain`.
+
+> `security.ts` imports `electron/guard.ts`, and `backup.ts` imports
+> `electron/drives.ts`. Both are PURE on purpose (no `electron` import), which is
+> the only reason the Node harness can test them. Keep them that way.
 
 ---
 
@@ -69,19 +79,129 @@ bump `package.json` and `npm run release:win`, see `RELEASE.md`.
 0.7.0 is the money-and-payments session (§3e); 0.6.0 was the gap-clearing session
 (§3d). Both are on `main`, tagged.
 
-The owner's live database is at `%APPDATA%\pos\pos.db`. The schema HEAD is now
-**v7**; migrations are additive and run on launch, so their database upgrades in
-place. One active account: `u_admin`, name **Seam**, username `owner`, PIN set, no
+The owner's live database is at `%APPDATA%\pos\pos.db` (`~/.config/pos/pos.db` on
+Linux). The schema HEAD is now **v11** (v11 = `account_payments`,
+`cash_shifts.closed_by` and the lookup indexes; v10 = `purchases.credited`).
+Migrations run on launch, each step in its own transaction, after a copy of the
+file is taken beside it (`pos.db.pre-v10-<time>.sqlite3`); a database from a NEWER
+build is refused. Their database upgrades in place. One active account: `u_admin`, name **Seam**, username `owner`, PIN set, no
 password.
 Their backup folder is already `C:\Users\Seam\OneDrive\HardwareKhataPOS\Backups`,
 so snapshots *and* invoice PDFs cloud-sync via OneDrive.
 
-The working tree is clean at `v0.7.0`. **Do not commit unprompted** — ask the owner
+The September 2026 fix pass (§3h) is in the working tree on top of 0.8.0,
+**uncommitted and unreleased**. **Do not commit unprompted** — ask the owner
 first, as always.
 
 ---
 
-## 3g. What landed in the due-and-units session (0.8.0, the most recent work)
+## 3i. Owner decisions + audit-round-2 P0 items (most recent, uncommitted)
+
+The owner decided (recorded in `TASKS.md` → "Owner decisions (September 2026)"):
+no Open Shift step, stay on Windows 7 / Electron 22, one branch for now, the admin
+can edit purchases. Then the P0 items were worked one at a time. Checks
+**1,433 → 1,605**; channels **158 → 162** (`cash.carriedForward`,
+`purchases.update`, `purchases.receive`, `customers.pay`); schema **v10 → v11**.
+
+- **Drawer (R6):** opens itself on the first cash event; Cash Register shows "The
+  drawer opens by itself" with an optional count; Cash In/Out via `cash.move`
+  (`manualCashMove`, drawer resolved by the backend). Close records `closed_by` (R27).
+- **Validation (R3, R4, R9, R54):** `backend/core/validate.ts`; sale COGS is
+  qty × unit factor × base cost (R10's COGS half).
+- **Refunds and dead documents (R5, R7, R8):** see rules 39–40.
+- **Purchase edit (R51):** `purchases.update` (needs `purchases.edit`, a reason) and
+  `purchases.receive`; AddPurchase edits a saved bill; PurchaseDetail has Edit and
+  "Mark received". WAC nets `purchase_edit` and ignores cancelled bills.
+- **One branch:** rule 42.
+- **Writes wait for the backend (R11, R83):** every store write listed in R83
+  resolves the backend's answer; screens stay open on a refusal. Customers /
+  suppliers `add` return the real id.
+- **Importers switched off (R1):** every import route lands on the hub, which says
+  "Not available yet". Customers / Suppliers / Expenses got a working "Export all"
+  (new `expenses` export kind).
+- **R24 / R25:** a correction keeps payment rows and who took them;
+  `products.update` never writes `cost` (changes go through `setProductCost`).
+- **Migrations (R33–R35, R65):** rule 43; v11 indexes.
+- **Payments on account (R30):** rule 41. Receive Payment, Pay Bill and Pay
+  Supplier each make ONE call and preview the opening-balance part and the advance.
+
+Still open from P0: R2 (real importers), R10's POS picker (owner decision), R12
+(Invoice Schemes), and whatever else is unticked in `TASKS.md`.
+
+---
+
+## 3h. The September 2026 fix pass (Linux run + whole-repo audit — uncommitted)
+
+The owner asked for the repo to be read end to end, run on Linux (Ubuntu 24.04), and
+everything left to do fixed one item at a time. Three audits (electron/, backend/,
+src/) produced 21 items; the checklist is the "Fix pass — September 2026" section of
+`TASKS.md`. Checks **1,161 → 1,433**. What matters for the next person:
+
+**Security (F1–F5) — `electron/guard.ts`, a pure module the harness tests.**
+- `auth.*` channels are **internal-only** (`isInternalOnlyChannel`). The renderer
+  could call `auth.setSecret` with no session and reset the admin PIN.
+- `session.login` is refused until first-run setup is complete. Wrong PINs on login
+  and unlock go through `AttemptThrottle` (5 free, then 30 s doubling, 15 min cap).
+- `settings.set` accepts only `SETTINGS_SET_KEYS` (UI preferences). It could reset
+  `setup_complete`, the backup config and the invoice sequences.
+- `session.lock` locks the MAIN-process session; writes are refused while locked
+  (`permissionError`). The lock screen used to be renderer-only.
+- `invoice.openPdf` opens only PDFs inside the PDF folders; `openExternal` only
+  http(s)/mailto/tel; in-window navigation and webviews are blocked; no default menu
+  when packaged (it gave Ctrl+Shift+I and Ctrl+R).
+- **The actor is stamped from the session** (`ACTOR_FIELDS` + `stampActor` in
+  `ipc.ts`). The renderer's `'Seam'` / `'u_admin'` literals are gone
+  (`src/lib/actor.ts`), but the gate no longer trusts them anyway.
+
+**Stock and money (F6–F10).**
+- Returns (`returns.ts`): only against a FINAL sale / RECEIVED purchase; qty > 0;
+  never more than sold/bought minus earlier returns (`returnedOnSale` /
+  `returnedOnPurchase`, also channels); the refund is capped at what the customer
+  actually paid for those units (`computeReturnRefund` in `core/calc.ts`, mirrored as
+  `returnRefund` in `lib/money.ts`); pack sizes converted both ways; a walk-in sale
+  refunds in cash only; a purchase return inherits the supplier and writes
+  `purchase_audit`.
+- **No void after a return, no cancel after a return.** Refused, not partially
+  reversed — the refund method makes a partial reversal ambiguous. The UI hides Void
+  and says why.
+- `deletePurchase` refuses with payments or returns; payments only on a final sale /
+  non-cancelled purchase and > 0; `closeShift` refuses a closed shift; `updateSale`
+  refuses final → draft/quotation and carries `unit_factor` / `unit_cost_at_sale`.
+- Balances (`ledger.ts` `LIVE_CREDIT_*`) count credit notes only against live documents.
+- **Schema v10 `purchases.credited`** — a CreditAdjust purchase return now reduces the
+  bill's due, exactly like `sales.credited` on the sell side (rule 25).
+- Transfers: same-branch/empty/zero refused; received once, qty 0..sent;
+  `transfers.cancel` puts goods back at the source with a `transfer_cancel` movement.
+
+**Screens (F11–F16).** Close Shift uses the in-app confirm and the variance block is
+enforced in `ipc.ts` (`varianceGateError`, override = `sales.void`, i.e. owner or
+manager). Return windows are rewritten (one row per line, "Can return" column).
+`AddSale` is a loader + `AddSaleForm` so `/sales/:id/edit` loads by id and cannot save a
+duplicate. There is still **no `purchases.update`**: the purchase Edit button is gone
+and `/purchases/:id/edit` explains cancel-and-re-enter. Return lists show real names,
+purchase returns actually load, and both open `ReturnDetail`. `sales.convert` turns a
+draft into a sale with a new number, and a quotation into a NEW sale with
+`source_quotation_id` (the quotation is kept). Receipts print as Quotation / Draft.
+
+**Reports (F17, F20).** P&L gross profit = net − COGS + returned cost − refunds, and
+purchase returns are shown as information, not profit; the dashboard uses the same
+figure. `weightedAvgCost` ignores receipts of cancelled purchases. Dashboard buckets
+use SQLite `'localtime'`. Search goes through `ftsQuery`. A KPI delta with no previous
+figure is `null` and shows `—` (it used to say "0%" or "100%").
+
+**Electron + Linux (F18–F19).** The second instance never reaches `whenReady`; the DB
+is closed on `will-quit`; a DB-init failure shows a dialog and exits; the splash can
+no longer hang forever; restore copies to `pos.db.restoring` and renames, and reopens
+the DB on failure (in dev it exits with a message instead of relaunching, because Vite
+dies with Electron); the first auto-backup check runs a minute after launch;
+`backup.configure` takes only `{auto, keep}`. Pendrives on Linux come from `lsblk`
+(`electron/drives.ts`, pure). `npm run build:linux` makes an AppImage and a `.deb`
+(see §6 for the sandbox note). The splash shows the real version and the sidebar
+fills the window height.
+
+---
+
+## 3g. What landed in the due-and-units session (0.8.0)
 
 Owner reported: "due is wrongly counted in invoices, many inconsistencies";
 over-selling only warned in English; buying by the dozen; and "make the whole sale
@@ -575,11 +695,15 @@ Nothing is back-filled: purchases cancelled before v7 never recorded which histo
 rows they created, and guessing from timestamps could retract a price the owner
 typed by hand.
 
-### 4b. THE SALE / PURCHASE CHAIN — audited inventory, largely still open
+### 4b. THE SALE / PURCHASE CHAIN — mostly closed in the fix pass (§3h)
+
+**Status after §3h:** everything below is fixed EXCEPT four items that need an owner
+decision: `purchases.update`, non-cash refunds, store credit, and the `'br_mp'`
+literals in the return writes. The inventory is kept as the record of what was wrong.
 
 The owner asked for drafts, quotations, sell returns and purchase returns to work
 "perfectly, including editing, viewing". A full audit was run; the money side was
-fixed in 0.8.0 (§3g) but most of the DOCUMENT side is still missing. This is the
+fixed in 0.8.0 (§3g) and the document side in §3h. This is the
 precise inventory — do not re-derive it.
 
 **Sell returns** (`src/pages/SellReturns.tsx`)
@@ -644,17 +768,11 @@ precise inventory — do not re-derive it.
 5. **Manual GUI smoke test** — `docs/06-E2E-AND-SMOKE-TEST.md`, human-only. This
    is now the only unticked item in the definition of done.
 
-7. **Single-branch writes still assume `br_mp`.** This is NOT the gap -1 that was
-   just closed (that was the branch *name* and the resolvers). About fifteen call
-   sites still pass the literal id `'br_mp'` where they mean "the shop's default
-   branch": `POS.tsx`, `AddSale`, `AddPurchase`, `ProductPanel`, `QuickUpdateModal`,
-   `NewProductDrawer`, `StockAlerts`, `useDashboardData`, and the sell-return /
-   purchase-return / shipment / supplier-payment writes in `stores/{sales,purchases,contacts}.ts`.
-   It is harmless today — the seed always creates `br_mp` as the default branch —
-   and it is the **deliberately deferred** "multi-branch context needs a real branch
-   switcher" item in `03-WHATS-LEFT.md`. `defaultBranchId()` in `src/lib/branch.ts`
-   is the helper to switch them to when that work is picked up; doing it piecemeal
-   would leave a confusing half-state.
+7. ~~Single-branch writes still assume `br_mp`.~~ **Closed in §3i:** no `'br_mp'`
+   literal is left in `src/`. A write with no branch goes to the shop's default
+   branch (`shopBranchId`, backend); reads use `useDefaultBranchId()` or cover the
+   whole shop. The branch switcher for a multi-branch shop is still deferred (owner
+   decision: one branch for now).
 
 **Deliberately deferred (ask before doing):**
 
@@ -800,6 +918,65 @@ precise inventory — do not re-derive it.
    UNROUNDED** — 620/12 is 51.666…, and rounding to 51.67 before multiplying by 60
    invents twenty paisa on every pack. Anything that reverses a purchase must
    convert by the same factor (`cancelPurchase` had this bug).
+29. **GATE LOGIC LIVES IN `electron/guard.ts`, AND IT STAYS PURE.** `ipc.ts` imports
+   Electron, so nothing in it can be tested; `guard.ts` imports nothing from
+   Electron, and `backend/verify/security.ts` drives it. A new channel that only the
+   main process may call goes in `isInternalOnlyChannel`; a new UI preference key goes
+   in `SETTINGS_SET_KEYS` (anything else — setup state, backup config, sequences —
+   must never be writable from `settings.set`).
+30. **WHO DID IT COMES FROM THE SESSION, NEVER THE PAYLOAD.** `stampActor` overwrites
+   the `ACTOR_FIELDS` of every write with the signed-in user. A new write channel that
+   records a user needs its field listed there, or the renderer can name anyone.
+31. **A RETURN CAN NEVER EXCEED WHAT IS STILL RETURNABLE**, in quantity (sold/bought
+   minus earlier returns, in base units) or in money (`computeReturnRefund` /
+   `computePurchaseReturnRefund` — what was actually paid, after order discount and
+   tax). Both are checked in `returns.ts`, not only in the modal.
+32. **NO VOID OR CANCEL AFTER A RETURN.** Return the rest instead. A partial reversal
+   is ambiguous about where the refund went, so it is refused rather than guessed.
+33. **`purchases.credited` MIRRORS `sales.credited`** (schema v10):
+   `due = max(0, total − paid − credited)` holds for purchases too, and a CreditAdjust
+   purchase return is the only thing that writes `credited`.
+34. **GROSS PROFIT = NET SALES − COGS + RETURNED COST − REFUNDS**, in P&L and on the
+   dashboard alike (`sellReturnsEffect`), and `run.ts` asserts they agree. Purchase
+   returns are money back from a supplier, not profit — shown, never added.
+35. **TIME BUCKETS ARE THE SHOP'S LOCAL DAY.** Timestamps are stored UTC; any
+   hour/day/month grouping uses SQLite `'localtime'` and local-midnight bounds. A
+   00:30 sale in Dhaka is today, not yesterday. `chain.ts` checks it; run it under a
+   different `TZ` when you touch dates.
+36. **NO PERCENTAGE WITHOUT A BASE.** `deltaPct` returns `null` when the previous
+   period is zero, and the UI shows `—`. "0%" and "100%" against nothing are invented
+   numbers (rule 5).
+37. **THE DRAWER OPENS ITSELF; NO CASH MOVEMENT IS EVER DROPPED.** Every cash write
+   goes through `postCashToOpenShift`, which calls `ensureOpenShift` (opening cash =
+   the last shift's carried float ?? counted ?? expected, 0 for the first drawer).
+   Nothing is auto-closed. Never reintroduce an "open a shift first" refusal.
+38. **THE BACKEND VALIDATES EVERY DOCUMENT** (`backend/core/validate.ts`): lines,
+   order charges, settlement. A walk-in (no customer, or `cu1`) can neither owe nor
+   overpay; a named customer may pay ahead (an advance = a negative due); overpaying a
+   bill needs a supplier. Methods go through `canonicalMethod`.
+39. **MONEY BACK ≤ MONEY IN.** A return refunds at most what was paid minus earlier
+   money refunds; a credit note settles at most the remaining due; a return needs the
+   sale/purchase it came from (`assertRefundWithinSettlement`).
+40. **NON-CASH MONEY ON A DEAD DOCUMENT STAYS ON THE ACCOUNT.** A voided sale's
+   bKash/card/bank payments stay a credit for the customer (`HELD_ON_VOIDED_SALES`);
+   a cancelled bill's stay with the supplier (`heldBySupplier`). Cash is reversed.
+41. **MONEY PAID ON ACCOUNT IS A ROW, NOT A REMAINDER.** `customers.pay` /
+   `suppliers.pay` (services/accounts.ts) place the opening balance, then the oldest
+   documents, and keep the rest as an advance in `account_payments`. Every balance,
+   khata and payment report subtracts/includes it. The khata comes from the backend
+   (`customerLedger` / `supplierLedger`) and must end at the stated due (`run.ts`).
+42. **A WRITE WITH NO BRANCH GOES TO THE DEFAULT BRANCH, RESOLVED IN THE BACKEND**
+   (`shopBranchId`); returns and shipments follow their document's branch. Changing
+   the default goes through `markDefaultBranch`, which keeps `branches.is_default`
+   and `business_info.default_branch_id` in step. No branch id literal in `src/`.
+43. **MIGRATIONS: ONE TRANSACTION PER STEP, APPLIED BY WHAT IS MISSING.** Add a step
+   to `MIGRATIONS` in `connection.ts` and bump `CURRENT_SCHEMA_VERSION`; never compare
+   with the highest version; never swallow a backfill error. A database or backup
+   from a newer build is refused (`newerSchemaMessage`).
+44. **A PURCHASE CORRECTION ADDS BEFORE IT TAKES AWAY.** `updatePurchase` retracts
+   the old cost entries, rewrites the lines and stock-in, THEN reverses the old
+   receipt as `purchase_edit` movements — reversing first would trip the
+   negative-stock rule. Payments stay on the bill.
 
 **Bangla:** append-only `Object.assign(BN, {…})` blocks in `src/lib/bn/dict.ts`.
 Never reorder or delete. Duplicate keys across blocks **must agree** —
@@ -838,6 +1015,25 @@ action must be impossible to miss, expert controls tucked away.
   makes the PDF contain only the receipt. Don't "simplify" that coupling.
 - **No backticks inside `SCHEMA_SQL`** — it is a `String.raw` template literal and
   a backtick in an SQL comment terminates it.
+
+**Linux (the §3h session ran on Ubuntu 24.04, bash):**
+- The shell is bash there, so `&&` works; the PowerShell notes above are Windows-only.
+- Dev DB is `~/.config/pos/pos.db`. `vite-plugin-electron` already passes
+  `--no-sandbox` in dev.
+- **A double-clicked AppImage aborts** with "The SUID sandbox helper binary was found,
+  but is not configured correctly" — AppArmor blocks the user-namespace sandbox and a
+  FUSE mount cannot hold a root-owned `chrome-sandbox`. `scripts/linux-after-pack.cjs`
+  (electron-builder `afterPack`) renames the binary to `hardware-khata-pos.bin` and puts
+  a launcher in front that adds `--no-sandbox` only when `$APPIMAGE` is set. The `.deb`
+  sets `chrome-sandbox` to root 4755 and keeps the sandbox.
+- **Packaging leaves `better-sqlite3` on the Electron ABI** (`npmRebuild: true`). Run
+  `npm run rebuild:node` before any suite after `build:linux` / `build:win`.
+- The in-app update check on a Linux build fails with "Cannot find latest-linux.yml",
+  because releases carry only Windows artifacts. Expected until Linux is published.
+- Test a packaged build without touching the dev shop:
+  `XDG_CONFIG_HOME=$(mktemp -d) ./release/HardwareKhataPOS-<v>-x86_64.AppImage`.
+- Screenshots: `DISPLAY=:0 xwd -id <window id> -silent > w.xwd && ffmpeg -i w.xwd w.png`
+  (`xwininfo -root -tree` lists window ids).
 
 ---
 

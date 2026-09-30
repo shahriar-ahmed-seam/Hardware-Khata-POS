@@ -9,12 +9,14 @@
     "dist/**/*",
     "dist-electron/**/*",
     "node_modules/better-sqlite3/**/*",
+    "build/icon.png",
     "package.json"
   ],
   "asarUnpack": [
     "node_modules/better-sqlite3/**/*"
   ],
   "npmRebuild": true,
+  "afterPack": "scripts/linux-after-pack.cjs",
   "publish": [
     {
       "provider": "github",
@@ -32,6 +34,28 @@
       }
     ],
     "requestedExecutionLevel": "asInvoker"
+  },
+  "linux": {
+    "icon": "build/icon.png",
+    "executableName": "hardware-khata-pos",
+    "category": "Office",
+    "synopsis": "Offline point of sale and khata for a hardware shop",
+    "maintainer": "shahriar-ahmed-seam",
+    "target": [
+      {
+        "target": "AppImage",
+        "arch": ["x64"]
+      },
+      {
+        "target": "deb",
+        "arch": ["x64"]
+      }
+    ],
+    "artifactName": "HardwareKhataPOS-${version}-${arch}.${ext}"
+  },
+  "deb": {
+    "packageName": "hardware-khata-pos",
+    "artifactName": "hardware-khata-pos_${version}_${arch}.${ext}"
   },
   "nsis": {
     "oneClick": false,

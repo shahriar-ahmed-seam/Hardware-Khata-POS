@@ -1,5 +1,9 @@
 import { useMemo, useState, useEffect } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useCan } from '@/hooks/useCan';
+import { promptText } from '@/stores/prompt';
+import { branchNameOf, useDefaultBranchId } from '@/lib/branch';
+import { toPurchaseRecord, type BackendPurchase } from '@/hooks/purchaseAdapter';
 import {
   ArrowLeft,
   Plus,
@@ -35,6 +39,7 @@ import {
 } from '@/stores/purchases';
 import { ProductImage } from '@/components/products/ProductImage';
 import { formatBDT, cn } from '@/lib/utils';
+import { currentUserName } from '@/lib/actor';
 import { round2 } from '@/lib/money';
 import { consumePurchasePrefill } from '@/lib/purchasePrefill';
 import { AddPurchasePaymentModal } from '@/components/purchases/AddPurchasePaymentModal';
@@ -64,12 +69,85 @@ const PACKS: { factor: number; label: string }[] = [
   { factor: 100, label: 'box of 100' },
 ];
 
+/**
+ * `/purchases/new` and `/purchases/:id/edit`.
+ *
+ * THE EDIT URL LOADS THE BILL BY ID, and only then mounts the form. It used to
+ * read the bill from the loaded page of the Purchases list: from a deep link
+ * `editing` was undefined and Save CREATED A SECOND BILL. Now the form is
+ * mounted with the bill in hand (from the store, or `purchases.get`), and saving
+ * goes through `purchases.update` — the admin's correction, which keeps the
+ * bill's number and its payments (backend/services/purchases.ts).
+ */
 export default function AddPurchase() {
-  const nav = useNavigate();
   const { id } = useParams<{ id?: string }>();
+  const nav = useNavigate();
+  const storePurchase = usePurchases((s) => (id ? s.purchases.find((p) => p.id === id) : undefined));
+  const canEdit = useCan('purchases.edit');
+  const [fetched, setFetched] = useState<PurchaseRecord | null>(null);
+  const [missing, setMissing] = useState(false);
+  const hasStorePurchase = !!storePurchase;
+
+  useEffect(() => {
+    if (!id || hasStorePurchase) return;
+    let alive = true;
+    setMissing(false);
+    void api<BackendPurchase | null>('purchases.get', { id })
+      .then((row) => {
+        if (!alive) return;
+        if (row) setFetched(toPurchaseRecord(row));
+        else setMissing(true);
+      })
+      .catch(() => {
+        if (alive) setMissing(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [id, hasStorePurchase]);
+
+  if (!id) return <AddPurchaseForm key="new" />;
+
+  const editing = storePurchase ?? (fetched?.id === id ? fetched : undefined);
+  const back = (
+    <Button variant="outline" onClick={() => nav('/purchases')}>
+      <ArrowLeft className="size-4" /> Back to purchases
+    </Button>
+  );
+  if (!editing) {
+    return (
+      <div className="p-8 max-w-xl space-y-3 text-sm text-muted-foreground">
+        <div>{missing ? 'That purchase could not be found.' : 'Loading purchase…'}</div>
+        {missing && back}
+      </div>
+    );
+  }
+  if (!canEdit) {
+    return (
+      <div className="p-8 max-w-xl space-y-3">
+        <div className="text-base font-semibold">Only the owner or a manager can edit a saved purchase</div>
+        {back}
+      </div>
+    );
+  }
+  if (editing.status === 'cancelled') {
+    return (
+      <div className="p-8 max-w-xl space-y-3">
+        <div className="text-base font-semibold">A cancelled purchase cannot be edited</div>
+        <div className="text-sm text-muted-foreground">Enter a new purchase instead.</div>
+        {back}
+      </div>
+    );
+  }
+  return <AddPurchaseForm key={id} editing={editing} />;
+}
+
+function AddPurchaseForm({ editing }: { editing?: PurchaseRecord }) {
+  const nav = useNavigate();
   const [searchParams] = useSearchParams();
-  const purchases = usePurchases((s) => s.purchases);
   const addPurchase = usePurchases((s) => s.addPurchase);
+  const updatePurchase = usePurchases((s) => s.updatePurchase);
+  const [saving, setSaving] = useState(false);
   // The supplier SELECT reads the contacts store's UNPAGED `options` (id+name).
   // `items` is one page of suppliers, so building the select from it would hide
   // every supplier past the first page. The chosen supplier's address / pay
@@ -81,7 +159,7 @@ export default function AddPurchase() {
 
   // Data source: the SQLite backend only (mirrors POS.tsx). The mock product
   // seed fallback was removed — an empty query means an empty item picker.
-  const productsQuery = useProducts('br_mp');
+  const productsQuery = useProducts(useDefaultBranchId());
   const products = productsQuery.data ?? [];
   const branches = useBranches((s) => s.items);
 
@@ -93,12 +171,12 @@ export default function AddPurchase() {
     void loadSupplierOptions();
   }, [hydrateBranches, loadSupplierOptions]);
 
-  const editing = id ? purchases.find((p) => p.id === id) : undefined;
-
   // Default branch: edit value wins; otherwise the default branch name, else
   // first. No hardcoded branch-name fallback (see the hydrate effect below).
-  const defaultBranchName =
-    editing?.branch ?? (branches.find((b) => b.isDefault)?.name ?? branches[0]?.name ?? '');
+  // A loaded bill carries its branch ID; the picker lists names.
+  const defaultBranchName = editing
+    ? branchNameOf(editing.branch) || editing.branch
+    : (branches.find((b) => b.isDefault)?.name ?? branches[0]?.name ?? '');
 
   // Header
   const [supplierId, setSupplierId] = useState(editing?.supplierId ?? '');
@@ -287,7 +365,7 @@ export default function AddPurchase() {
     supplierName,
     supplierAddress,
     branch,
-    user: 'Seam',
+    user: currentUserName(),
     payTerms: payTerms || undefined,
     attachmentName,
     lines: lines.map((l) => recomputeLine(l)),
@@ -303,10 +381,12 @@ export default function AddPurchase() {
     other: totals.other,
     total: totals.total,
     paid,
-    due: Math.max(0, totals.total - paid),
+    // A new bill has no supplier credit notes yet; they come from returns later.
+    credited: 0,
+    due: round2(Math.max(0, totals.total - paid)),
     payments: [],
     notes: notes || undefined,
-    audit: [{ id: 'a_' + Date.now(), at: new Date().toISOString(), by: 'Seam', action: 'created' }],
+    audit: [{ id: 'a_' + Date.now(), at: new Date().toISOString(), by: currentUserName(), action: 'created' }],
   });
 
   // For Save & Pay flow we save first then open the payment modal on a transient record
@@ -314,20 +394,36 @@ export default function AddPurchase() {
   const [newSupplierOpen, setNewSupplierOpen] = useState(false);
   const [newProductOpen, setNewProductOpen] = useState(false);
 
+  /**
+   * Save a CORRECTION to the saved bill (admin). The backend keeps the bill's
+   * number and every payment made on it, and re-applies stock and buying
+   * prices in one transaction. The reason goes into the bill's audit.
+   */
+  const saveCorrection = async () => {
+    if (!editing || !isValid || saving) return;
+    const reason = await promptText({
+      title: `Why is ${editing.refNo} being corrected?`,
+      message:
+        editing.status === 'received'
+          ? 'The stock and buying prices from the original bill are replaced by the corrected ones. Payments already made stay on the bill.'
+          : 'Recorded on the bill so the change is traceable.',
+      label: 'Reason',
+      placeholder: 'e.g. supplier invoice showed a different price',
+      confirmLabel: 'Save correction',
+      required: true,
+    });
+    if (reason === null) return;
+    setSaving(true);
+    const ok = await updatePurchase(editing.id, buildRecord(editing.paid), reason);
+    setSaving(false);
+    if (!ok) return;
+    toast.success(`${editing.refNo} corrected`);
+    nav('/purchases');
+  };
+
   const saveUnpaid = async () => {
     if (!isValid) return;
-    // EDIT-MODE INTEGRITY (backend): there is no `purchases.update` channel, and
-    // a saved purchase may already have moved stock (status 'received') and cash.
-    // Re-creating it would duplicate the record and double-count stock/cash, so
-    // editing an existing backend purchase in place is blocked — the user should
-    // Cancel it (which reverses stock + cash) and add a new one.
-    if (editing) {
-      toast.error('A saved purchase cannot be edited in place', {
-        description:
-          'It may have already affected stock and cash. Cancel it from the purchase detail, then add a new purchase.',
-      });
-      return;
-    }
+    if (editing) return saveCorrection();
     if (lowMarginLines.length > 0) {
       const ok = await confirm({
         title: `${lowMarginLines.length} item(s) will have margin under 10%.`,
@@ -343,15 +439,8 @@ export default function AddPurchase() {
 
   const saveAndPay = async () => {
     if (!isValid) return;
-    // EDIT-MODE INTEGRITY (backend): same rule as saveUnpaid — never re-create an
-    // existing purchase, it would duplicate stock-in and cash-out.
-    if (editing) {
-      toast.error('A saved purchase cannot be edited in place', {
-        description:
-          'It may have already affected stock and cash. Cancel it from the purchase detail, then add a new purchase.',
-      });
-      return;
-    }
+    // A correction never re-creates the bill: it goes through purchases.update.
+    if (editing) return saveCorrection();
     // Save & Pay is always wired to the persisted purchase: addPurchase() awaits
     // api('purchases.create') (which returns the new backend id) and rehydrates,
     // resolving to that real id. We then look the rehydrated record up by that
@@ -399,12 +488,20 @@ export default function AddPurchase() {
             <Button variant="ghost" onClick={() => nav(-1)}>
               <ArrowLeft className="size-4" /> Back
             </Button>
+            {editing ? (
+              <Button onClick={() => void saveCorrection()} disabled={!isValid || saving}>
+                <Save className="size-4" /> Save correction
+              </Button>
+            ) : (
+              <>
             <Button variant="outline" onClick={saveUnpaid} disabled={!isValid}>
               <Save className="size-4" /> Save Unpaid
             </Button>
             <Button onClick={saveAndPay} disabled={!isValid}>
               <Banknote className="size-4" /> Save & Pay
             </Button>
+              </>
+            )}
           </>
         }
       />
@@ -429,7 +526,7 @@ export default function AddPurchase() {
                   <select
                     value={supplierId}
                     onChange={(e) => setSupplierId(e.target.value)}
-                    className="h-9 flex-1 min-w-0 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                    className="h-10 flex-1 min-w-0 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
                   >
                     <option value="">Please Select</option>
                     {supplierOptions.map((s) => (
@@ -442,7 +539,7 @@ export default function AddPurchase() {
                     type="button"
                     onClick={() => setNewSupplierOpen(true)}
                     title="Add new supplier"
-                    className="size-9 grid place-items-center rounded-md border border-border hover:border-primary hover:bg-primary/10 hover:text-primary text-muted-foreground transition shrink-0"
+                    className="size-10 grid place-items-center rounded-md border border-border hover:border-primary hover:bg-primary/10 hover:text-primary text-muted-foreground transition shrink-0"
                   >
                     <Plus className="size-4" />
                   </button>
@@ -450,7 +547,7 @@ export default function AddPurchase() {
               </Field>
               {supplierAddress && (
                 <div>
-                  <div className="text-[10px] uppercase font-semibold text-muted-foreground">
+                  <div className="text-xs font-semibold text-muted-foreground">
                     Address
                   </div>
                   <div className="text-xs text-muted-foreground mt-0.5">{supplierAddress}</div>
@@ -470,7 +567,7 @@ export default function AddPurchase() {
                 <select
                   value={branch}
                   onChange={(e) => setBranch(e.target.value)}
-                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                  className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
                 >
                   {(branches.length > 0 ? branches.map((b) => b.name) : branch ? [branch] : []).map((b) => (
                     <option key={b} value={b}>
@@ -499,7 +596,7 @@ export default function AddPurchase() {
                 <select
                   value={status}
                   onChange={(e) => setStatus(e.target.value as PurchaseStatus)}
-                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 capitalize"
+                  className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 capitalize"
                 >
                   <option value="received">Received</option>
                   <option value="ordered">Ordered</option>
@@ -511,7 +608,7 @@ export default function AddPurchase() {
 
             <div className="md:col-span-2">
               <Field label="Attach Document" hint="Max 5MB · pdf, csv, zip, doc, docx, jpeg, jpg, png">
-                <label className="cursor-pointer flex items-center gap-2 px-3 h-9 rounded-md border border-input bg-background hover:bg-secondary/50 transition text-xs">
+                <label className="cursor-pointer flex items-center gap-2 px-3 h-10 rounded-md border border-input bg-background hover:bg-secondary/50 transition text-xs">
                   <Paperclip className="size-3.5" />
                   <span className="flex-1 truncate">{attachmentName ?? 'Browse'}</span>
                   <input type="file" className="hidden" onChange={handleFile} />
@@ -551,7 +648,7 @@ export default function AddPurchase() {
                       <ProductImage url={p.image} categoryId={p.categoryId} size={28} />
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-medium truncate">{p.name}</div>
-                        <div className="text-[10px] text-muted-foreground font-mono">
+                        <div className="text-xs text-muted-foreground font-mono">
                           {p.sku} · stock {p.stock} {p.unit}
                         </div>
                       </div>
@@ -577,7 +674,7 @@ export default function AddPurchase() {
                 window narrowed to the 900px minimum. */}
             <div className="mt-3 -mx-4 overflow-x-auto">
               <table className="w-full text-sm min-w-[940px]">
-                <thead className="text-[10px] uppercase text-muted-foreground bg-secondary/40">
+                <thead className="text-xs text-muted-foreground bg-secondary/40">
                   <tr>
                     <th className="text-left px-2 py-2 font-medium w-8">#</th>
                     <th className="text-left px-2 py-2 font-medium">Product Name</th>
@@ -609,7 +706,7 @@ export default function AddPurchase() {
                       <td className="px-2 py-2 text-xs text-muted-foreground">{i + 1}</td>
                       <td className="px-2 py-2">
                         <div className="font-medium leading-tight">{l.name}</div>
-                        <div className="text-[11px] text-muted-foreground font-mono">{l.sku}</div>
+                        <div className="text-xs text-muted-foreground font-mono">{l.sku}</div>
                       </td>
                       <td className="px-1 py-2 text-right">
                         <NumberField
@@ -637,7 +734,7 @@ export default function AddPurchase() {
                               baseUnit: cat?.unit ?? 'pc',
                             });
                           }}
-                          className="h-7 w-full px-1 rounded border border-input bg-background text-[11px] outline-none focus:ring-2 focus:ring-ring/50"
+                          className="h-7 w-full px-1 rounded border border-input bg-background text-xs outline-none focus:ring-2 focus:ring-ring/50"
                           title="What the supplier is quoting — the price is per one of these"
                         >
                           {PACKS.map((p) => (
@@ -649,7 +746,7 @@ export default function AddPurchase() {
                         {/* Says out loud what will land in stock, so the buyer can
                             check it against the delivery before saving. */}
                         {(l.unitFactor ?? 1) > 1 && (
-                          <div className="text-[10px] text-muted-foreground mt-0.5 text-center tabular">
+                          <div className="text-xs text-muted-foreground mt-0.5 text-center tabular">
                             = {round2(l.qty * (l.unitFactor ?? 1))} {cat?.unit ?? 'pc'}
                           </div>
                         )}
@@ -662,7 +759,7 @@ export default function AddPurchase() {
                           className="h-7 px-1.5 text-xs"
                         />
                       </td>
-                      <td className="px-1 py-2 text-right font-mono tabular text-xs text-primary">
+                      <td className="px-1 py-2 text-right tabular text-xs text-primary">
                         {cat ? formatBDT(cat.avgCost ?? cat.cost, { withSymbol: false }) : '—'}
                       </td>
                       <td className="px-1 py-2 text-right">
@@ -680,16 +777,16 @@ export default function AddPurchase() {
                           className="h-7 w-full px-1.5 text-right text-xs"
                         />
                       </td>
-                      <td className="px-1 py-2 text-right font-mono tabular text-muted-foreground text-xs">
+                      <td className="px-1 py-2 text-right tabular text-muted-foreground text-xs">
                         {formatBDT(l.unitCostBeforeTax, { withSymbol: false })}
                       </td>
-                      <td className="px-1 py-2 text-right font-mono tabular font-semibold text-xs">
+                      <td className="px-1 py-2 text-right tabular font-semibold text-xs">
                         {formatBDT(l.lineTotal, { withSymbol: false })}
                       </td>
                       <td className="px-1 py-2 text-right">
                         <span
                           className={cn(
-                            'font-mono tabular text-xs',
+                            'tabular text-xs',
                             l.marginPct === undefined
                               ? 'text-muted-foreground'
                               : l.marginPct < 10
@@ -740,7 +837,7 @@ export default function AddPurchase() {
                 <select
                   value={orderDiscountType}
                   onChange={(e) => setOrderDiscountType(e.target.value as 'flat' | 'percent')}
-                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                  className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
                 >
                   <option value="flat">Flat (৳)</option>
                   <option value="percent">Percent (%)</option>
@@ -804,7 +901,7 @@ export default function AddPurchase() {
               {totals.other > 0 && <Row label="Other" value={formatBDT(totals.other)} />}
               <div className="border-t border-border pt-2 flex items-center justify-between">
                 <span className="font-semibold">Net Total</span>
-                <span className="text-xl font-bold font-mono tabular text-primary">
+                <span className="text-xl font-bold tabular text-primary">
                   {formatBDT(totals.total)}
                 </span>
               </div>
@@ -822,7 +919,7 @@ export default function AddPurchase() {
 
             {supplier && supplier.due > 0 && (
               <div className="mt-3 rounded-md bg-secondary/60 text-foreground px-3 py-2 text-xs">
-                Existing supplier payable: <span className="font-mono tabular">{formatBDT(supplier.due)}</span>
+                Existing supplier payable: <span className="tabular">{formatBDT(supplier.due)}</span>
               </div>
             )}
           </Card>
@@ -879,11 +976,11 @@ function Field({
 }) {
   return (
     <div>
-      <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+      <label className="text-xs font-semibold text-muted-foreground">
         {label} {required && <span className="text-destructive">*</span>}
       </label>
       {children}
-      {hint && <div className="text-[10px] text-muted-foreground mt-0.5">{hint}</div>}
+      {hint && <div className="text-xs text-muted-foreground mt-0.5">{hint}</div>}
     </div>
   );
 }
@@ -900,7 +997,7 @@ function Row({
   return (
     <div className="flex items-center justify-between text-sm">
       <span className="text-muted-foreground">{label}</span>
-      <span className={cn('font-mono tabular', tone === 'success' && 'text-success')}>{value}</span>
+      <span className={cn('tabular', tone === 'success' && 'text-success')}>{value}</span>
     </div>
   );
 }
@@ -934,8 +1031,8 @@ function PriceTriplet({
 function TripletCell({ label, value, tone }: { label: string; value: number; tone: string }) {
   return (
     <div>
-      <div className="text-[9px] uppercase text-muted-foreground leading-none">{label}</div>
-      <div className={cn('mt-0.5 text-xs font-mono tabular font-semibold', tone)}>
+      <div className="text-xs text-muted-foreground leading-none">{label}</div>
+      <div className={cn('mt-0.5 text-xs tabular font-semibold', tone)}>
         {formatBDT(value, { withSymbol: false })}
       </div>
     </div>

@@ -120,7 +120,7 @@ export default function BarcodePrint() {
                     <ProductImage url={p.image} categoryId={p.categoryId} size={32} />
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium truncate">{p.name}</div>
-                      <div className="text-[11px] text-muted-foreground font-mono">
+                      <div className="text-xs text-muted-foreground font-mono">
                         {p.sku} · {p.barcode}
                       </div>
                     </div>
@@ -135,7 +135,7 @@ export default function BarcodePrint() {
                         <input
                           value={inQueue.copies}
                           onChange={(e) => updateCopies(p.id, Number(e.target.value) || 0)}
-                          className="w-10 bg-transparent text-center text-xs font-mono tabular outline-none"
+                          className="w-10 bg-transparent text-center text-xs tabular outline-none"
                         />
                         <button
                           onClick={() => updateCopies(p.id, inQueue.copies + 1)}
@@ -164,11 +164,11 @@ export default function BarcodePrint() {
           <Card className="p-4 space-y-3">
             <div className="text-sm font-semibold">Label settings</div>
             <div>
-              <label className="text-[10px] uppercase font-semibold text-muted-foreground">Size</label>
+              <label className="text-xs font-semibold text-muted-foreground">Size</label>
               <select
                 value={size}
                 onChange={(e) => setSize(e.target.value as LabelSize)}
-                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
               >
                 {LABEL_PRESETS.map((p) => (
                   <option key={p.id} value={p.id}>
@@ -201,7 +201,7 @@ export default function BarcodePrint() {
                   return (
                     <div key={q.productId} className="flex items-center gap-2 text-xs">
                       <div className="flex-1 truncate font-medium">{p.name}</div>
-                      <span className="font-mono tabular">×{q.copies}</span>
+                      <span className="tabular">×{q.copies}</span>
                       <button
                         onClick={() => updateCopies(q.productId, 0)}
                         className="size-6 grid place-items-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
@@ -219,11 +219,11 @@ export default function BarcodePrint() {
 
       {/* Preview */}
       <div className="p-6 print:p-0">
-        <div className="text-[11px] text-muted-foreground uppercase font-semibold mb-2 print:hidden">
+        <div className="text-xs text-muted-foreground font-semibold mb-2 print:hidden">
           Preview
         </div>
         <div
-          className="bg-white text-black rounded-md p-4 print:p-0"
+          className="print-doc bg-white text-black rounded-md p-4 print:p-0"
           style={{
             display: 'grid',
             gridTemplateColumns: `repeat(${preset.cols}, 1fr)`,

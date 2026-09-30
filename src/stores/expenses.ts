@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { currentUserId } from '@/lib/actor';
 import { persist } from 'zustand/middleware';
 import { api } from '@/lib/api';
 import { toast } from '@/stores/toast';
@@ -48,7 +49,6 @@ export interface ExpenseRecord {
 // The branch an expense is filed against is resolved from the real branch list
 // (src/lib/branch.ts), not assumed. `requireBranchId` throws rather than guess,
 // and the store's .catch below turns that into a toast.
-const CURRENT_USER = 'u_admin';
 
 let counter = 100;
 export function nextExpenseRef() {
@@ -106,10 +106,11 @@ interface State {
   removeCategory: (id: string) => void;
 
   // Expenses CRUD
-  addExpense: (data: Omit<ExpenseRecord, 'id'>) => ExpenseRecord;
-  updateExpense: (id: string, patch: Partial<ExpenseRecord>) => void;
-  voidExpense: (id: string, reason?: string) => void;
-  deleteExpense: (id: string) => void;
+  // Each write resolves true only once the backend has accepted it.
+  addExpense: (data: Omit<ExpenseRecord, 'id'>) => Promise<boolean>;
+  updateExpense: (id: string, patch: Partial<ExpenseRecord>) => Promise<boolean>;
+  voidExpense: (id: string, reason?: string) => Promise<boolean>;
+  deleteExpense: (id: string) => Promise<boolean>;
 }
 
 export const useExpenses = create<State>()(
@@ -215,50 +216,42 @@ export const useExpenses = create<State>()(
           });
       },
 
-      addExpense: (data) => {
+      addExpense: async (data) => {
         // Resolve the branch BEFORE the write, and refuse rather than guess.
         // This used to collapse any unrecognised branch name to `br_mp`, so on a
         // shop with more than one branch an expense could be filed against the
         // wrong one — and a wrong branch_id silently drops the row out of every
         // branch-scoped figure from then on.
-        let branchId: string | undefined;
+        let branchId: string;
         try {
           branchId = requireBranchId(data.branch);
         } catch (e) {
           toast.error(e instanceof Error ? e.message : 'No branch is available yet');
+          return false;
         }
-        if (branchId) {
-        void api('expenses.create', {
-          date: data.date,
-          categoryId: data.categoryId || undefined,
-          amount: data.amount,
-          paymentMethod: data.paymentMethod,
-          reference: data.reference,
-          note: data.note,
-          branchId,
-          userId: CURRENT_USER,
-          attachmentName: data.attachmentName,
-          recurring: data.recurring,
-          frequency: data.recurring ? data.frequency : undefined,
-          recurringEnd: data.recurring ? data.recurringEnd : undefined,
-        }).then(() => {
-          void get().hydrate();
-          // A cash expense posts a cash-out to the open shift; refresh the
-          // drawer so it reflects the new movement.
-          if (data.paymentMethod === 'Cash') void useCashRegister.getState().hydrate();
-        }).catch((e: unknown) => {
-          toast.error(e instanceof Error ? e.message : 'Failed to save expense');
-          void get().hydrate();
-          if (data.paymentMethod === 'Cash') void useCashRegister.getState().hydrate();
-        });
-        }
-        // Optimistic shape only — NOT pushed to state; the row arrives via hydrate().
-        return {
-          id: 'e_pending',
-          refNo: data.refNo ?? nextExpenseRef(),
-          ...data,
-          createdAt: new Date().toISOString(),
-        };
+        // Resolves only on the backend's answer. It used to return a made-up
+        // 'e_pending' record at once, so the drawer closed as if it had been
+        // saved even when the expense was refused.
+        return settleExpense(
+          get,
+          api('expenses.create', {
+            date: data.date,
+            categoryId: data.categoryId || undefined,
+            amount: data.amount,
+            paymentMethod: data.paymentMethod,
+            reference: data.reference,
+            note: data.note,
+            branchId,
+            userId: currentUserId(),
+            attachmentName: data.attachmentName,
+            recurring: data.recurring,
+            frequency: data.recurring ? data.frequency : undefined,
+            recurringEnd: data.recurring ? data.recurringEnd : undefined,
+          }),
+          'Failed to save expense',
+          // A cash expense posts a cash-out to the drawer; refresh it too.
+          data.paymentMethod === 'Cash',
+        );
       },
       updateExpense: (id, patch) => {
         // Only send provided keys to the backend partial update.
@@ -273,38 +266,20 @@ export const useExpenses = create<State>()(
         if ('recurring' in patch) p.recurring = patch.recurring;
         if ('frequency' in patch) p.frequency = patch.frequency;
         if ('recurringEnd' in patch) p.recurringEnd = patch.recurringEnd;
-        void api('expenses.update', { id, patch: p }).then(() => {
-          void get().hydrate();
-          // amount/method edits may reverse-and-reapply a cash movement.
-          void useCashRegister.getState().hydrate();
-        }).catch((e: unknown) => {
-          toast.error(e instanceof Error ? e.message : 'Failed to update expense');
-          void get().hydrate();
-          void useCashRegister.getState().hydrate();
-        });
+        // amount/method edits may reverse-and-reapply a cash movement.
+        return settleExpense(get, api('expenses.update', { id, patch: p }), 'Failed to update expense', true);
       },
-      voidExpense: (id, reason) => {
-        void api('expenses.void', { id, reason, userId: CURRENT_USER }).then(() => {
-          void get().hydrate();
-          // Voiding a cash expense reverses the drawer hit — refresh cash too.
-          void useCashRegister.getState().hydrate();
-        }).catch((e: unknown) => {
-          toast.error(e instanceof Error ? e.message : 'Failed to void expense');
-          void get().hydrate();
-          void useCashRegister.getState().hydrate();
-        });
-      },
-      deleteExpense: (id) => {
-        void api('expenses.delete', { id }).then(() => {
-          void get().hydrate();
-          // Deleting a cash expense reverses the drawer hit — refresh cash too.
-          void useCashRegister.getState().hydrate();
-        }).catch((e: unknown) => {
-          toast.error(e instanceof Error ? e.message : 'Failed to delete expense');
-          void get().hydrate();
-          void useCashRegister.getState().hydrate();
-        });
-      },
+      voidExpense: (id, reason) =>
+        // Voiding a cash expense reverses the drawer hit — refresh cash too.
+        settleExpense(
+          get,
+          api('expenses.void', { id, reason, userId: currentUserId() }),
+          'Failed to void expense',
+          true,
+        ),
+      deleteExpense: (id) =>
+        // Deleting a cash expense reverses the drawer hit — refresh cash too.
+        settleExpense(get, api('expenses.delete', { id }), 'Failed to delete expense', true),
     }),
     {
       name: 'pos-expenses',
@@ -318,6 +293,28 @@ export const useExpenses = create<State>()(
     },
   ),
 );
+
+/**
+ * Wait for an expense write, then re-read either way (and the drawer, when the
+ * write can move cash). Resolves true only when the backend accepted it.
+ */
+async function settleExpense(
+  get: () => { hydrate: () => Promise<void> },
+  write: Promise<unknown>,
+  failure: string,
+  touchesCash: boolean,
+): Promise<boolean> {
+  let ok = true;
+  try {
+    await write;
+  } catch (e: unknown) {
+    ok = false;
+    toast.error(e instanceof Error ? e.message : failure);
+  }
+  void get().hydrate();
+  if (touchesCash) void useCashRegister.getState().hydrate();
+  return ok;
+}
 
 // Helpers
 export function categoryPath(cats: ExpenseCategory[], id?: string): string {

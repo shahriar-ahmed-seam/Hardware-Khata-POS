@@ -170,14 +170,14 @@ export default function TrendingPage() {
                       {i < 3 && <Flame className="size-3 text-amber-500" />}
                       <span className="font-semibold text-sm truncate">{r.name}</span>
                     </div>
-                    <div className="text-[11px] font-mono text-muted-foreground truncate">
+                    <div className="text-xs font-mono text-muted-foreground truncate">
                       {r.sku} · {r.category}
                     </div>
                   </div>
                 </div>
                 <div className="flex items-end justify-between mt-3">
                   <div>
-                    <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+                    <div className="text-xs font-semibold text-muted-foreground">
                       {metric === 'qty' ? 'Units' : 'Revenue'}
                     </div>
                     <div className="tabular font-bold text-base">
@@ -186,7 +186,7 @@ export default function TrendingPage() {
                   </div>
                   <Sparkline values={r.trend14} />
                 </div>
-                <div className="mt-2 flex items-center justify-between text-[11px]">
+                <div className="mt-2 flex items-center justify-between text-xs">
                   <span className="text-muted-foreground">
                     Prior: {metric === 'qty' ? formatNumber(r.previous) : formatBDT(r.previous)}
                   </span>
@@ -223,20 +223,20 @@ function Sparkline({ values }: { values: number[] }) {
 function DeltaBadge({ pct }: { pct: number }) {
   if (Math.abs(pct) < 0.1) {
     return (
-      <Badge variant="default" className="text-[10px]">
+      <Badge variant="default" className="text-xs">
         flat
       </Badge>
     );
   }
   if (pct > 0) {
     return (
-      <span className="inline-flex items-center gap-0.5 text-success font-semibold text-[11px] tabular">
+      <span className="inline-flex items-center gap-0.5 text-success font-semibold text-xs tabular">
         <TrendingUp className="size-3" /> {pct.toFixed(0)}%
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-0.5 text-destructive font-semibold text-[11px] tabular">
+    <span className="inline-flex items-center gap-0.5 text-destructive font-semibold text-xs tabular">
       <TrendingDown className="size-3" /> {pct.toFixed(0)}%
     </span>
   );

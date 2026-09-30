@@ -56,12 +56,12 @@ export function HeldList({ open, onClose, carts, onResume, onDiscard, customers 
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-semibold">{c.label}</div>
-                  <div className="text-[11px] text-muted-foreground truncate">
+                  <div className="text-xs text-muted-foreground truncate">
                     {cust?.name ?? 'Walk-in'} · {c.lines.length} items · {c.priceGroup}
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="text-sm font-mono tabular font-semibold">
+                  <div className="text-sm tabular font-semibold">
                     {formatBDT(totals.total)}
                   </div>
                 </div>

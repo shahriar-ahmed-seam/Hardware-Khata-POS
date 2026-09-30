@@ -120,12 +120,20 @@
           </g>
         </svg>
       </div>
-      <div class="brand">Hardware POS</div>
+      <div class="brand">Hardware Khata POS</div>
       <div class="tagline">Offline-first · Built for the shop floor</div>
       <div class="progress"></div>
       <div class="status">Loading…</div>
     </div>
-    <div class="version">v0.1.0</div>
+    <div class="version" id="version"></div>
   </div>
+  <script>
+    // electron/main.ts passes app.getVersion() as ?v=. Only digits, dots and
+    // pre-release letters are shown, and as text, never as markup.
+    (function () {
+      var v = new URLSearchParams(location.search).get('v') || '';
+      if (/^[0-9A-Za-z.+-]{1,32}$/.test(v)) document.getElementById('version').textContent = 'v' + v;
+    })();
+  </script>
 </body>
 </html>

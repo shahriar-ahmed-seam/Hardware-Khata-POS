@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { toast } from '@/stores/toast';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Plus, Save, Search, Trash2 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -19,6 +20,7 @@ import {
   type StockAdjustment,
 } from '@/stores/stock';
 import { formatBDT, cn } from '@/lib/utils';
+import { currentUserId } from '@/lib/actor';
 
 const TYPES: AdjustmentType[] = ['damage', 'theft', 'sample', 'recount', 'other'];
 
@@ -34,7 +36,14 @@ export default function AddStockAdjustment() {
   const { data: beProducts } = useProducts();
   const products = beProducts ?? [];
 
-  const [branch, setBranch] = useState(branchNames[0] ?? 'Mirpur Branch');
+  // The shop's default branch; no demo-fixture fallback name. The list can
+  // arrive after the first render, so it is adopted when it lands.
+  const defaultBranchName = branches.find((b) => b.isDefault)?.name ?? branches[0]?.name ?? '';
+  const [branch, setBranch] = useState(defaultBranchName);
+  useEffect(() => {
+    if (!branch && defaultBranchName) setBranch(defaultBranchName);
+  }, [branch, defaultBranchName]);
+  const [saving, setSaving] = useState(false);
   const [type, setType] = useState<AdjustmentType>('damage');
   // Local wall-clock, defaulting to now (was UTC — six hours out in Dhaka).
   const [date, setDate] = useState(nowLocalInput());
@@ -71,8 +80,10 @@ export default function AddStockAdjustment() {
 
   const isValid = lines.length > 0 && lines.every((l) => l.qty !== 0);
 
-  const submit = () => {
-    if (!isValid) return;
+  // Leaves the page only once the backend has saved it; a refusal (not enough
+  // stock, say) keeps everything that was entered.
+  const submit = async () => {
+    if (!isValid || saving) return;
     const a: StockAdjustment = {
       id: 'a_' + Date.now(),
       refNo: nextAdjustmentRef(),
@@ -83,9 +94,13 @@ export default function AddStockAdjustment() {
       type,
       reason: reason || undefined,
       lines,
-      createdBy: 'Seam',
+      createdBy: currentUserId(),
     };
-    addAdjustment(a);
+    setSaving(true);
+    const ok = await addAdjustment(a);
+    setSaving(false);
+    if (!ok) return;
+    toast.success('Adjustment saved');
     nav('/stock/adjustments');
   };
 
@@ -99,7 +114,7 @@ export default function AddStockAdjustment() {
             <Button variant="ghost" onClick={() => nav('/stock/adjustments')}>
               <ArrowLeft className="size-4" /> Back
             </Button>
-            <Button onClick={submit} disabled={!isValid}>
+            <Button onClick={() => void submit()} disabled={!isValid || saving}>
               <Save className="size-4" /> Save Adjustment
             </Button>
           </>
@@ -114,7 +129,7 @@ export default function AddStockAdjustment() {
                 <select
                   value={branch}
                   onChange={(e) => setBranch(e.target.value)}
-                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                  className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
                 >
                   {branchNames.map((b) => (
                     <option key={b} value={b}>
@@ -127,7 +142,7 @@ export default function AddStockAdjustment() {
                 <select
                   value={type}
                   onChange={(e) => setType(e.target.value as AdjustmentType)}
-                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 capitalize"
+                  className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 capitalize"
                 >
                   {TYPES.map((t) => (
                     <option key={t} value={t}>
@@ -175,7 +190,7 @@ export default function AddStockAdjustment() {
                       <ProductImage url={p.image} categoryId={p.categoryId} size={28} />
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-medium truncate">{p.name}</div>
-                        <div className="text-[10px] text-muted-foreground font-mono">
+                        <div className="text-xs text-muted-foreground font-mono">
                           {p.sku} · stock {p.stock} {p.unit}
                         </div>
                       </div>
@@ -188,7 +203,7 @@ export default function AddStockAdjustment() {
 
             <div className="mt-3 rounded-lg border border-border overflow-hidden">
               <table className="w-full text-sm">
-                <thead className="text-[10px] uppercase text-muted-foreground bg-secondary/40">
+                <thead className="text-xs text-muted-foreground bg-secondary/40">
                   <tr>
                     <th className="text-left px-3 py-2 font-medium w-8">#</th>
                     <th className="text-left px-2 py-2 font-medium">Item</th>
@@ -205,7 +220,7 @@ export default function AddStockAdjustment() {
                       <td className="px-3 py-2 text-xs text-muted-foreground">{i + 1}</td>
                       <td className="px-2 py-2">
                         <div className="font-medium">{l.name}</div>
-                        <div className="text-[11px] text-muted-foreground font-mono">{l.sku}</div>
+                        <div className="text-xs text-muted-foreground font-mono">{l.sku}</div>
                       </td>
                       <td className="px-2 py-2 text-right">
                         <NumberField
@@ -218,12 +233,12 @@ export default function AddStockAdjustment() {
                         />
                       </td>
                       <td className="px-2 py-2 text-xs">{l.unit}</td>
-                      <td className="px-2 py-2 text-right font-mono tabular">
+                      <td className="px-2 py-2 text-right tabular">
                         {formatBDT(l.unitCost, { withSymbol: false })}
                       </td>
                       <td
                         className={cn(
-                          'px-2 py-2 text-right font-mono tabular font-semibold',
+                          'px-2 py-2 text-right tabular font-semibold',
                           l.qty < 0 ? 'text-destructive' : l.qty > 0 ? 'text-success' : '',
                         )}
                       >
@@ -267,7 +282,7 @@ export default function AddStockAdjustment() {
                 <span className="text-muted-foreground">Net value</span>
                 <span
                   className={cn(
-                    'text-xl font-bold font-mono tabular',
+                    'text-xl font-bold tabular',
                     netValue < 0 ? 'text-destructive' : netValue > 0 ? 'text-success' : '',
                   )}
                 >
@@ -296,7 +311,7 @@ function Field({
 }) {
   return (
     <div className={className}>
-      <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+      <label className="text-xs font-semibold text-muted-foreground">
         {label} {required && <span className="text-destructive">*</span>}
       </label>
       {children}
@@ -318,7 +333,7 @@ function Row({
       <span className="text-muted-foreground">{label}</span>
       <span
         className={cn(
-          'font-mono tabular',
+          'tabular',
           tone === 'success' && 'text-success',
           tone === 'destructive' && 'text-destructive',
         )}

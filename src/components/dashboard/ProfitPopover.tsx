@@ -19,10 +19,10 @@ export function ProfitPopover() {
         <div>
           <div className="text-xs text-muted-foreground">Today's Profit</div>
           <div className="flex items-baseline gap-2">
-            <span className="text-xl font-bold font-mono">{formatBDT(p?.netProfit ?? 0)}</span>
+            <span className="text-xl font-bold tabular">{formatBDT(p?.netProfit ?? 0)}</span>
             {typeof delta === 'number' && (
               <span
-                className={`text-[11px] font-medium inline-flex items-center gap-0.5 ${
+                className={`text-xs font-medium inline-flex items-center gap-0.5 ${
                   delta >= 0 ? 'text-success' : 'text-destructive'
                 }`}
               >
@@ -80,7 +80,7 @@ function Row({
     <div className="flex items-center justify-between">
       <span className={muted ? 'text-muted-foreground text-xs' : 'text-sm'}>{label}</span>
       <span
-        className={`font-mono ${bold ? 'font-bold' : ''} ${tone === 'success' ? 'text-success' : ''}`}
+        className={`tabular ${bold ? 'font-bold' : ''} ${tone === 'success' ? 'text-success' : ''}`}
       >
         {value}
       </span>

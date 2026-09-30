@@ -2,8 +2,9 @@ import type { DB } from '../db/connection.ts';
 import { tx } from '../db/connection.ts';
 import { newId } from '../core/ids.ts';
 import { round2 } from '../core/money.ts';
-import { addPurchasePayment } from './purchases.ts';
+import { payToSupplier, type AccountAllocation } from './accounts.ts';
 import { logActivity } from './activity.ts';
+import { shopBranchId } from './branch.ts';
 
 /**
  * Contacts CRUD: customers + suppliers. Mirrors catalog.ts — keeps the FTS index
@@ -314,68 +315,38 @@ export function deleteSupplier(db: DB, id: string) {
   });
 }
 
-// ---------- Supplier payment (auto-allocate oldest-first) ----------
+// ---------- Supplier payment ----------
 export interface PaySupplierInput {
   supplierId: string;
   amount: number;
   method: string;
   reference?: string;
   userId: string;
-  branchId: string;
+  /** Omitted → the shop's default branch (services/branch.ts). */
+  branchId?: string;
   paidAt?: string;
+  note?: string;
+  /** Picked mode: how much goes to each bill (docId = purchase id). */
+  allocations?: AccountAllocation[];
 }
 
 /**
- * Pay a supplier by auto-allocating the amount oldest-first across that
- * supplier's OPEN bills (status != 'cancelled' AND due > 0). Each allocation is
- * persisted as a real purchase_payments row by reusing addPurchasePayment, so
- * the derived supplierDue recomputes correctly (and Cash payments post to the
- * open shift via addPurchasePayment's cash handling).
+ * Pay a supplier: the opening balance first, then the oldest open bills, and
+ * anything left stays with the supplier as an advance — see services/accounts.ts.
  *
- * DEFERRAL: any remainder beyond the open bills is NOT persisted — supplier
- * advance payments are not modeled yet (no advance/credit table). The remainder
- * is returned so callers can surface it, but it does not reduce any balance.
+ * The remainder beyond the open bills used to be returned and NOT saved, so a
+ * bank transfer larger than the bills left money the books never saw.
  */
 export function paySupplier(db: DB, input: PaySupplierInput) {
-  return tx(db, () => {
-    const paidAt = input.paidAt ?? new Date().toISOString();
-    // oldest-first across open bills of this supplier
-    const bills = db
-      .prepare(
-        `SELECT id, total, paid FROM purchases
-          WHERE supplier_id = ? AND status != 'cancelled' AND (total - paid) > 0
-          ORDER BY date ASC, ref_no ASC`,
-      )
-      .all(input.supplierId) as { id: string; total: number; paid: number }[];
-
-    let remaining = round2(input.amount);
-    let allocated = 0;
-    for (const bill of bills) {
-      if (remaining <= 0) break;
-      const billDue = round2(bill.total - bill.paid);
-      if (billDue <= 0) continue;
-      const apply = round2(Math.min(billDue, remaining));
-      addPurchasePayment(
-        db,
-        bill.id,
-        { method: input.method, amount: apply, reference: input.reference, paidAt },
-        input.userId,
-      );
-      allocated = round2(allocated + apply);
-      remaining = round2(remaining - apply);
-    }
-
-    logActivity(db, {
-      by: input.userId,
-      branchId: input.branchId,
-      action: 'paid',
-      entity: 'supplier',
-      entityId: input.supplierId,
-      message: `Supplier payment ${input.method} ${allocated}`,
-      amount: allocated,
-      at: paidAt,
-    });
-
-    return { allocated, remainder: round2(Math.max(0, remaining)) };
+  return payToSupplier(db, {
+    partyId: input.supplierId,
+    amount: input.amount,
+    method: input.method,
+    reference: input.reference,
+    userId: input.userId,
+    branchId: input.branchId,
+    paidAt: input.paidAt,
+    note: input.note,
+    allocations: input.allocations,
   });
 }

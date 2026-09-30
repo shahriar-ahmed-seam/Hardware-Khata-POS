@@ -61,9 +61,9 @@ export default {
         sm: 'calc(var(--radius) - 4px)',
       },
       fontFamily: {
-        // No webfonts are downloaded (see index.html). Everything after the
-        // first entry ships with Windows, so the app looks the same offline.
-        sans: ['Inter', 'Hind Siliguri', 'Noto Sans Bengali', 'system-ui', 'Segoe UI', 'sans-serif'],
+        // Nothing is downloaded (see index.html). Segoe UI ships with Windows;
+        // Noto Sans Bengali is bundled (src/main.tsx) for Bangla on Windows 7.
+        sans: ['Inter', 'Segoe UI', 'Noto Sans Bengali', 'system-ui', 'sans-serif'],
         mono: ['JetBrains Mono', 'Consolas', 'ui-monospace', 'monospace'],
       },
       /**

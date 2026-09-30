@@ -192,7 +192,7 @@ function Row({
       </div>
       <div className="flex-1 min-w-0">
         <div className="text-sm font-medium">{cat.name}</div>
-        {indent && <div className="text-[10px] text-muted-foreground">subcategory</div>}
+        {indent && <div className="text-xs text-muted-foreground">subcategory</div>}
       </div>
       <div className="text-xs text-muted-foreground tabular">{count} products</div>
       <div className="flex items-center gap-0.5 opacity-60 group-hover:opacity-100">
@@ -244,11 +244,11 @@ function Form({
     >
       <div className="flex-1 overflow-auto p-4 space-y-3">
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">Name *</label>
+          <label className="text-xs font-semibold text-muted-foreground">Name *</label>
           <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">Icon (emoji)</label>
+          <label className="text-xs font-semibold text-muted-foreground">Icon (emoji)</label>
           <div className="flex flex-wrap gap-1 mt-1">
             {EMOJIS.map((e) => (
               <button
@@ -279,13 +279,13 @@ function Form({
           </div>
         </div>
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+          <label className="text-xs font-semibold text-muted-foreground">
             Parent category
           </label>
           <select
             value={parentId ?? ''}
             onChange={(e) => setParentId(e.target.value || undefined)}
-            className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+            className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="">— Top level —</option>
             {parentChoices.map((c) => (
@@ -295,7 +295,7 @@ function Form({
               </option>
             ))}
           </select>
-          <div className="text-[10px] text-muted-foreground mt-1">
+          <div className="text-xs text-muted-foreground mt-1">
             Optional. Leave empty for a top-level category.
           </div>
         </div>

@@ -65,7 +65,7 @@ export default function PriceGroups() {
                     </Badge>
                   )}
                 </div>
-                {g.notes && <div className="text-[11px] text-muted-foreground">{g.notes}</div>}
+                {g.notes && <div className="text-xs text-muted-foreground">{g.notes}</div>}
               </div>
               <div className="flex items-center gap-0.5 opacity-60 group-hover:opacity-100">
                 <button
@@ -151,11 +151,11 @@ function Form({
     >
       <div className="flex-1 overflow-auto p-4 space-y-3">
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">Name *</label>
+          <label className="text-xs font-semibold text-muted-foreground">Name *</label>
           <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="VIP / Member / etc." />
         </div>
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">Notes</label>
+          <label className="text-xs font-semibold text-muted-foreground">Notes</label>
           <Input value={notes} onChange={(e) => setNotes(e.target.value)} />
         </div>
         <label className="flex items-center gap-2 text-sm cursor-pointer">

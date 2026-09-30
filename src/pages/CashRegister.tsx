@@ -28,6 +28,7 @@ import { CloseShiftModal } from '@/components/cash/CloseShiftModal';
 import { ShiftReport } from '@/components/cash/ShiftReport';
 import { useBranches } from '@/stores/branches';
 import { useUsers } from '@/stores/users';
+import { round2, sum2 } from '@/lib/money';
 import { useAuth } from '@/stores/auth';
 import { formatBDT, cn } from '@/lib/utils';
 
@@ -69,31 +70,50 @@ export default function CashRegister() {
   const [filter, setFilter] = useState<'all' | 'in' | 'out'>('all');
 
   // Mirror Purchases.tsx: hydrate from the backend on mount so the shift +
-  // movements reflect the DB. Runs before the auto-open effect so we don't flash
-  // the "Open Shift" modal while the real open shift is still loading.
+  // movements reflect the DB.
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
 
-  // Auto-open the "Open Shift" modal if no shift exists
-  useEffect(() => {
-    if (!shift) setOpenShiftOpen(true);
-  }, [shift]);
-
+  /**
+   * NO "OPEN SHIFT" STEP. The drawer opens itself with the first cash sale,
+   * payment or expense (backend/services/cash.ts `ensureOpenShift`), starting
+   * from what the last shift left in it — so a forgotten button can never leave
+   * cash unrecorded. This screen used to pop the Open Shift dialog on arrival;
+   * starting the day with a count is now an optional extra.
+   */
   if (!shift) {
     return (
       <div>
-        <PageHeader title="Cash Register" subtitle={branch} />
+        <PageHeader
+          title="Cash Register"
+          subtitle={branch}
+          actions={
+            <Link to="/cash-register/report">
+              <Button variant="outline" size="sm">
+                <History className="size-4" /> Register Report
+              </Button>
+            </Link>
+          }
+        />
         <div className="p-6 max-w-xl">
           <Card className="p-8 text-center">
-            <Lock className="size-10 mx-auto opacity-40" />
-            <div className="mt-3 text-lg font-semibold">No active shift</div>
+            <Banknote className="size-10 mx-auto opacity-40" />
+            <div className="mt-3 text-lg font-semibold">The drawer opens by itself</div>
             <p className="text-sm text-muted-foreground mt-1">
-              Open a shift to start recording cash sales, payments, and expenses.
+              The next cash sale, payment or expense starts the drawer, with the cash the last shift left in it. Nothing has to be opened first.
             </p>
-            <Button className="mt-5" onClick={() => setOpenShiftOpen(true)}>
-              <Banknote className="size-4" /> Open Shift
-            </Button>
+            <div className="mt-5 flex flex-wrap justify-center gap-2">
+              <Button variant="outline" onClick={() => setOpenShiftOpen(true)}>
+                <Banknote className="size-4" /> Count the drawer and start now
+              </Button>
+              <Button variant="outline" onClick={() => setMoveOpen('in')}>
+                <ArrowDown className="size-4" /> Cash In
+              </Button>
+              <Button variant="outline" onClick={() => setMoveOpen('out')}>
+                <ArrowUp className="size-4" /> Cash Out
+              </Button>
+            </div>
           </Card>
         </div>
         <OpenShiftModal
@@ -101,6 +121,12 @@ export default function CashRegister() {
           onClose={() => setOpenShiftOpen(false)}
           branch={branch}
           cashier={cashier}
+        />
+        <CashMoveModal
+          open={!!moveOpen}
+          onClose={() => setMoveOpen(null)}
+          cashier={cashier}
+          defaultDirection={moveOpen ?? 'in'}
         />
       </div>
     );
@@ -111,13 +137,22 @@ export default function CashRegister() {
     .filter((m) => filter === 'all' || MOVEMENT_DIRECTION[m.type] === filter)
     .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
 
-  const cashIn = movements
-    .filter((m) => m.shiftId === shift.id && MOVEMENT_DIRECTION[m.type] === 'in')
-    .reduce((s, m) => s + m.amount, 0);
-  const cashOut = movements
-    .filter((m) => m.shiftId === shift.id && MOVEMENT_DIRECTION[m.type] === 'out')
-    .reduce((s, m) => s + m.amount, 0);
-  const expected = shift.openingCash + cashIn - cashOut;
+  // The drawer's figures are the backend's (cash.shiftTotals), not a sum over
+  // whatever movements this screen happens to hold (rule 20). The summed
+  // fallback only covers the moment before totals arrive, through lib/money.
+  const localIn = sum2(
+    movements
+      .filter((m) => m.shiftId === shift.id && MOVEMENT_DIRECTION[m.type] === 'in')
+      .map((m) => m.amount),
+  );
+  const localOut = sum2(
+    movements
+      .filter((m) => m.shiftId === shift.id && MOVEMENT_DIRECTION[m.type] === 'out')
+      .map((m) => m.amount),
+  );
+  const cashIn = shift.totals?.cashIn ?? localIn;
+  const cashOut = shift.totals?.cashOut ?? localOut;
+  const expected = shift.totals?.expected ?? round2(shift.openingCash + localIn - localOut);
 
   return (
     <div>
@@ -157,7 +192,7 @@ export default function CashRegister() {
                   <Clock className="size-3" /> {shiftDuration(shift)} elapsed
                 </span>
               </div>
-              <div className="text-[12px] text-muted-foreground mt-0.5">
+              <div className="text-sm text-muted-foreground mt-0.5">
                 Opened {new Date(shift.openedAt).toLocaleString('en-GB')} by {shift.openedBy}
                 {shift.openingNote ? ` · ${shift.openingNote}` : ''}
               </div>
@@ -172,13 +207,13 @@ export default function CashRegister() {
           {/* Expected in drawer */}
           <Card className="p-5 flex items-center justify-between bg-gradient-to-br from-primary/5 to-card edge-top">
             <div>
-              <div className="text-[10px] uppercase font-semibold text-muted-foreground">
+              <div className="text-xs font-semibold text-muted-foreground">
                 Expected in drawer right now
               </div>
-              <div className="font-mono tabular text-3xl font-bold text-primary mt-1">
+              <div className="tabular text-3xl font-bold text-primary mt-1">
                 {formatBDT(expected)}
               </div>
-              <div className="text-[11px] text-muted-foreground mt-1">
+              <div className="text-xs text-muted-foreground mt-1">
                 = Opening {formatBDT(shift.openingCash, { withSymbol: false })} + In{' '}
                 {formatBDT(cashIn, { withSymbol: false })} − Out{' '}
                 {formatBDT(cashOut, { withSymbol: false })}
@@ -222,7 +257,7 @@ export default function CashRegister() {
             </CardHeader>
             <CardContent className="p-0">
               <table className="w-full text-sm">
-                <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50">
+                <thead className="text-xs text-muted-foreground bg-secondary/50">
                   <tr>
                     <th className="text-left px-4 py-2 font-medium">Time</th>
                     <th className="text-left px-2 py-2 font-medium">Type</th>
@@ -260,7 +295,7 @@ export default function CashRegister() {
                         <td className="px-2 py-2 text-xs text-muted-foreground">{m.cashier}</td>
                         <td
                           className={cn(
-                            'px-4 py-2 text-right font-mono tabular',
+                            'px-4 py-2 text-right tabular',
                             MOVEMENT_DIRECTION[m.type] === 'in' ? 'text-success' : 'text-warning',
                           )}
                         >
@@ -304,20 +339,13 @@ export default function CashRegister() {
           <Card className="p-4 space-y-2 text-xs text-muted-foreground">
             <div className="text-sm font-semibold text-foreground">How shifts work</div>
             <p>
-              All cash sales, customer payments, supplier payments, and expenses tie into the
-              currently open shift. At close, you count the drawer; the system shows variance vs
-              expected.
+              Every cash sale, customer payment, refund, supplier payment and expense goes into this drawer. Nothing has to be opened first.
             </p>
             <p>
-              Variance under{' '}
-              <span className="font-mono tabular">
-                {formatBDT(useCashRegister.getState().varianceWarnThreshold)}
-              </span>{' '}
-              is fine. Above warns. Above{' '}
-              <span className="font-mono tabular">
-                {formatBDT(useCashRegister.getState().varianceBlockThreshold)}
-              </span>{' '}
-              needs manager override.
+              Close the shift when you count the drawer. The next cash entry starts a new drawer with the cash you left in it.
+            </p>
+            <p>
+              A small difference only warns. A difference at or over the block limit in Settings → Cash Register needs the owner or a manager.
             </p>
           </Card>
         </div>
@@ -347,10 +375,10 @@ function Stat({
 }) {
   return (
     <div className="rounded-md border border-border bg-card p-2">
-      <div className="text-[9px] uppercase text-muted-foreground">{label}</div>
+      <div className="text-xs text-muted-foreground">{label}</div>
       <div
         className={cn(
-          'font-mono tabular font-bold text-sm mt-0.5',
+          'tabular font-bold text-sm mt-0.5',
           tone === 'success' && 'text-success',
           tone === 'warning' && 'text-warning',
         )}

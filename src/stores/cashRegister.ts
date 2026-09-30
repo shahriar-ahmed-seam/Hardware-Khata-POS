@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { currentUserId } from '@/lib/actor';
 import { persist } from 'zustand/middleware';
 import { api } from '@/lib/api';
 import { toast } from '@/stores/toast';
@@ -129,8 +130,15 @@ interface State {
 
   hydrate: () => Promise<void>;
   ensureShiftMovements: (shiftId: string) => Promise<void>;
-  openShift: (data: { openingCash: number; note?: string; cashier: string; branch: string }) => Shift;
-  recordMovement: (m: Omit<CashMovement, 'id' | 'at' | 'shiftId'> & { shiftId?: string }) => CashMovement | null;
+  /** Start the drawer with a counted amount. Resolves true once the backend has it. */
+  openShift: (data: { openingCash: number; note?: string; cashier: string; branch: string }) => Promise<boolean>;
+  /**
+   * Cash In / Cash Out. The backend finds (or opens) the drawer, so no shift is
+   * needed first. Resolves true once recorded.
+   */
+  recordMovement: (m: Omit<CashMovement, 'id' | 'at' | 'shiftId'> & { shiftId?: string }) => Promise<boolean>;
+  /** What the next drawer would start with (the last shift's float or count). */
+  carriedForward: (branch: string) => Promise<number | null>;
   closeShift: (
     shiftId: string,
     data: {
@@ -139,7 +147,7 @@ interface State {
       note?: string;
       closedBy: string;
     },
-  ) => Shift | null;
+  ) => Promise<boolean>;
   getCurrentShift: (branch: string) => Shift | undefined;
 }
 
@@ -148,7 +156,6 @@ interface State {
 // src/lib/branch.ts. There is deliberately no `DEFAULT_BRANCH = 'br_mp'` constant
 // any more: it was the demo fixture's id, and a cash movement stamped with the
 // wrong branch drops out of every branch-scoped drawer figure.
-const CURRENT_USER = 'u_admin';
 
 /**
  * How many recent shifts to hydrate with their derived totals. Each one costs a
@@ -239,110 +246,86 @@ export const useCashRegister = create<State>()(
         }
       },
 
-      openShift: ({ openingCash, note, cashier, branch }) => {
-        // Resolve the branch before writing, and refuse rather than guess — a
-        // shift opened against the wrong branch takes the whole day's cash with
-        // it. `requireBranchId` throws, so the toast below is what the cashier
-        // sees instead of a silently mis-filed shift.
-        let branchId: string;
+      /**
+       * Start the drawer with a counted amount (optional — it also opens by
+       * itself with the first cash event). The branch is resolved before
+       * writing, and refused rather than guessed: `requireBranchId` throws.
+       * Every refusal is shown; it used to be swallowed, and the screen got a
+       * placeholder "open" shift that did not exist.
+       */
+      openShift: async ({ openingCash, note, branch }) => {
         try {
-          branchId = requireBranchId(branch);
-        } catch (e) {
-          toast.error(e instanceof Error ? e.message : 'No branch is available yet');
-          return {
-            id: 'sh_pending',
-            shiftNo: 0,
-            branch,
-            status: 'open',
-            openedBy: cashier,
-            openedAt: seedNow(),
+          const branchId = requireBranchId(branch);
+          await api('cash.openShift', {
+            branchId,
+            userId: currentUserId(),
             openingCash,
-            openingNote: note,
-          };
-        }
-        // Fire the write, then hydrate to pull the real shift. A "shift already
-        // open" rejection is swallowed after a hydrate so the UI just shows the
-        // existing open shift. The modal ignores the returned (optimistic) shift
-        // and the brief gap is covered by `loading`.
-        void api('cash.openShift', {
-          branchId,
-          userId: CURRENT_USER,
-          openingCash,
-          note,
-        })
-          .then(() => get().hydrate())
-          .catch(() => get().hydrate());
-        // Optimistic shape only — NOT pushed to state; the row arrives via hydrate().
-        return {
-          id: 'sh_pending',
-          shiftNo: 0,
-          branch,
-          status: 'open',
-          openedBy: cashier,
-          openedAt: seedNow(),
-          openingCash,
-          openingNote: note,
-        };
-      },
-
-      recordMovement: ({ shiftId, type, amount, reference, note, reason, cashier }) => {
-        if (amount <= 0) return null;
-        if (!shiftId) return null;
-        const direction = MOVEMENT_DIRECTION[type];
-        // Manual movements carry their own reason; everything else auto-posts
-        // from its own slice, so `type` doubles as the backend reason.
-        const backendReason =
-          type === 'manual_in' ? 'manual_in' : type === 'manual_out' ? 'manual_out' : type;
-        // The movement belongs to the branch of the shift it is posted to, not to
-        // a hard-coded default. `branchIdOf` resolves the shift's display name
-        // back to its id and falls back to the shop's default branch.
-        const shiftBranch = get().shifts.find((s) => s.id === shiftId)?.branch;
-        void api('cash.move', {
-          shiftId,
-          branchId: branchIdOf(shiftBranch),
-          direction,
-          reason: backendReason,
-          amount,
-          note,
-          userId: CURRENT_USER,
-        })
-          .then(() => get().hydrate())
-          .catch((e: unknown) => {
-            toast.error(e instanceof Error ? e.message : 'Failed to record cash movement');
-            void get().hydrate();
+            note,
           });
-        // Optimistic shape only — NOT pushed to state; the row arrives via hydrate().
-        return {
-          id: 'mv_pending',
-          shiftId,
-          type,
-          amount,
-          reference,
-          note,
-          reason,
-          cashier,
-          at: seedNow(),
-        };
+          await get().hydrate();
+          return true;
+        } catch (e: unknown) {
+          toast.error(e instanceof Error ? e.message : 'Could not start the drawer');
+          await get().hydrate();
+          return false;
+        }
       },
 
-      closeShift: (shiftId, { countedDenominations, carriedFloat, note }) => {
+      recordMovement: async ({ shiftId, type, amount, note, reason }) => {
+        if (!(amount > 0)) {
+          toast.error('Enter an amount above zero.');
+          return false;
+        }
+        const direction = MOVEMENT_DIRECTION[type];
+        // The movement belongs to the branch of the drawer it lands in. With no
+        // drawer open yet, that is the shop's default branch — the backend then
+        // opens the drawer itself.
+        const shiftBranch = shiftId ? get().shifts.find((s) => s.id === shiftId)?.branch : undefined;
+        try {
+          await api('cash.move', {
+            branchId: requireBranchId(shiftBranch),
+            direction,
+            amount,
+            note: [reason, note].filter(Boolean).join(' · ') || undefined,
+            userId: currentUserId(),
+          });
+          await get().hydrate();
+          return true;
+        } catch (e: unknown) {
+          toast.error(e instanceof Error ? e.message : 'Failed to record cash movement');
+          await get().hydrate();
+          return false;
+        }
+      },
+
+      carriedForward: async (branch) => {
+        try {
+          const res = await api<{ amount: number }>('cash.carriedForward', {
+            branchId: requireBranchId(branch),
+          });
+          return res.amount;
+        } catch {
+          return null;
+        }
+      },
+
+      closeShift: async (shiftId, { countedDenominations, carriedFloat, note }) => {
         // DEFERRED (denominations not persisted): the backend stores only the
         // counted_cash TOTAL — the per-note DenominationCount is frontend-only
         // and is lost on reload (toShift leaves countedDenominations undefined).
         const countedCash = denominationsTotal(countedDenominations);
-        void api('cash.closeShift', {
-          shiftId,
-          countedCash,
-          carriedFloat,
-          note,
-        })
-          .then(() => get().hydrate())
-          .catch((e: unknown) => {
-            toast.error(e instanceof Error ? e.message : 'Failed to close shift');
-            void get().hydrate();
-          });
-        // The closed shift comes back via hydrate; nothing to return optimistically.
-        return null;
+        try {
+          await api('cash.closeShift', { shiftId, countedCash, carriedFloat, note });
+          await get().hydrate();
+          return true;
+        } catch (e: unknown) {
+          // Resolves false so the Close Shift screen stays open on a refusal (a
+          // count over the variance limit, a shift already closed) instead of
+          // vanishing as if it had worked.
+          toast.error(e instanceof Error ? e.message : 'Failed to close shift');
+          void get().hydrate();
+          return false;
+        }
       },
 
       getCurrentShift: () => {

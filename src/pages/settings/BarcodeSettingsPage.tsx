@@ -59,19 +59,19 @@ export default function BarcodeSettingsPage() {
           <Card className="p-4 space-y-3">
             <div className="text-sm font-semibold">Defaults</div>
             <div>
-              <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+              <label className="text-xs font-semibold text-muted-foreground">
                 Default copies per product
               </label>
               <NumberField value={b.defaultCopies} onChangeNumber={(v) => set({ defaultCopies: Math.max(1, v) })} />
             </div>
             <div>
-              <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+              <label className="text-xs font-semibold text-muted-foreground">
                 Code type
               </label>
               <select
                 value={b.codeType}
                 onChange={(e) => set({ codeType: e.target.value as 'Code128' | 'EAN-13' })}
-                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
               >
                 <option value="Code128">Code 128 (recommended)</option>
                 <option value="EAN-13">EAN-13</option>
@@ -81,7 +81,7 @@ export default function BarcodeSettingsPage() {
         </div>
 
         <div>
-          <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em] mb-2">
+          <div className="text-xs font-semibold text-muted-foreground mb-2">
             Sample label
           </div>
           <div className="rounded-xl border border-border bg-muted p-8 grid place-items-center">
@@ -104,7 +104,7 @@ export default function BarcodeSettingsPage() {
               </div>
               {b.showBrand && <div className="text-[6pt] mt-0.5 opacity-70">Generic</div>}
             </div>
-            <div className="text-[10px] text-muted-foreground mt-3">
+            <div className="text-xs text-muted-foreground mt-3">
               Real preview uses the codeType setting. <Barcode className="size-3 inline" />
             </div>
           </div>

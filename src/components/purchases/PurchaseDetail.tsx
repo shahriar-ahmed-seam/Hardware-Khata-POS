@@ -1,26 +1,29 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import {
   Printer,
   Banknote,
-  Edit2,
   Ban,
   Undo2,
   Trash2,
   History,
+  Pencil,
+  PackageCheck,
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { Drawer } from '@/components/ui/Drawer';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { SettlementBadge } from '@/components/ui/SettlementBadge';
 import { usePurchases } from '@/stores/purchases';
 import { confirm } from '@/stores/confirm';
+import { toast } from '@/stores/toast';
 import { promptText } from '@/stores/prompt';
 import { useCan } from '@/hooks/useCan';
 import { api } from '@/lib/api';
 import { toSupplier, type BackendSupplier } from '@/hooks/contactAdapter';
 import type { Supplier } from '@/types/domain';
 import { cn, formatBDT } from '@/lib/utils';
+import { currentUserName } from '@/lib/actor';
 import { PhoneAction, isCallable } from '@/components/ui/PhoneAction';
 import { AddPurchasePaymentModal } from './AddPurchasePaymentModal';
 import { CreatePurchaseReturnModal } from './CreatePurchaseReturnModal';
@@ -36,6 +39,7 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
   const purchases = usePurchases((s) => s.purchases);
   const cancelPurchase = usePurchases((s) => s.cancelPurchase);
   const deletePurchase = usePurchases((s) => s.deletePurchase);
+  const receivePurchase = usePurchases((s) => s.receivePurchase);
   // UI-only gating; the IPC boundary is the real gate (see hooks/useCan.ts).
   const canEdit = useCan('purchases.edit');
   const purchase = purchases.find((p) => p.id === purchaseId) ?? null;
@@ -92,7 +96,7 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
     return <Badge variant="success">Received</Badge>;
   };
   const PaymentPill = () => {
-    return <SettlementBadge paid={purchase.paid} due={purchase.due} />;
+    return <SettlementBadge paid={purchase.paid} due={purchase.due} credited={purchase.credited} />;
   };
 
   return (
@@ -126,11 +130,11 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
               <div className="flex-1 min-w-0">
                 <div className="font-semibold truncate">{purchase.supplierName || '—'}</div>
                 {purchase.supplierAddress && (
-                  <div className="text-[11px] text-muted-foreground">{purchase.supplierAddress}</div>
+                  <div className="text-xs text-muted-foreground">{purchase.supplierAddress}</div>
                 )}
                 <div className="mt-0.5">
                   {supplierPhone ? (
-                    <span className="text-sm font-mono tabular font-semibold">{supplierPhone}</span>
+                    <span className="text-sm tabular font-semibold">{supplierPhone}</span>
                   ) : (
                     <span className="text-xs text-muted-foreground">No phone on file</span>
                   )}
@@ -147,7 +151,7 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
             {/* Lines */}
             <div className="rounded-lg border border-border overflow-hidden">
               <table className="w-full text-sm">
-                <thead className="text-[10px] uppercase text-muted-foreground bg-secondary/50">
+                <thead className="text-xs text-muted-foreground bg-secondary/50">
                   <tr>
                     <th className="text-left px-3 py-2 font-medium w-10">#</th>
                     <th className="text-left px-2 py-2 font-medium">Item</th>
@@ -162,20 +166,20 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
                       <td className="px-3 py-2 text-xs text-muted-foreground">{i + 1}</td>
                       <td className="px-2 py-2">
                         <div className="font-medium">{l.name}</div>
-                        <div className="text-[11px] text-muted-foreground font-mono">{l.sku}</div>
+                        <div className="text-xs text-muted-foreground font-mono">{l.sku}</div>
                         {l.imei && (
-                          <div className="text-[10px] text-muted-foreground font-mono">
+                          <div className="text-xs text-muted-foreground font-mono">
                             S/N: {l.imei}
                           </div>
                         )}
                       </td>
-                      <td className="px-2 py-2 text-right font-mono tabular">
+                      <td className="px-2 py-2 text-right tabular">
                         {l.qty} {l.unit}
                       </td>
-                      <td className="px-2 py-2 text-right font-mono tabular">
+                      <td className="px-2 py-2 text-right tabular">
                         {formatBDT(l.unitCostBeforeTax, { withSymbol: false })}
                       </td>
-                      <td className="px-3 py-2 text-right font-mono tabular font-semibold">
+                      <td className="px-3 py-2 text-right tabular font-semibold">
                         {formatBDT(l.lineTotal, { withSymbol: false })}
                       </td>
                     </tr>
@@ -201,18 +205,18 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
                 {purchase.other > 0 && <Row label="Other" value={formatBDT(purchase.other)} />}
                 <div className="border-t border-border pt-2 flex items-center justify-between">
                   <span className="text-sm font-semibold">Total</span>
-                  <span className="text-lg font-bold font-mono tabular">{formatBDT(purchase.total)}</span>
+                  <span className="text-lg font-bold tabular">{formatBDT(purchase.total)}</span>
                 </div>
               </div>
               <div className="rounded-lg border border-border p-4 space-y-1.5 text-sm bg-card">
                 <Row label="Paid" value={formatBDT(purchase.paid)} tone={purchase.due === 0 ? 'success' : undefined} />
                 <Row label="Due" value={formatBDT(purchase.due)} tone={purchase.due > 0 ? 'destructive' : undefined} />
                 <div className="border-t border-border pt-2">
-                  <div className="text-[10px] uppercase font-semibold text-muted-foreground mb-1">
+                  <div className="text-xs font-semibold text-muted-foreground mb-1">
                     Payments
                   </div>
                   {purchase.payments.length === 0 ? (
-                    <div className="text-[11px] text-muted-foreground">No payments yet</div>
+                    <div className="text-xs text-muted-foreground">No payments yet</div>
                   ) : (
                     purchase.payments.map((p) => (
                       <div key={p.id} className="flex items-center justify-between text-xs">
@@ -220,7 +224,7 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
                           {p.method}
                           {p.reference ? <span className="text-muted-foreground"> · {p.reference}</span> : null}
                         </span>
-                        <span className="font-mono tabular">{formatBDT(p.amount)}</span>
+                        <span className="tabular">{formatBDT(p.amount)}</span>
                       </div>
                     ))
                   )}
@@ -230,19 +234,19 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
 
             {purchase.notes && (
               <div className="rounded-lg border border-border p-3 bg-card text-sm">
-                <div className="text-[10px] uppercase font-semibold text-muted-foreground mb-1">Notes</div>
+                <div className="text-xs font-semibold text-muted-foreground mb-1">Notes</div>
                 <div className="whitespace-pre-wrap">{purchase.notes}</div>
               </div>
             )}
 
             {/* Audit log */}
             <div className="rounded-lg border border-border bg-card">
-              <div className="px-3 py-2 border-b border-border bg-secondary/40 flex items-center gap-2 text-[11px] uppercase font-semibold text-muted-foreground">
+              <div className="px-3 py-2 border-b border-border bg-secondary/40 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
                 <History className="size-3" /> Audit log
               </div>
               <div className="divide-y divide-border">
                 {purchase.audit.map((a) => (
-                  <div key={a.id} className="flex items-center gap-2 px-3 py-1.5 text-[12px]">
+                  <div key={a.id} className="flex items-center gap-2 px-3 py-1.5 text-sm">
                     <span
                       className={cn(
                         'size-1.5 rounded-full inline-block',
@@ -255,7 +259,7 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
                     />
                     <span className="capitalize">{a.action}</span>
                     {a.note && <span className="text-muted-foreground">— {a.note}</span>}
-                    <span className="ml-auto text-[10px] text-muted-foreground tabular">
+                    <span className="ml-auto text-xs text-muted-foreground tabular">
                       {new Date(a.at).toLocaleString('en-GB')} · {a.by}
                     </span>
                   </div>
@@ -282,12 +286,29 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
               <Undo2 className="size-3.5" /> Create Return
             </Button>
           )}
-          {/* Purchases affect stock and supplier balances, so editing/cancelling
-              is for whoever holds `purchases.edit` — not every counter user. */}
-          {canEdit && (
-            <Link to={`/purchases/${purchase.id}/edit`}>
+          {/* An ordered bill's goods arriving: they go into stock, as entered. */}
+          {(purchase.status === 'ordered' || purchase.status === 'in-transit') && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                const ok = await confirm({
+                  title: `Mark ${purchase.refNo} as received?`,
+                  message: 'Its items go into stock now, as entered on the bill.',
+                  confirmLabel: 'Goods received',
+                });
+                if (ok) await receivePurchase(purchase.id);
+              }}
+            >
+              <PackageCheck className="size-3.5" /> Mark received
+            </Button>
+          )}
+          {/* The admin's correction (purchases.update): the bill keeps its number
+              and its payments; stock and buying prices are re-applied. */}
+          {canEdit && purchase.status !== 'cancelled' && (
+            <Link to={`/purchases/${purchase.id}/edit`} onClick={onClose}>
               <Button variant="outline" size="sm">
-                <Edit2 className="size-3.5" /> Edit
+                <Pencil className="size-3.5" /> Edit
               </Button>
             </Link>
           )}
@@ -297,8 +318,11 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
               variant="destructive"
               size="sm"
               onClick={async () => {
-                if (await confirm({ title: `Delete ${purchase.refNo}?`, variant: 'destructive' })) {
-                  deletePurchase(purchase.id);
+                if (
+                  (await confirm({ title: `Delete ${purchase.refNo}?`, variant: 'destructive' })) &&
+                  (await deletePurchase(purchase.id))
+                ) {
+                  toast.success(`${purchase.refNo} deleted`);
                   onClose();
                 }
               }}
@@ -321,7 +345,9 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
                   variant: 'destructive',
                   required: true,
                 });
-                if (reason !== null) cancelPurchase(purchase.id, 'Seam', reason);
+                if (reason !== null && (await cancelPurchase(purchase.id, currentUserName(), reason))) {
+                  toast.success(`${purchase.refNo} cancelled`);
+                }
               }}
             >
               <Ban className="size-3.5" /> Cancel
@@ -351,7 +377,7 @@ function Row({
       <span className="text-muted-foreground">{label}</span>
       <span
         className={cn(
-          'font-mono tabular',
+          'tabular',
           tone === 'success' && 'text-success',
           tone === 'destructive' && 'text-destructive',
           tone === 'warning' && 'text-warning',

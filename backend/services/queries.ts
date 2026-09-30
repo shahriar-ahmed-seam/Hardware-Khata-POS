@@ -1,6 +1,6 @@
 import type { DB } from '../db/connection.ts';
 import { stockLevels, stockOnHand } from './stock.ts';
-import { customerTotals, supplierTotals, customerLedger } from './ledger.ts';
+import { customerTotals, supplierTotals, customerLedger, supplierLedger } from './ledger.ts';
 import { round2 } from '../core/money.ts';
 
 /**
@@ -122,12 +122,60 @@ export function getPurchase(db: DB, id: string) {
 }
 
 // ---------- Returns / shipments ----------
+/**
+ * Sell returns, with the customer's and the user's NAME joined in.
+ *
+ * This was `SELECT * FROM sell_returns`, and the adapter filled in the customer
+ * as the constant 'Walk-in Customer' — so every return in the list, and the
+ * search box, named the wrong person.
+ */
 export function listSellReturns(db: DB, opts: { branchId?: string } = {}) {
-  const sql = `SELECT * FROM sell_returns ${opts.branchId && opts.branchId !== 'all' ? 'WHERE branch_id = @branchId' : ''} ORDER BY date DESC`;
+  const sql = `SELECT r.*, c.name AS customer_name, u.name AS user_name
+                 FROM sell_returns r
+                 LEFT JOIN customers c ON c.id = r.customer_id
+                 LEFT JOIN users u ON u.id = r.user_id
+                ${opts.branchId && opts.branchId !== 'all' ? 'WHERE r.branch_id = @branchId' : ''}
+                ORDER BY r.date DESC`;
   return db.prepare(sql).all(opts) as Record<string, unknown>[];
 }
 export function listPurchaseReturns(db: DB) {
-  return db.prepare('SELECT * FROM purchase_returns ORDER BY date DESC').all() as Record<string, unknown>[];
+  return db
+    .prepare(
+      `SELECT r.*, u.name AS user_name
+         FROM purchase_returns r LEFT JOIN users u ON u.id = r.user_id
+        ORDER BY r.date DESC`,
+    )
+    .all() as Record<string, unknown>[];
+}
+
+/** One sell return with its lines — what the return detail view shows. */
+export function getSellReturn(db: DB, id: string) {
+  const head = db
+    .prepare(
+      `SELECT r.*, c.name AS customer_name, u.name AS user_name
+         FROM sell_returns r
+         LEFT JOIN customers c ON c.id = r.customer_id
+         LEFT JOIN users u ON u.id = r.user_id
+        WHERE r.id = ?`,
+    )
+    .get(id) as Record<string, unknown> | undefined;
+  if (!head) return null;
+  const lines = db.prepare('SELECT * FROM sell_return_lines WHERE return_id = ? ORDER BY rowid').all(id);
+  return { ...head, lines };
+}
+
+/** One purchase return with its lines. */
+export function getPurchaseReturn(db: DB, id: string) {
+  const head = db
+    .prepare(
+      `SELECT r.*, u.name AS user_name
+         FROM purchase_returns r LEFT JOIN users u ON u.id = r.user_id
+        WHERE r.id = ?`,
+    )
+    .get(id) as Record<string, unknown> | undefined;
+  if (!head) return null;
+  const lines = db.prepare('SELECT * FROM purchase_return_lines WHERE return_id = ? ORDER BY rowid').all(id);
+  return { ...head, lines };
 }
 export function listShipments(db: DB, opts: { branchId?: string } = {}) {
   const sql = `SELECT * FROM shipments ${
@@ -166,7 +214,7 @@ export function listSuppliers(db: DB, opts: { q?: string } = {}) {
 export function getSupplier(db: DB, id: string) {
   const s = db.prepare('SELECT * FROM suppliers WHERE id = ?').get(id) as Record<string, unknown> | undefined;
   if (!s) return null;
-  return { ...s, ...supplierTotals(db, id) };
+  return { ...s, ...supplierTotals(db, id), ledger: supplierLedger(db, id) };
 }
 
 // ---------- Expenses ----------
@@ -199,7 +247,10 @@ export function listAdjustments(db: DB) {
 
 // ---------- Cash ----------
 export function listShifts(db: DB, opts: { branchId?: string } = {}) {
-  const sql = `SELECT cs.*, u.name AS user_name FROM cash_shifts cs LEFT JOIN users u ON u.id = cs.user_id
+  const sql = `SELECT cs.*, u.name AS user_name, cu.name AS closed_by_name
+                 FROM cash_shifts cs
+                 LEFT JOIN users u ON u.id = cs.user_id
+                 LEFT JOIN users cu ON cu.id = cs.closed_by
                ${opts.branchId && opts.branchId !== 'all' ? 'WHERE cs.branch_id = @branchId' : ''}
                ORDER BY cs.opened_at DESC`;
   return db.prepare(sql).all(opts) as Record<string, unknown>[];
@@ -252,10 +303,30 @@ export function getBusinessInfo(db: DB) {
 }
 
 // ---------- Global search ----------
+/**
+ * Turn what the user typed into a safe FTS5 query: every word a quoted prefix
+ * term (`"inv-2026"*`), quotes inside doubled.
+ *
+ * The raw text used to go straight into MATCH with only quotes stripped, and
+ * FTS5 gives `-`, `(`, `:`, `*`, AND/OR/NOT and friends a meaning. Typing an
+ * invoice number such as INV-2026-0001 — the most common thing anyone searches
+ * for — was a syntax error, and because errors are swallowed, the search simply
+ * returned nothing. Words with no letter or digit (a lone `(`) are dropped.
+ * Returns null when nothing searchable is left.
+ */
+export function ftsQuery(text: string): string | null {
+  const words = String(text ?? '')
+    .trim()
+    .split(/\s+/)
+    .filter((w) => /[\p{L}\p{N}]/u.test(w))
+    .slice(0, 8);
+  if (words.length === 0) return null;
+  return words.map((w) => `"${w.replace(/"/g, '""')}"*`).join(' ');
+}
+
 export function globalSearch(db: DB, query: string, scope?: string) {
-  const q = query.trim();
-  if (!q) return { products: [], invoices: [], customers: [], suppliers: [] };
-  const match = q.replace(/['"]/g, '') + '*';
+  const match = ftsQuery(query);
+  if (!match) return { products: [], invoices: [], customers: [], suppliers: [] };
   const result: Record<string, unknown[]> = { products: [], invoices: [], customers: [], suppliers: [] };
   const safe = <T>(fn: () => T, fallback: T): T => {
     try {

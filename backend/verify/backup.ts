@@ -47,6 +47,7 @@ import {
   snapshotTo,
   verifySnapshot,
 } from '../services/backup.ts';
+import { isSystemMount, parseLsblk } from '../../electron/drives.ts';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -561,6 +562,101 @@ export function runBackupChecks(s: Suite) {
     invoicePdfTargetsFor(db, path.join(tmp, 'dbdir')).filter((x) => x.kind === 'chosen').length,
     1,
   );
+
+  // ------------------------------------------- Linux removable-drive detection
+  // electron/drives.ts is pure: it reads recorded `lsblk -J -b` output.
+  s.section('linux-drives');
+  const modern = JSON.stringify({
+    blockdevices: [
+      { name: 'loop0', type: 'loop', rm: false, hotplug: false, mountpoint: '/snap/core22/1', fstype: 'squashfs' },
+      {
+        name: 'nvme0n1', type: 'disk', rm: false, hotplug: false, tran: 'nvme', mountpoint: null,
+        children: [
+          { name: 'nvme0n1p1', type: 'part', rm: false, hotplug: false, tran: 'nvme', fstype: 'vfat', mountpoint: '/boot/efi', fsavail: 1, fssize: 2 },
+          { name: 'nvme0n1p2', type: 'part', rm: false, hotplug: false, tran: 'nvme', fstype: 'ext4', mountpoint: '/', fsavail: 1, fssize: 2 },
+        ],
+      },
+      {
+        name: 'sdb', type: 'disk', rm: true, hotplug: true, tran: 'usb', mountpoint: null, size: 16008609792,
+        children: [
+          { name: 'sdb1', type: 'part', rm: true, hotplug: true, tran: 'usb', fstype: 'vfat', label: 'SANDISK', mountpoint: '/media/shahriar/SANDISK', fsavail: 1000, fssize: 2000, size: 16007561216 },
+        ],
+      },
+      {
+        name: 'sdc', type: 'disk', rm: true, hotplug: true, tran: 'usb', mountpoint: null,
+        children: [{ name: 'sdc1', type: 'part', rm: true, hotplug: true, tran: 'usb', fstype: 'exfat', mountpoint: null }],
+      },
+      { name: 'sr0', type: 'rom', rm: true, hotplug: true, tran: 'sata', fstype: 'iso9660', label: 'CDROM', mountpoint: '/media/shahriar/CDROM' },
+    ],
+  });
+  const m = parseLsblk(modern);
+  s.ok('modern lsblk output parses', m !== null);
+  s.eq('only the mounted USB stick is offered', m?.drives.map((d) => d.root).join('|'), '/media/shahriar/SANDISK');
+  s.eq('the stick is shown by its label', m?.drives[0]?.display, 'SANDISK');
+  s.eq('free space comes from FSAVAIL', m?.drives[0]?.freeBytes, 1000);
+  s.eq('size comes from the filesystem, not the raw device', m?.drives[0]?.totalBytes, 2000);
+  s.eq('Linux drives have no drive letter', m?.drives[0]?.letter, '');
+  s.eq('a plugged-in stick that is not mounted is counted, not offered', m?.unmounted, 1);
+  s.ok(
+    'the system disk, loop devices and optical drives are never offered',
+    !(m?.drives ?? []).some((d) => d.root === '/' || d.root.startsWith('/boot') || d.root.startsWith('/snap') || d.label === 'CDROM'),
+  );
+
+  // util-linux before 2.33: every value is a string and partitions do not
+  // repeat the parent's removable flag.
+  const oldLsblk = JSON.stringify({
+    blockdevices: [
+      {
+        name: 'sdb', type: 'disk', rm: '1', hotplug: '1', mountpoint: null, label: null, size: '8004304896',
+        children: [{ name: 'sdb1', type: 'part', rm: '0', hotplug: '0', fstype: 'vfat', mountpoint: '/media/usb0', label: null, size: '8003256320' }],
+      },
+      { name: 'sda', type: 'disk', rm: '0', hotplug: '0', mountpoint: null, children: [{ name: 'sda1', type: 'part', rm: '0', fstype: 'ext4', mountpoint: '/data' }] },
+    ],
+  });
+  const l = parseLsblk(oldLsblk);
+  s.eq('old lsblk: a partition inherits removable from its disk', l?.drives.map((d) => d.root).join('|'), '/media/usb0');
+  s.eq('old lsblk: no label falls back to the mount folder name', l?.drives[0]?.display, 'usb0');
+  s.eq('old lsblk: string sizes are read as numbers', l?.drives[0]?.totalBytes, 8003256320);
+  s.eq('old lsblk: free space is unknown, not zero', l?.drives[0]?.freeBytes, null);
+
+  // A machine booted FROM a USB disk: the kernel calls it removable, but it is
+  // the system, not a pendrive.
+  const bootUsb = JSON.stringify({
+    blockdevices: [
+      {
+        name: 'sda', type: 'disk', rm: true, hotplug: true, tran: 'usb',
+        children: [
+          { name: 'sda1', type: 'part', fstype: 'vfat', mountpoint: '/boot/efi' },
+          { name: 'sda2', type: 'part', fstype: 'ext4', mountpoint: '/' },
+          { name: 'sda3', type: 'part', fstype: 'ext4', mountpoint: '/run/user/1000/doc' },
+          { name: 'sda4', type: 'part', fstype: 'vfat', mountpoint: null, mountpoints: ['/run/media/shop/STICK'] },
+        ],
+      },
+    ],
+  });
+  const b = parseLsblk(bootUsb);
+  s.eq(
+    'a USB system disk is refused; /run/media (Fedora/Arch) and `mountpoints` are read',
+    b?.drives.map((d) => d.root).join('|'),
+    '/run/media/shop/STICK',
+  );
+  s.ok('system mounts are recognised', isSystemMount('/') && isSystemMount('[SWAP]') && isSystemMount('/home') && !isSystemMount('/media/u/X') && !isSystemMount('/mnt/usb'));
+
+  const twins = JSON.stringify({
+    blockdevices: [
+      { name: 'sdb1', type: 'part', rm: true, fstype: 'vfat', label: 'USB DISK', mountpoint: '/media/u/USB DISK' },
+      { name: 'sdc1', type: 'part', rm: true, fstype: 'vfat', label: 'USB DISK', mountpoint: '/media/u/USB DISK1' },
+    ],
+  });
+  const t = parseLsblk(twins);
+  s.eq(
+    'two sticks with the same label are told apart by their folder',
+    t?.drives.map((d) => d.display).join('|'),
+    'USB DISK (/media/u/USB DISK)|USB DISK (/media/u/USB DISK1)',
+  );
+  s.eq('non-JSON output is reported as unreadable', parseLsblk('lsblk: unknown column: FSAVAIL'), null);
+  s.eq('JSON without blockdevices is reported as unreadable', parseLsblk('{}'), null);
+  s.eq('an empty device list is an honest "nothing plugged in"', parseLsblk('{"blockdevices":[]}')?.drives.length, 0);
 
   s.section('backup-no-folder');
   const db2 = openDatabase(':memory:');

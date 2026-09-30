@@ -36,6 +36,8 @@ import {
   computePurchaseTotals,
   computeDue,
   marginPct,
+  computeReturnRefund,
+  computePurchaseReturnRefund,
 } from '../core/calc.ts';
 import { round2, sum2 } from '../core/money.ts';
 import {
@@ -48,6 +50,8 @@ import {
   markupOnCostPct,
   round2 as mirrorRound2,
   sum2 as mirrorSum2,
+  returnRefund as mirrorReturnRefund,
+  purchaseReturnRefund as mirrorPurchaseReturnRefund,
 } from '../../src/lib/money.ts';
 import { Suite } from './assert.ts';
 
@@ -342,6 +346,68 @@ export function runMirror(): { passed: number; failed: number; total: number } {
       if (Math.abs(marginPct(sell, cost) - markupOnCostPct(sell, cost)) > 0.0001) mismatch++;
     }
     s.eq('markup-on-cost agrees with the core, including cost = 0', mismatch, 0);
+  }
+
+  // The refund a return screen offers must be the figure the backend accepts
+  // (it uses computeReturnRefund as its ceiling), and returning EVERYTHING must
+  // refund exactly what the goods cost the customer — never more.
+  s.section('mirror-return-refunds');
+  {
+    const rand = rng(424242);
+    let mismatch = 0;
+    let overRefund = 0;
+    let purchaseMismatch = 0;
+    for (let i = 0; i < 400; i++) {
+      const n = 1 + Math.floor(rand() * 5);
+      const lines = Array.from({ length: n }, () => ({
+        qty: 1 + Math.floor(rand() * 40),
+        spr: round2(10 + rand() * 900),
+        markupPct: 0,
+        discountPct: rand() < 0.4 ? Math.floor(rand() * 20) : 0,
+        discountFlat: rand() < 0.2 ? round2(rand() * 50) : 0,
+      }));
+      const computed = lines.map((l) => computeSaleLine(l));
+      const totals = computeSaleTotals({
+        lineSubtotals: computed.map((c) => c.lineSubtotal),
+        lineGrosses: computed.map((c, k) => round2(c.unitPrice * lines[k].qty)),
+        orderDiscountPct: rand() < 0.3 ? Math.floor(rand() * 10) : 0,
+        orderDiscountFlat: rand() < 0.3 ? round2(rand() * 200) : 0,
+        taxPct: rand() < 0.3 ? 5 : 0,
+        shipping: rand() < 0.2 ? 100 : 0,
+        other: 0,
+      });
+      let fullRefund = 0;
+      for (let k = 0; k < n; k++) {
+        const args = {
+          lineSubtotal: computed[k].lineSubtotal,
+          lineQty: lines[k].qty,
+          returnQty: 1 + Math.floor(rand() * lines[k].qty),
+          subtotal: totals.subtotal,
+          orderDiscount: totals.orderDiscount,
+          taxPct: rand() < 0.5 ? 0 : 5,
+        };
+        if (Math.abs(computeReturnRefund(args) - mirrorReturnRefund(args)) > 0.0001) mismatch++;
+        fullRefund += computeReturnRefund({ ...args, returnQty: lines[k].qty, taxPct: 0 });
+      }
+      // Everything back, no VAT: never more than the goods' share of the bill
+      // (total less VAT, shipping and other), give or take a paisa per line.
+      const goods = round2(totals.total - totals.tax - totals.shipping - totals.other - totals.roundOff);
+      if (round2(fullRefund) > goods + 0.01 * n) overRefund++;
+
+      const pArgs = {
+        lineTotal: round2(10 + rand() * 5000),
+        lineQty: 1 + Math.floor(rand() * 60),
+        returnQty: 1 + Math.floor(rand() * 60),
+        afterLine: round2(1000 + rand() * 20000),
+        orderDiscount: rand() < 0.3 ? round2(rand() * 500) : 0,
+      };
+      if (Math.abs(computePurchaseReturnRefund(pArgs) - mirrorPurchaseReturnRefund(pArgs)) > 0.0001) {
+        purchaseMismatch++;
+      }
+    }
+    s.eq('the sell-return refund on screen equals the core figure, 400 invoices', mismatch, 0);
+    s.eq('returning everything never refunds more than the goods cost', overRefund, 0);
+    s.eq('the purchase-return refund on screen equals the core figure', purchaseMismatch, 0);
   }
 
   const rep = s.report();

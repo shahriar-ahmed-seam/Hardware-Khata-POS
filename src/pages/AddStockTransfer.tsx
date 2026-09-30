@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { toast } from '@/stores/toast';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Plus, Save, Search, Trash2 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -19,6 +20,7 @@ import {
   type TransferStatus,
 } from '@/stores/stock';
 import { formatBDT } from '@/lib/utils';
+import { currentUserId } from '@/lib/actor';
 
 export default function AddStockTransfer() {
   const nav = useNavigate();
@@ -32,8 +34,17 @@ export default function AddStockTransfer() {
   const { data: beProducts } = useProducts();
   const products = beProducts ?? [];
 
-  const [fromBranch, setFromBranch] = useState(branchNames[0] ?? 'Mirpur Branch');
-  const [toBranch, setToBranch] = useState(branchNames[1] ?? 'Uttara Branch');
+  // No demo-fixture fallback names: the branches come from the database and
+  // can arrive after the first render, so they are adopted when the list lands.
+  const [fromBranch, setFromBranch] = useState(branchNames[0] ?? '');
+  const [toBranch, setToBranch] = useState(branchNames[1] ?? '');
+  const firstName = branchNames[0] ?? '';
+  const secondName = branchNames[1] ?? '';
+  useEffect(() => {
+    if (!fromBranch && firstName) setFromBranch(firstName);
+    if (!toBranch && secondName) setToBranch(secondName);
+  }, [fromBranch, toBranch, firstName, secondName]);
+  const [saving, setSaving] = useState(false);
   // Local wall-clock, defaulting to now (was UTC — six hours out in Dhaka).
   const [date, setDate] = useState(nowLocalInput());
   const [status, setStatus] = useState<TransferStatus>('in-transit');
@@ -77,8 +88,10 @@ export default function AddStockTransfer() {
   const isValid =
     fromBranch && toBranch && fromBranch !== toBranch && lines.length > 0 && lines.every((l) => l.qty > 0);
 
-  const submit = () => {
-    if (!isValid) return;
+  // Leaves the page only once the backend has saved it; a refusal (not enough
+  // stock, say) keeps everything that was entered.
+  const submit = async () => {
+    if (!isValid || saving) return;
     const t: StockTransfer = {
       id: 't_' + Date.now(),
       refNo: nextTransferRef(),
@@ -90,9 +103,13 @@ export default function AddStockTransfer() {
       status,
       notes: notes || undefined,
       lines,
-      createdBy: 'Seam',
+      createdBy: currentUserId(),
     };
-    addTransfer(t);
+    setSaving(true);
+    const ok = await addTransfer(t);
+    setSaving(false);
+    if (!ok) return;
+    toast.success('Transfer saved');
     nav('/stock/transfers');
   };
 
@@ -106,7 +123,7 @@ export default function AddStockTransfer() {
             <Button variant="ghost" onClick={() => nav('/stock/transfers')}>
               <ArrowLeft className="size-4" /> Back
             </Button>
-            <Button onClick={submit} disabled={!isValid}>
+            <Button onClick={() => void submit()} disabled={!isValid || saving}>
               <Save className="size-4" /> Save Transfer
             </Button>
           </>
@@ -121,7 +138,7 @@ export default function AddStockTransfer() {
                 <select
                   value={fromBranch}
                   onChange={(e) => setFromBranch(e.target.value)}
-                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                  className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
                 >
                   {branchNames.map((b) => (
                     <option key={b} value={b}>
@@ -137,7 +154,7 @@ export default function AddStockTransfer() {
                 <select
                   value={toBranch}
                   onChange={(e) => setToBranch(e.target.value)}
-                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                  className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
                 >
                   {branchNames.filter((b) => b !== fromBranch).map((b) => (
                     <option key={b} value={b}>
@@ -153,7 +170,7 @@ export default function AddStockTransfer() {
                 <select
                   value={status}
                   onChange={(e) => setStatus(e.target.value as TransferStatus)}
-                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                  className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
                 >
                   <option value="pending">Pending (not dispatched yet)</option>
                   <option value="in-transit">In Transit (sent, awaiting receive)</option>
@@ -184,7 +201,7 @@ export default function AddStockTransfer() {
                       <ProductImage url={p.image} categoryId={p.categoryId} size={28} />
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-medium truncate">{p.name}</div>
-                        <div className="text-[10px] text-muted-foreground font-mono">
+                        <div className="text-xs text-muted-foreground font-mono">
                           {p.sku} · stock {p.stock} {p.unit}
                         </div>
                       </div>
@@ -197,7 +214,7 @@ export default function AddStockTransfer() {
 
             <div className="mt-3 rounded-lg border border-border overflow-hidden">
               <table className="w-full text-sm">
-                <thead className="text-[10px] uppercase text-muted-foreground bg-secondary/40">
+                <thead className="text-xs text-muted-foreground bg-secondary/40">
                   <tr>
                     <th className="text-left px-3 py-2 font-medium w-8">#</th>
                     <th className="text-left px-2 py-2 font-medium">Item</th>
@@ -214,7 +231,7 @@ export default function AddStockTransfer() {
                       <td className="px-3 py-2 text-xs text-muted-foreground">{i + 1}</td>
                       <td className="px-2 py-2">
                         <div className="font-medium">{l.name}</div>
-                        <div className="text-[11px] text-muted-foreground font-mono">{l.sku}</div>
+                        <div className="text-xs text-muted-foreground font-mono">{l.sku}</div>
                       </td>
                       <td className="px-2 py-2 text-right">
                         <NumberField
@@ -228,10 +245,10 @@ export default function AddStockTransfer() {
                         />
                       </td>
                       <td className="px-2 py-2 text-xs">{l.unit}</td>
-                      <td className="px-2 py-2 text-right font-mono tabular">
+                      <td className="px-2 py-2 text-right tabular">
                         {formatBDT(l.unitCost, { withSymbol: false })}
                       </td>
-                      <td className="px-2 py-2 text-right font-mono tabular font-semibold">
+                      <td className="px-2 py-2 text-right tabular font-semibold">
                         {formatBDT(l.qty * l.unitCost, { withSymbol: false })}
                       </td>
                       <td className="px-2 py-2 text-right">
@@ -280,7 +297,7 @@ export default function AddStockTransfer() {
               <Row label="Units" value={String(totalUnits)} />
               <div className="flex items-center justify-between">
                 <span className="text-muted-foreground">Total Value</span>
-                <span className="text-xl font-bold font-mono tabular text-primary">
+                <span className="text-xl font-bold tabular text-primary">
                   {formatBDT(totalValue)}
                 </span>
               </div>
@@ -305,7 +322,7 @@ function Field({
 }) {
   return (
     <div className={className}>
-      <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+      <label className="text-xs font-semibold text-muted-foreground">
         {label} {required && <span className="text-destructive">*</span>}
       </label>
       {children}
@@ -317,7 +334,7 @@ function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between text-sm">
       <span className="text-muted-foreground">{label}</span>
-      <span className="font-mono tabular">{value}</span>
+      <span className="tabular">{value}</span>
     </div>
   );
 }

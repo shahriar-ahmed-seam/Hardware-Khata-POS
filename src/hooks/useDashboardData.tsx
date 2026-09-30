@@ -64,8 +64,10 @@ export type { DashboardBundle } from './dashboardAdapter';
  * true; if the fetch fails `error` flips true.
  *
  * DEFERRALS (commented through the slice):
- *  1. Single-branch assumption — DEFAULT_BRANCH = 'br_mp'. The branch picker is
- *     not wired to a real branch context yet; all queries pin this branch.
+ *  1. The dashboard covers the WHOLE SHOP (DASHBOARD_BRANCH = undefined → every
+ *     branch). The shop runs as one branch, so that is the same figure; it used
+ *     to pin the demo fixture's id 'br_mp', which showed an empty dashboard on
+ *     any shop whose branch has a different id.
  *  2. salesTrend is fixed at 7 days and salesVsPurchaseVsExpense at 6 months
  *     regardless of the selected range — these widgets are inherently
  *     multi-period, so the range selector does not drive them.
@@ -76,8 +78,11 @@ export type { DashboardBundle } from './dashboardAdapter';
  *     is fine for a local SQLite DB.
  */
 
-/** Single-branch assumption for now. */
-export const DEFAULT_BRANCH = 'br_mp';
+/**
+ * The branch the dashboard reads. `undefined` = the whole shop. When branching
+ * is switched on, this becomes the branch picker's value.
+ */
+export const DASHBOARD_BRANCH: string | undefined = undefined;
 
 interface DashboardDataValue {
   data: DashboardBundle | null;
@@ -119,7 +124,7 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
     setError(false);
     toastedRef.current = false;
 
-    const rangePayload = { range: toRangeInput(range, customRange), branchId: DEFAULT_BRANCH };
+    const rangePayload = { range: toRangeInput(range, customRange), branchId: DASHBOARD_BRANCH };
 
     (async () => {
       try {
@@ -143,26 +148,26 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
         ] = await Promise.all([
           api<BackendStats>('dashboard.stats', rangePayload),
           api<BackendHourly[]>('dashboard.hourlySales', rangePayload),
-          api<BackendTrend[]>('dashboard.salesTrend', { days: 7, branchId: DEFAULT_BRANCH }),
+          api<BackendTrend[]>('dashboard.salesTrend', { days: 7, branchId: DASHBOARD_BRANCH }),
           api<BackendMonthly[]>('dashboard.salesVsPurchaseVsExpense', {
             months: 6,
-            branchId: DEFAULT_BRANCH,
+            branchId: DASHBOARD_BRANCH,
           }),
           api<BackendTopProduct[]>('dashboard.topProducts', { ...rangePayload, limit: 5 }),
           api<BackendTopCustomer[]>('dashboard.topCustomers', { ...rangePayload, limit: 5 }),
-          api<BackendRecentSale[]>('dashboard.recentSales', { limit: 8, branchId: DEFAULT_BRANCH }),
+          api<BackendRecentSale[]>('dashboard.recentSales', { limit: 8, branchId: DASHBOARD_BRANCH }),
           api<BackendRecentPurchase[]>('dashboard.recentPurchases', {
             limit: 8,
-            branchId: DEFAULT_BRANCH,
+            branchId: DASHBOARD_BRANCH,
           }),
-          api<BackendLowStock[]>('dashboard.lowStock', { limit: 50, branchId: DEFAULT_BRANCH }),
+          api<BackendLowStock[]>('dashboard.lowStock', { limit: 50, branchId: DASHBOARD_BRANCH }),
           api<BackendBreakdownPayment[]>('dashboard.paymentBreakdown', rangePayload),
           api<BackendBreakdownExpense[]>('dashboard.expenseBreakdown', rangePayload),
-          api<BackendActivity[]>('dashboard.activityFeed', { limit: 20, branchId: DEFAULT_BRANCH }),
+          api<BackendActivity[]>('dashboard.activityFeed', { limit: 20, branchId: DASHBOARD_BRANCH }),
           api<BackendBirthday[]>('dashboard.birthdays', { daysAhead: 7 }),
           api<BackendContactRow[]>('customers.list', {}),
           api<BackendContactRow[]>('suppliers.list', {}),
-          api<BackendShiftRow[]>('shifts.list', { branchId: DEFAULT_BRANCH }),
+          api<BackendShiftRow[]>('shifts.list', { branchId: DASHBOARD_BRANCH }),
         ]);
 
         // Cash card: find the open shift for the branch, then pull its totals.

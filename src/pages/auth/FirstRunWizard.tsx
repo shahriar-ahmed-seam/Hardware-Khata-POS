@@ -324,7 +324,7 @@ export default function FirstRunWizard() {
                       </button>
                     ))}
                   </div>
-                  <div className="text-[11px] text-muted-foreground mt-1.5">
+                  <div className="text-xs text-muted-foreground mt-1.5">
                     Most BD hardware shops sell tax-inclusive — "No Tax" (0%) is a fine default.
                   </div>
                 </Field>
@@ -350,7 +350,7 @@ export default function FirstRunWizard() {
                     placeholder="e.g. 1234"
                     className="font-mono tracking-widest"
                   />
-                  <div className="text-[11px] text-muted-foreground mt-1">
+                  <div className="text-xs text-muted-foreground mt-1">
                     You'll use this PIN to sign in and unlock the screen.
                   </div>
                 </Field>
@@ -365,7 +365,7 @@ export default function FirstRunWizard() {
                 <Field label="Branch address">
                   <Input value={branchAddress} onChange={(e) => setBranchAddress(e.target.value)} />
                 </Field>
-                <div className="text-[12px] text-muted-foreground bg-secondary/40 rounded-md p-3">
+                <div className="text-sm text-muted-foreground bg-secondary/40 rounded-md p-3">
                   You can add more branches later in Settings → Branches. This becomes your default.
                 </div>
               </Step>
@@ -505,7 +505,7 @@ function Field({
 }) {
   return (
     <div>
-      <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+      <label className="text-xs font-semibold text-muted-foreground">
         {label} {required && <span className="text-destructive">*</span>}
       </label>
       <div className="mt-1">{children}</div>

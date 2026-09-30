@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Minus, Plus, Trash2, Package, Percent, ChevronDown } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Minus, Plus, Trash2, Percent } from 'lucide-react';
 import { cn, formatBDT } from '@/lib/utils';
 import { type CartLine, lineSubtotal, unitPrice } from './types';
 import { useUnits } from '@/hooks/useCatalog';
@@ -25,10 +25,39 @@ interface Props {
    * for the same reason `cost` is, so it can never be a stale copy.
    */
   listPrice?: number | null;
+  /**
+   * Bumped by POS each time this product is scanned or tapped (added or +1).
+   * A new value scrolls the line into view and highlights it briefly, so a
+   * re-scan of an item further down the cart is never invisible.
+   */
+  flash?: number;
 }
 
-const FIELD_H = 'h-11'; // Uniform height for every input/select/button in the row
+/** 2.5 − 1 must be 1.5, not 1.4999999999999998. */
+const q3 = (n: number) => Math.round(n * 1000) / 1000;
 
+/**
+ * ONE CART LINE — compact.
+ *
+ * This used to be a card about 200px tall (a 44px quantity bar, a label over
+ * every field, a separate strip for the buying prices and another for
+ * "price × qty"), so only one or two lines were visible and a cashier had to
+ * scroll for every sale. Nothing was dropped; it is re-arranged:
+ *
+ *   wide cart   #  Name                 [− 3 +] pc  [ 3,000 ]  9,000.00  % 🗑
+ *                  SKU · Buy ৳ · Avg ৳
+ *   narrow cart #  Name                               9,000.00
+ *                  SKU · Buy ৳ · Avg ৳
+ *                  [− 3 +] pc   [ 3,000 ]                 % 🗑
+ *
+ * The layout lives in globals.css (`.cart-line`, a grid with named areas); the
+ * cart list is the container it measures, in rem, so it also follows the A− /
+ * A+ text size. Column labels are shown once, above the list (CartPanel).
+ *
+ * Markup and the two discounts stay behind the % button and open as one short
+ * row under the line. Anything applied opens it by default and is badged, so a
+ * discount can never sit on a sale unseen.
+ */
 export function CartLineRow({
   line,
   index,
@@ -37,23 +66,17 @@ export function CartLineRow({
   cost = null,
   avgCost = null,
   listPrice = null,
+  flash = 0,
 }: Props) {
   // Unit labels come from the backend units catalog (cached by react-query, so
-  // every row shares one fetch). The seed-data fallback was removed; until the
-  // catalog resolves we display the unit code stored on the cart line.
+  // every row shares one fetch). Until it resolves we show the stored code.
   const unitsQuery = useUnits();
   const unitName =
     (unitsQuery.data ?? []).find((u) => u.short === line.unit)?.short ?? line.unit;
   const lineTotal = lineSubtotal(line);
   const up = unitPrice(line);
-  const grossBeforeDisc = up * line.qty;
-  const savings = grossBeforeDisc - lineTotal;
+  const savings = up * line.qty - lineTotal;
 
-  // Five numeric fields per line was too much to read and clipped on a narrow
-  // panel. Quantity + Unit stay out front; markup and the two discount fields
-  // hide behind a per-line toggle. Anything already applied is badged on the
-  // collapsed row (and opens the drawer by default) so a discount can never be
-  // left on the sale unseen.
   const hasMarkup = line.markupPct !== 0;
   const hasDiscount = line.discountPct !== 0 || line.discountFlat !== 0;
   const hasAdjustments = hasMarkup || hasDiscount;
@@ -61,198 +84,142 @@ export function CartLineRow({
   const [openOverride, setOpenOverride] = useState<boolean | null>(null);
   const open = openOverride ?? hasAdjustments;
 
+  // Scroll into view + a short highlight when POS says this line was touched.
+  const rowRef = useRef<HTMLDivElement>(null);
+  const [flashing, setFlashing] = useState(false);
+  useEffect(() => {
+    if (!flash) return;
+    rowRef.current?.scrollIntoView({ block: 'nearest' });
+    setFlashing(true);
+    const t = setTimeout(() => setFlashing(false), 900);
+    // Also un-highlight when another line takes the flash (flash → 0) before
+    // the timer runs — clearing the timer alone left this line lit for good.
+    return () => {
+      clearTimeout(t);
+      setFlashing(false);
+    };
+  }, [flash]);
+
+  const setQty = (qty: number) => onChange({ ...line, qty: q3(qty) });
+
   return (
-    // The card is its own measuring box: the fields below react to the PANEL
-    // width (the splitter can narrow it while the window stays wide).
-    <div className="mx-2 my-1.5 rounded-lg border border-border/60 bg-card edge-top hover:border-border transition px-3 py-2.5 [container-type:inline-size]">
-      <div className="flex items-start gap-3">
-        {/* Thumbnail */}
-        <div className="relative shrink-0">
-          <div className="size-12 rounded-lg bg-gradient-to-br from-secondary to-muted grid place-items-center text-muted-foreground/60 ring-1 ring-border/60">
-            <Package className="size-5" />
-          </div>
-          <span className="absolute -top-1.5 -left-1.5 size-4 rounded-full bg-primary text-primary-foreground text-2xs font-bold grid place-items-center ring-2 ring-card">
-            {index + 1}
-          </span>
+    <div
+      ref={rowRef}
+      className={cn(
+        'cart-line-card mx-2 my-1 rounded-lg border bg-card px-2.5 py-2 transition-colors duration-500',
+        flashing ? 'border-primary/60 bg-primary/10' : 'border-border/60 hover:border-border',
+      )}
+    >
+      <div className="cart-line">
+        <span className="cl-num text-xs font-semibold text-muted-foreground tabular">
+          {index + 1}
+        </span>
+
+        <div className="cl-name min-w-0 text-sm font-semibold leading-tight truncate" title={line.name}>
+          {line.name}
         </div>
 
-        {/* Title + meta */}
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-semibold leading-tight tracking-tight truncate">
-            {line.name}
-          </div>
-          <div className="flex items-center gap-2 text-2xs text-muted-foreground font-mono mt-0.5 min-w-0">
-            <span className="truncate">{line.sku}</span>
-            <span className="opacity-50 shrink-0">·</span>
-            <span className="tabular shrink-0">SPR ৳ {line.basePrice.toFixed(2)}</span>
-          </div>
-          {/* Applied markup / discount is visible even while the drawer is shut */}
-          {hasAdjustments && (
-            <div className="flex items-center gap-1.5 flex-wrap mt-1">
-              {hasMarkup && (
-                <Badge variant="info" className="shrink-0">
-                  Markup
-                  <span className="font-mono tabular">{line.markupPct}%</span>
-                </Badge>
+        {/* Code, the two buying prices (owner decision: cashiers may see them)
+            and whatever has been applied. Each label is its own text node so
+            the Bangla layer can translate it. */}
+        <div className="cl-meta min-w-0 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-xs text-muted-foreground leading-tight">
+          <span className="font-mono truncate max-w-full">{line.sku}</span>
+          {/* SPR only when it differs from the price box (a markup is on). */}
+          {hasMarkup && (
+            <span className="tabular whitespace-nowrap" title="Selling price before markup">
+              <span>SPR</span> ৳ {formatBDT(line.basePrice, { withSymbol: false })}
+            </span>
+          )}
+          <MetaPrice label="Buy" title="Buying price" value={cost} tone="text-warning" />
+          <MetaPrice label="Avg" title="Avg. buying price" value={avgCost} tone="text-primary" />
+          {hasMarkup && (
+            <Badge variant="info">
+              Markup
+              <span className="tabular">{line.markupPct}%</span>
+            </Badge>
+          )}
+          {hasDiscount && (
+            <Badge variant="success">
+              Discount
+              {line.discountPct !== 0 && <span className="tabular">{line.discountPct}%</span>}
+              {line.discountFlat !== 0 && (
+                <span className="tabular">৳ {formatBDT(line.discountFlat, { withSymbol: false })}</span>
               )}
-              {hasDiscount && (
-                <Badge variant="success" className="shrink-0">
-                  Discount
-                  {line.discountPct !== 0 && (
-                    <span className="font-mono tabular">{line.discountPct}%</span>
-                  )}
-                  {line.discountFlat !== 0 && (
-                    <span className="font-mono tabular">
-                      ৳ {formatBDT(line.discountFlat, { withSymbol: false })}
-                    </span>
-                  )}
-                </Badge>
+            </Badge>
+          )}
+          {line.priceOverride && (
+            <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+              <Badge
+                variant="info"
+                title="Price changed for this sale only — the product's price is unchanged."
+              >
+                Price changed
+              </Badge>
+              {listPrice !== null && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    onChange({ ...line, basePrice: listPrice, markupPct: 0, priceOverride: false })
+                  }
+                  className="font-semibold text-primary underline hover:no-underline focus-ring rounded"
+                  title={`Put it back to the catalogue price (৳ ${listPrice.toFixed(2)})`}
+                >
+                  Undo
+                </button>
               )}
-            </div>
+            </span>
           )}
         </div>
 
-        {/* Line total + remove */}
-        <div className="text-right shrink-0 max-w-[45%] min-w-0">
-          <div className="font-mono font-medium text-sm tabular text-foreground/90 truncate">
-            {formatBDT(lineTotal, { withSymbol: false })}
-          </div>
-          {savings > 0 && (
-            <div className="text-2xs text-success font-mono tabular -mt-0.5 truncate">
-              −{formatBDT(savings, { withSymbol: false })}
-            </div>
-          )}
-          <button
-            onClick={onRemove}
-            className="mt-1 size-8 grid place-items-center rounded text-muted-foreground hover:bg-destructive hover:text-destructive-foreground transition ml-auto"
-            title="Remove"
-          >
-            <Trash2 className="size-4" />
-          </button>
-        </div>
-      </div>
-
-      {/* Always-visible fields: quantity (big steppers) + unit, plus the toggle
-          for the rarely-used markup/discount fields. `flex-wrap` is the safety
-          valve — on an extremely narrow panel the toggle drops to its own line
-          instead of clipping. */}
-      <div className="mt-2.5 flex flex-wrap items-end gap-2">
-        <FieldBox label="Quantity" className="flex-1 basis-[8rem] min-w-0">
-          <div className={cn('flex items-center bg-secondary rounded-md min-w-0', FIELD_H)}>
+        {/* Quantity: decimals allowed (2.5 kg, 1.5 ft), the whole value is
+            selected on click so typing replaces it. The unit is shown as text:
+            the old unit picker changed only the label (pack prices are not
+            built), so "2 dz" sold and deducted 2 pieces. */}
+        <div className="cl-qty flex items-center gap-1.5">
+          <div className="flex items-center h-9 rounded-md bg-secondary focus-within:ring-2 focus-within:ring-ring/50">
             <button
-              onClick={() => onChange({ ...line, qty: Math.max(0, line.qty - 1) })}
-              className={cn(FIELD_H, 'aspect-square shrink-0 grid place-items-center hover:bg-background rounded-l-md')}
+              type="button"
+              onClick={() => setQty(line.qty - 1)}
+              disabled={line.qty <= 1}
+              className="h-9 w-8 grid place-items-center rounded-l-md hover:bg-background disabled:opacity-40 disabled:pointer-events-none"
               title="Decrease"
+              aria-label="Decrease"
             >
               <Minus className="size-4" />
             </button>
-            <input
+            <NumberField
               value={line.qty}
-              onChange={(e) => onChange({ ...line, qty: Number(e.target.value) || 0 })}
-              className="w-full min-w-0 bg-transparent text-center text-sm font-mono font-semibold tabular outline-none"
+              onChangeNumber={setQty}
+              onBlur={() => {
+                // An emptied box would leave a 0-quantity line on the sale.
+                if (!(line.qty > 0)) setQty(1);
+              }}
+              aria-label="Quantity"
+              title="Quantity"
+              placeholder="1"
+              className="h-9 w-14 px-1 rounded-none border-0 bg-transparent text-center text-sm font-semibold focus:ring-0 focus:border-0"
             />
             <button
-              onClick={() => onChange({ ...line, qty: line.qty + 1 })}
-              className={cn(FIELD_H, 'aspect-square shrink-0 grid place-items-center hover:bg-background rounded-r-md')}
+              type="button"
+              onClick={() => setQty(line.qty + 1)}
+              className="h-9 w-8 grid place-items-center rounded-r-md hover:bg-background"
               title="Increase"
+              aria-label="Increase"
             >
               <Plus className="size-4" />
             </button>
           </div>
-        </FieldBox>
-
-        <FieldBox label="Unit" className="w-20 shrink-0 [@container_(min-width:340px)]:w-28">
-          <select
-            value={line.unit}
-            onChange={(e) => onChange({ ...line, unit: e.target.value })}
-            className={cn(
-              'w-full min-w-0 truncate rounded-md border border-input bg-background text-sm px-1.5 outline-none focus:ring-2 focus:ring-ring/50',
-              FIELD_H,
-            )}
-          >
-            {line.availableUnits.map((u) => (
-              <option key={u} value={u}>
-                {u}
-              </option>
-            ))}
-          </select>
-        </FieldBox>
-
-        <button
-          onClick={() => setOpenOverride(!open)}
-          title="Markup and discount"
-          className={cn(
-            FIELD_H,
-            'shrink-0 min-w-11 px-2 rounded-md border bg-card hover:bg-secondary transition',
-            'text-xs font-medium whitespace-nowrap inline-flex items-center justify-center gap-1.5',
-            hasAdjustments ? 'border-primary/60 text-primary' : 'border-border',
-            '[@container_(min-width:340px)]:min-w-[104px]',
-          )}
-        >
-          <Percent className="size-4 shrink-0" />
-          <span className="hidden [@container_(min-width:340px)]:inline">Discount</span>
-          <ChevronDown
-            className={cn('size-3.5 shrink-0 transition-transform', open && 'rotate-180')}
-          />
-        </button>
-      </div>
-
-      {/* Drawer: the three fields an elderly cashier rarely needs */}
-      {open && (
-        <div className="mt-2 grid grid-cols-3 gap-2">
-          <FieldBox label="Markup %" hint="Adds % to SPR for unit price">
-            <NumInput
-              value={line.markupPct}
-              onChange={(v) => onChange({ ...line, markupPct: v })}
-              placeholder="0"
-            />
-          </FieldBox>
-
-          <FieldBox label="Disc %" hint="Line discount as percent">
-            <NumInput
-              value={line.discountPct}
-              onChange={(v) => onChange({ ...line, discountPct: v })}
-              placeholder="0"
-            />
-          </FieldBox>
-
-          <FieldBox label="Disc ৳" hint="Line discount as flat amount">
-            <NumInput
-              value={line.discountFlat}
-              onChange={(v) => onChange({ ...line, discountFlat: v })}
-              placeholder="0"
-            />
-          </FieldBox>
+          <span className="text-xs text-muted-foreground whitespace-nowrap">{unitName}</span>
         </div>
-      )}
 
-      {/* WHAT THIS ITEM COSTS US vs WHAT WE ARE SELLING IT FOR.
-          The shopkeeper bargains at the counter, so the two buying prices have
-          to be readable at a glance while the sale is still open — after the
-          receipt prints it is too late. Colour carries the meaning for someone
-          who is not going to read three labels every time:
-            amber  = money that went out (what we paid)
-            blue   = the average we have paid over time (the honest benchmark)
-            green  = money coming in (what this line sells for)
-          `avgCost` is the simple mean of recorded buying prices, NOT the
-          qty-weighted cost that drives COGS — two different figures that must
-          not be conflated (see backend/services/costing.ts). */}
-      <div className="mt-2 grid grid-cols-3 gap-2 rounded-md bg-secondary/40 px-2 py-1.5">
-        <PriceCell label="Buying price" value={cost} tone="text-warning" />
-        <PriceCell label="Avg. buying price" value={avgCost} tone="text-primary" />
         {/*
           SELLING PRICE IS EDITABLE — for THIS SALE ONLY.
-          A hardware counter bargains ("240 each if I take twenty"), and until now
-          the cashier's only options were a discount percentage or walking away
-          from the sale. Typing here sets the price on this cart line and nothing
-          else: the product's catalogue price is untouched, so tomorrow's customer
-          still sees the list price. `priceOverride` is what stops a price-group
-          switch or a restored cart from quietly snapping it back (stores/posCart).
+          A hardware counter bargains ("240 each if I take twenty"). Typing here
+          sets the price on this cart line and nothing else: the catalogue price
+          is untouched. `priceOverride` stops a price-group switch or a restored
+          cart from quietly snapping it back (stores/posCart).
         */}
-        <div className="min-w-0">
-          <div className="text-2xs text-muted-foreground leading-none truncate">
-            Selling price
-          </div>
+        <div className="cl-price">
           <NumberField
             value={up}
             onChangeNumber={(v) =>
@@ -265,108 +232,123 @@ export function CartLineRow({
                 priceOverride: true,
               })
             }
+            aria-label="Selling price"
             title="Price for this sale only — the product's price does not change"
-            className="mt-0.5 h-7 w-full px-1.5 text-right text-xs font-bold text-success"
+            className="h-9 w-full px-2 text-right text-sm font-semibold text-success"
           />
         </div>
-      </div>
 
-      {line.priceOverride && (
-        <div className="mt-1.5 flex items-center gap-2 rounded-md bg-primary/10 px-2 py-1 text-2xs text-primary">
-          <span className="flex-1 min-w-0 truncate">
-            Price changed for this sale only — the product's price is unchanged.
-          </span>
-          {listPrice !== null && (
-            <button
-              onClick={() =>
-                onChange({ ...line, basePrice: listPrice, markupPct: 0, priceOverride: false })
-              }
-              className="shrink-0 font-semibold underline hover:no-underline"
-              title={`Put it back to the catalogue price (৳ ${listPrice.toFixed(2)})`}
-            >
-              Undo
-            </button>
+        <div className="cl-total min-w-0">
+          <div className="text-sm font-bold tabular truncate">
+            {formatBDT(lineTotal, { withSymbol: false })}
+          </div>
+          {savings > 0.004 && (
+            <div className="text-xs text-success tabular truncate">
+              −{formatBDT(savings, { withSymbol: false })}
+            </div>
           )}
         </div>
-      )}
 
-      {/* Computed strip */}
-      <div className="mt-2 flex items-center justify-between gap-2 text-2xs text-muted-foreground font-mono tabular">
-        <span className="min-w-0 truncate">
-          ৳ {up.toFixed(2)} × {line.qty} {unitName}
-        </span>
-        {(line.discountPct > 0 || line.discountFlat > 0) && (
-          <span className="text-success shrink-0">
-            saved {formatBDT(savings, { withSymbol: false })}
-          </span>
-        )}
+        <div className="cl-act flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setOpenOverride(!open)}
+            title="Markup and discount"
+            aria-label="Markup and discount"
+            aria-expanded={open}
+            className={cn(
+              'size-8 grid place-items-center rounded-md border transition',
+              hasAdjustments || open
+                ? 'border-primary/60 text-primary bg-primary/10'
+                : 'border-border text-muted-foreground hover:bg-secondary hover:text-foreground',
+            )}
+          >
+            <Percent className="size-4" />
+          </button>
+          <button
+            type="button"
+            onClick={onRemove}
+            className="size-8 grid place-items-center rounded-md text-muted-foreground hover:bg-destructive hover:text-destructive-foreground transition"
+            title="Remove"
+            aria-label="Remove"
+          >
+            <Trash2 className="size-4" />
+          </button>
+        </div>
       </div>
+
+      {/* Markup / discount — one short row, labels beside the boxes. */}
+      {open && (
+        <div className="mt-2 ml-8 flex flex-wrap items-center gap-x-4 gap-y-2">
+          <InlineNum
+            label="Markup %"
+            hint="Adds % to SPR for unit price"
+            value={line.markupPct}
+            onChange={(v) => onChange({ ...line, markupPct: v })}
+          />
+          <InlineNum
+            label="Discount %"
+            hint="Line discount as percent"
+            value={line.discountPct}
+            onChange={(v) => onChange({ ...line, discountPct: v })}
+          />
+          <InlineNum
+            label="Discount ৳"
+            hint="Line discount as flat amount"
+            value={line.discountFlat}
+            onChange={(v) => onChange({ ...line, discountFlat: v })}
+          />
+        </div>
+      )}
     </div>
   );
 }
 
 /**
- * One labelled money figure in the buy/avg/sell strip.
- *
- * `label` arrives as a whole phrase and is the ONLY child of its element, so the
- * rendered text node is exactly that phrase — which is what the Bangla layer
- * matches on (src/lib/bn/translate.ts). Never build the label from fragments.
+ * "Buy ৳ 2,121.00" in the meta line. The short label is its own text node (so
+ * the Bangla layer translates it); the full name is the tooltip.
  */
-function PriceCell({
+function MetaPrice({
   label,
+  title,
   value,
   tone,
 }: {
   label: string;
+  title: string;
   value: number | null;
   tone: string;
 }) {
   return (
-    <div className="min-w-0" title={label}>
-      <div className="text-2xs text-muted-foreground leading-none truncate">{label}</div>
-      <div className={cn('mt-1 font-mono tabular text-xs font-bold truncate', tone)}>
+    <span className="whitespace-nowrap" title={title}>
+      <span>{label}</span>{' '}
+      <span className={cn('tabular font-semibold', tone)}>
         {value === null ? '—' : `৳ ${formatBDT(value, { withSymbol: false })}`}
-      </div>
-    </div>
+      </span>
+    </span>
   );
 }
 
-function FieldBox({
+function InlineNum({
   label,
-  children,
-  className,
   hint,
-}: {
-  label: string;
-  children: React.ReactNode;
-  className?: string;
-  hint?: string;
-}) {
-  return (
-    <div className={cn('flex flex-col gap-1 min-w-0', className)} title={hint}>
-      <label className="text-2xs font-semibold uppercase text-muted-foreground tracking-[0.06em] leading-none truncate">
-        {label}
-      </label>
-      {children}
-    </div>
-  );
-}
-
-function NumInput({
   value,
   onChange,
-  placeholder,
 }: {
+  label: string;
+  hint: string;
   value: number;
   onChange: (v: number) => void;
-  placeholder?: string;
 }) {
   return (
-    <NumberField
-      value={value}
-      onChangeNumber={onChange}
-      placeholder={placeholder}
-      className={cn('text-right text-sm px-2', FIELD_H)}
-    />
+    <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground" title={hint}>
+      <span>{label}</span>
+      <NumberField
+        value={value}
+        onChangeNumber={onChange}
+        placeholder="0"
+        className="h-8 w-20 px-2 text-right text-sm text-foreground"
+      />
+    </label>
   );
 }

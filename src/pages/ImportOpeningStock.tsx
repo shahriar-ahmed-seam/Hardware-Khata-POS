@@ -71,7 +71,7 @@ export default function ImportOpeningStock() {
                 <FileText className="size-5 text-primary" />
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium truncate">{fileName}</div>
-                  <div className="text-[11px] text-muted-foreground">
+                  <div className="text-xs text-muted-foreground">
                     {stats.rows} rows · {stats.valid} valid · {stats.errors} errors
                   </div>
                 </div>

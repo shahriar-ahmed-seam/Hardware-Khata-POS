@@ -42,7 +42,8 @@ interface KpiProps {
   icon: any;
   label: string;
   value: string;
-  delta?: number;
+  /** Percent change; null = no previous figure to compare with (shown as —). */
+  delta?: number | null;
   tone?: KpiTone;
   to?: string;
   onClick?: () => void;
@@ -83,9 +84,17 @@ export function Kpi({
                 <ChevronRight className="size-3 shrink-0 opacity-0 group-hover:opacity-100 transition" />
               )}
             </div>
-            <div className="text-2xl font-bold mt-1 tracking-tight font-mono text-foreground">
+            <div className="text-xl font-bold mt-1 tracking-tight tabular text-foreground">
               {value}
             </div>
+            {showDelta && delta === null && (
+              <div
+                className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-muted-foreground"
+                title="Nothing to compare with yesterday"
+              >
+                — <span>vs yesterday</span>
+              </div>
+            )}
             {showDelta && typeof delta === 'number' && (
               <div
                 className={cn(

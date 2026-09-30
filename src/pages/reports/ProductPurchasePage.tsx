@@ -166,7 +166,7 @@ export default function ProductPurchasePage() {
         </Card>
 
         <Card className="overflow-hidden">
-          <div className="grid grid-cols-[2fr_1fr_0.7fr_0.8fr_1fr_1.5fr_0.7fr] gap-2 px-4 py-2.5 border-b border-border bg-secondary/40 text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+          <div className="grid grid-cols-[2fr_1fr_0.7fr_0.8fr_1fr_1.5fr_0.7fr] gap-2 px-4 py-2.5 border-b border-border bg-secondary/40 text-xs font-semibold text-muted-foreground">
             <div>Product</div>
             <div>Category</div>
             <div className="text-right">Qty</div>
@@ -189,7 +189,7 @@ export default function ProductPurchasePage() {
             >
               <div className="min-w-0">
                 <div className="font-medium text-sm truncate">{r.name}</div>
-                <div className="text-[11px] font-mono text-muted-foreground">{r.sku}</div>
+                <div className="text-xs font-mono text-muted-foreground">{r.sku}</div>
               </div>
               <div className="text-sm text-muted-foreground">{r.category}</div>
               <div className="text-sm tabular text-right">{formatNumber(r.qty)}</div>
@@ -229,7 +229,7 @@ function Kpi({
 }) {
   return (
     <Card className="p-4">
-      <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+      <div className="text-xs font-semibold text-muted-foreground">
         {label}
       </div>
       <div

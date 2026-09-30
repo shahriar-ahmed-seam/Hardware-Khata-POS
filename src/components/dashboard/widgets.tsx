@@ -182,10 +182,10 @@ function Stat({
 }) {
   return (
     <div className={cn('rounded-lg border border-border p-3', big && 'col-span-2')}>
-      <div className="text-[10px] uppercase text-muted-foreground">{label}</div>
+      <div className="text-xs text-muted-foreground">{label}</div>
       <div
         className={cn(
-          'font-mono font-bold mt-0.5',
+          'tabular font-bold mt-0.5',
           big ? 'text-xl' : 'text-sm',
           muted && 'text-muted-foreground',
           tone === 'success' && 'text-success',
@@ -212,9 +212,9 @@ export function TopSellingProducts() {
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-medium truncate">{it.name}</div>
-            <div className="text-[11px] text-muted-foreground">{formatNumber(it.qty)} units</div>
+            <div className="text-xs text-muted-foreground">{formatNumber(it.qty)} units</div>
           </div>
-          <div className="text-sm font-mono">{formatBDT(it.total)}</div>
+          <div className="text-sm tabular">{formatBDT(it.total)}</div>
         </div>
       ))}
     </ListBody>
@@ -236,9 +236,9 @@ export function TopCustomers() {
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-medium truncate">{c.name}</div>
-            <div className="text-[11px] text-muted-foreground">{c.orders} orders</div>
+            <div className="text-xs text-muted-foreground">{c.orders} orders</div>
           </div>
-          <div className="text-sm font-mono">{formatBDT(c.total)}</div>
+          <div className="text-sm tabular">{formatBDT(c.total)}</div>
         </div>
       ))}
     </ListBody>
@@ -260,7 +260,7 @@ export function RecentSales() {
           <EmptyNote>No sales yet.</EmptyNote>
         ) : (
         <table className="w-full text-sm">
-          <thead className="text-[10px] uppercase text-muted-foreground border-b border-border sticky top-0 bg-card z-10">
+          <thead className="text-xs text-muted-foreground border-b border-border sticky top-0 bg-card z-10">
             <tr>
               <th className="text-left font-medium px-4 py-2">Invoice</th>
               <th className="text-left font-medium px-2 py-2">Customer</th>
@@ -273,7 +273,7 @@ export function RecentSales() {
               <tr key={s.id} className="border-b border-border/50 hover:bg-secondary/40">
                 <td className="px-4 py-2 font-mono text-xs">{s.invoiceNo}</td>
                 <td className="px-2 py-2 truncate max-w-[140px]">{s.customerName}</td>
-                <td className="px-2 py-2 text-right font-mono">{formatBDT(s.total, { withSymbol: false })}</td>
+                <td className="px-2 py-2 text-right tabular">{formatBDT(s.total, { withSymbol: false })}</td>
                 <td className="px-4 py-2">
                   <Badge
                     variant={
@@ -310,9 +310,9 @@ export function RecentPurchases() {
         <div key={p.ref} className="flex items-center gap-3 py-1.5 border-b border-border/50 last:border-0">
           <div className="flex-1 min-w-0">
             <div className="text-sm font-medium truncate">{p.supplier}</div>
-            <div className="text-[11px] text-muted-foreground font-mono">{p.ref} · {p.date}</div>
+            <div className="text-xs text-muted-foreground font-mono">{p.ref} · {p.date}</div>
           </div>
-          <div className="text-sm font-mono">{formatBDT(p.total)}</div>
+          <div className="text-sm tabular">{formatBDT(p.total)}</div>
         </div>
       ))}
     </ListBody>
@@ -331,7 +331,7 @@ export function LowStockList() {
         <div key={p.id} className="flex items-center justify-between text-sm gap-3">
           <div className="min-w-0">
             <div className="font-medium truncate">{p.name}</div>
-            <div className="text-[11px] text-muted-foreground font-mono">
+            <div className="text-xs text-muted-foreground font-mono">
               {p.sku} · reorder at {p.reorderLevel}
             </div>
           </div>
@@ -361,9 +361,9 @@ export function CustomerDuesList() {
         >
           <div className="min-w-0">
             <div className="text-sm font-medium truncate">{c.name}</div>
-            <div className="text-[11px] text-muted-foreground">{c.group}</div>
+            <div className="text-xs text-muted-foreground">{c.group}</div>
           </div>
-          <div className="text-sm font-mono text-destructive">{formatBDT(c.due)}</div>
+          <div className="text-sm tabular text-destructive">{formatBDT(c.due)}</div>
         </Link>
       ))}
     </ListBody>
@@ -387,9 +387,9 @@ export function SupplierDuesList() {
         >
           <div className="min-w-0">
             <div className="text-sm font-medium truncate">{s.name}</div>
-            <div className="text-[11px] text-muted-foreground">{s.phone}</div>
+            <div className="text-xs text-muted-foreground">{s.phone}</div>
           </div>
-          <div className="text-sm font-mono text-warning">{formatBDT(s.due)}</div>
+          <div className="text-sm tabular text-warning">{formatBDT(s.due)}</div>
         </Link>
       ))}
     </ListBody>
@@ -414,7 +414,8 @@ export function CashRegisterCard() {
       : '';
     footer = `Shift #${card.shiftNo ?? '—'} · Opened ${opened} by ${card.openedBy ?? '—'}`;
   } else if (data) {
-    footer = 'No open shift';
+    // Not a warning: the drawer opens itself with the next cash entry.
+    footer = 'The drawer opens with the next cash sale.';
   }
   return (
     <div className="space-y-3 flex-1 flex flex-col min-h-[200px]">
@@ -424,7 +425,7 @@ export function CashRegisterCard() {
         <Mini label="Cash Out" value={formatBDT(cashOut, { withSymbol: false })} tone="warning" />
         <Mini label="Expected" value={formatBDT(expected, { withSymbol: false })} tone="primary" />
       </div>
-      <div className="text-[11px] text-muted-foreground">{footer}</div>
+      <div className="text-xs text-muted-foreground">{footer}</div>
     </div>
   );
 }
@@ -432,10 +433,10 @@ export function CashRegisterCard() {
 function Mini({ label, value, tone }: { label: string; value: string; tone?: 'success' | 'warning' | 'primary' }) {
   return (
     <div className="rounded-lg border border-border p-2.5">
-      <div className="text-[10px] uppercase text-muted-foreground">{label}</div>
+      <div className="text-xs text-muted-foreground">{label}</div>
       <div
         className={cn(
-          'font-mono font-bold text-sm mt-0.5',
+          'tabular font-bold text-sm mt-0.5',
           tone === 'success' && 'text-success',
           tone === 'warning' && 'text-warning',
           tone === 'primary' && 'text-primary',
@@ -473,7 +474,7 @@ export function ExpenseBreakdown() {
           <div key={d.name} className="flex items-center gap-2 text-xs">
             <span className="size-2.5 rounded-sm" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />
             <span className="flex-1 truncate">{d.name}</span>
-            <span className="font-mono">{formatBDT(d.value, { withSymbol: false })}</span>
+            <span className="tabular">{formatBDT(d.value, { withSymbol: false })}</span>
             <span className="text-muted-foreground w-10 text-right">
               {total > 0 ? Math.round((d.value / total) * 100) : 0}%
             </span>
@@ -510,7 +511,7 @@ export function PaymentMethodBreakdown() {
           <div key={d.name} className="flex items-center gap-2 text-xs">
             <span className="size-2.5 rounded-sm" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />
             <span className="flex-1">{d.name}</span>
-            <span className="font-mono">{formatBDT(d.value, { withSymbol: false })}</span>
+            <span className="tabular">{formatBDT(d.value, { withSymbol: false })}</span>
             <span className="text-muted-foreground w-10 text-right">
               {total > 0 ? Math.round((d.value / total) * 100) : 0}%
             </span>
@@ -546,7 +547,7 @@ export function ActivityFeed() {
           <span className={cn('size-2 rounded-full mt-1.5 ring-4 ring-card', dotColor[a.type] ?? 'bg-muted-foreground')} />
           <div className="flex-1 min-w-0">
             <div className="text-xs">{a.text}</div>
-            <div className="text-[10px] text-muted-foreground mt-0.5">{a.time}</div>
+            <div className="text-xs text-muted-foreground mt-0.5">{a.time}</div>
           </div>
         </div>
       ))}
@@ -566,7 +567,7 @@ export function BirthdayList() {
         <div key={b.name} className="flex items-center justify-between text-sm gap-3 py-1.5 border-b border-border/50 last:border-0">
           <div className="min-w-0">
             <div className="font-medium truncate">{b.name}</div>
-            <div className="text-[11px] text-muted-foreground font-mono">{b.phone}</div>
+            <div className="text-xs text-muted-foreground font-mono">{b.phone}</div>
           </div>
           <Badge variant={b.when === 'Today' ? 'success' : 'info'}>{b.when}</Badge>
         </div>

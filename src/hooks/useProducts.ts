@@ -343,7 +343,8 @@ export function useCorrectStock() {
       productId: string;
       delta: number;
       unit?: string;
-      branchId: string;
+      /** Omitted → the shop's default branch (resolved by the backend). */
+      branchId?: string;
       userId: string;
       reason?: string;
     }) =>

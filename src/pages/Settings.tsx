@@ -92,7 +92,7 @@ export default function Settings() {
           .filter((g) => visible.some((t) => t.group === g))
           .map((g) => (
           <section key={g}>
-            <h2 className="text-[11px] uppercase font-semibold text-muted-foreground tracking-[0.06em] mb-2">
+            <h2 className="text-xs font-semibold text-muted-foreground mb-2">
               {GROUP_TITLES[g]}
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">

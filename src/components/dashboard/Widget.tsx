@@ -71,7 +71,7 @@ export function Widget({
             {to && (
               <Link
                 to={to}
-                className="inline-flex items-center gap-0.5 px-2 py-1 rounded-md hover:bg-secondary text-[11px] text-muted-foreground hover:text-foreground"
+                className="inline-flex items-center gap-0.5 px-2 py-1 rounded-md hover:bg-secondary text-xs text-muted-foreground hover:text-foreground"
               >
                 {toLabel}
                 <ChevronRight className="size-3" />

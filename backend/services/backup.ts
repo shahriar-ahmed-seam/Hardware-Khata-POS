@@ -1,6 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { openDatabase, type DB } from '../db/connection.ts';
+import {
+  openDatabase,
+  schemaVersionOf,
+  newerSchemaMessage,
+  CURRENT_SCHEMA_VERSION,
+  type DB,
+} from '../db/connection.ts';
 import { getSetting, setSetting } from './settings.ts';
 
 /**
@@ -260,6 +266,24 @@ export function getBackupConfig(db: DB): BackupConfig {
   };
 }
 
+/**
+ * The part of the backup config the RENDERER may set through `backup.configure`:
+ * the schedule and how many snapshots to keep. Nothing else.
+ *
+ * The channel used to spread whatever it was sent into the config. The folder
+ * could be redirected without the folder picker (and without the cloud check
+ * that goes with it), and `lastBackupAt` could be set to a future date so the
+ * daily backup never ran. The folder has its own channels (`backup.setFolder` /
+ * `backup.setPdfFolder`); the `last…` fields are written only by the backup code.
+ */
+export function userBackupPatch(p: unknown): Partial<BackupConfig> {
+  const src = (p ?? {}) as Record<string, unknown>;
+  const out: Partial<BackupConfig> = {};
+  if (src.auto === 'off' || src.auto === 'daily' || src.auto === 'on-shift-close') out.auto = src.auto;
+  if (typeof src.keep === 'number') out.keep = src.keep;
+  return out;
+}
+
 export function setBackupConfig(db: DB, patch: Partial<BackupConfig>): BackupConfig {
   const next: BackupConfig = { ...getBackupConfig(db), ...patch };
   next.keep = normalizeKeep(next.keep);
@@ -318,6 +342,8 @@ export function verifySnapshot(file: string): {
   ok: boolean;
   error?: string;
   counts?: Record<string, number>;
+  /** The snapshot's data version (its highest recorded migration). */
+  schemaVersion?: number;
 } {
   if (!fs.existsSync(file)) return { ok: false, error: 'Snapshot file not found' };
   let probe: DB | null = null;
@@ -330,12 +356,19 @@ export function verifySnapshot(file: string): {
     const verdict = integrity[0]?.integrity_check;
     if (verdict !== 'ok') return { ok: false, error: `Integrity check failed: ${verdict}` };
 
+    // A snapshot from a NEWER build cannot be restored into this one: it would
+    // be opened with rules that do not know its columns (audit R35).
+    const schemaVersion = schemaVersionOf(probe);
+    if (schemaVersion > CURRENT_SCHEMA_VERSION) {
+      return { ok: false, error: newerSchemaMessage(schemaVersion), schemaVersion };
+    }
+
     const counts: Record<string, number> = {};
     for (const table of ['sales', 'purchases', 'products', 'customers', 'stock_movements']) {
       const row = probe.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
       counts[table] = row.n;
     }
-    return { ok: true, counts };
+    return { ok: true, counts, schemaVersion };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   } finally {
@@ -571,7 +604,8 @@ export type ExportKind =
   | 'products'
   | 'customers'
   | 'suppliers'
-  | 'stock';
+  | 'stock'
+  | 'expenses';
 
 /**
  * Build a CSV for one dataset.
@@ -785,6 +819,38 @@ export function buildExportCsv(db: DB, kind: ExportKind): string {
         ]),
       );
     }
+    case 'expenses': {
+      // Voided expenses are included and marked, so the file matches the
+      // Expenses screen and nothing is silently missing from the accountant's copy.
+      const rows = db
+        .prepare(
+          `SELECT e.ref_no, e.date, COALESCE(c.name, 'Uncategorized') AS category, e.amount,
+                  e.payment_method, e.reference, e.note, b.name AS branch, u.name AS user_name,
+                  e.voided, e.void_reason
+             FROM expenses e
+             LEFT JOIN expense_categories c ON c.id = e.category_id
+             LEFT JOIN branches b ON b.id = e.branch_id
+             LEFT JOIN users u ON u.id = e.user_id
+            ORDER BY e.date, e.ref_no`,
+        )
+        .all() as Record<string, unknown>[];
+      return toCsv(
+        ['Ref', 'Date', 'Category', 'Amount', 'Method', 'Reference', 'Note', 'Branch', 'By', 'Voided', 'Void Reason'],
+        rows.map((r) => [
+          r.ref_no,
+          r.date,
+          r.category,
+          r.amount,
+          r.payment_method,
+          r.reference,
+          r.note,
+          r.branch,
+          r.user_name,
+          r.voided ? 'yes' : 'no',
+          r.void_reason,
+        ]),
+      );
+    }
   }
 }
 
@@ -795,6 +861,7 @@ const EXPORT_KINDS: ExportKind[] = [
   'customers',
   'suppliers',
   'stock',
+  'expenses',
 ];
 
 /**

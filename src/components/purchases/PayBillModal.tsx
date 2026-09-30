@@ -6,7 +6,9 @@ import { Input } from '@/components/ui/Input';
 import { Banknote, Smartphone, CreditCard, Building2, FileText, Save } from 'lucide-react';
 import { usePurchases, type PaymentMethod, type PurchaseRecord } from '@/stores/purchases';
 import { useSuppliers } from '@/stores/contacts';
-import { api, hasBackend } from '@/lib/api';
+import { api } from '@/lib/api';
+import { round2, sum2 } from '@/lib/money';
+import { toast } from '@/stores/toast';
 import { toSupplier, type BackendSupplier } from '@/hooks/contactAdapter';
 import { toPurchaseRecord, type BackendPurchase } from '@/hooks/purchaseAdapter';
 import type { Supplier } from '@/types/domain';
@@ -31,7 +33,6 @@ interface Props {
 
 export function PayBillModal({ open, onClose, initialSupplierId }: Props) {
   const storePurchases = usePurchases((s) => s.purchases);
-  const addPayment = usePurchases((s) => s.addPayment);
   const storeSuppliers = useSuppliers((s) => s.items);
   const paySupplier = useSuppliers((s) => s.paySupplier);
 
@@ -55,6 +56,7 @@ export function PayBillModal({ open, onClose, initialSupplierId }: Props) {
   const [method, setMethod] = useState<PaymentMethod>('Cash');
   const [reference, setReference] = useState('');
   const [picked, setPicked] = useState<Record<string, number>>({});
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -91,7 +93,9 @@ export function PayBillModal({ open, onClose, initialSupplierId }: Props) {
       return;
     }
     let alive = true;
-    void api<BackendPurchase[]>('purchases.list', { status: 'received' })
+    // Every bill that is not cancelled: the backend allocates over the same set
+    // (an ordered bill can take an advance), so the preview has to match it.
+    void api<BackendPurchase[]>('purchases.list', {})
       .then((rows) => {
         if (alive) setAllBills(rows.map(toPurchaseRecord));
       })
@@ -141,60 +145,56 @@ export function PayBillModal({ open, onClose, initialSupplierId }: Props) {
   const dueBills = useMemo(() => {
     if (!supplierId) return [];
     return (allBills ?? storePurchases)
-      .filter((p) => p.status === 'received' && p.supplierId === supplierId && p.due > 0)
+      .filter((p) => p.status !== 'cancelled' && p.supplierId === supplierId && p.due > 0)
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   }, [allBills, storePurchases, supplierId]);
 
-  // Auto-allocate preview
+  // The part of the payable that is NOT on an open bill: the opening balance
+  // still owed. The backend pays it FIRST (services/accounts.ts).
+  const openingPart = useMemo(() => {
+    if (!supplier) return 0;
+    return Math.max(0, round2(supplier.due - sum2(dueBills.map((b) => b.due))));
+  }, [supplier, dueBills]);
+
+  // Auto-allocate preview — the same order the backend uses.
   const allocation = useMemo(() => {
-    if (mode !== 'auto') return [];
-    let remaining = amount;
-    const out: { purchaseId: string; refNo: string; apply: number }[] = [];
+    if (mode !== 'auto') return { opening: 0, bills: [], advance: 0 };
+    const opening = Math.min(amount, openingPart);
+    let remaining = round2(amount - opening);
+    const bills: { purchaseId: string; refNo: string; apply: number }[] = [];
     for (const inv of dueBills) {
       if (remaining <= 0) break;
       const apply = Math.min(inv.due, remaining);
-      out.push({ purchaseId: inv.id, refNo: inv.refNo, apply });
-      remaining -= apply;
+      bills.push({ purchaseId: inv.id, refNo: inv.refNo, apply });
+      remaining = round2(remaining - apply);
     }
-    return out;
-  }, [mode, amount, dueBills]);
+    return { opening, bills, advance: Math.max(0, remaining) };
+  }, [mode, amount, dueBills, openingPart]);
 
   const pickedTotal = Object.values(picked).reduce((s, v) => s + v, 0);
   const effective = mode === 'auto' ? amount : pickedTotal;
   const m = METHODS.find((x) => x.id === method)!;
 
-  const submit = () => {
-    if (!supplier || effective <= 0) return;
-    // MONEY-CORRECTNESS: avoid double-counting the payment.
-    // Under the BACKEND, supplier due is DERIVED from purchases minus
-    // purchase_payments. The per-bill addPayment() calls below hit
-    // api('purchases.addPayment') and rehydrate, so they are the single source
-    // of truth — calling suppliers.pay() here too would record the payment
-    // TWICE. So we ONLY run paySupplier() in mock mode (where it adjusts the
-    // mock contacts store and there is no per-bill persistence layer).
-    if (!hasBackend()) {
-      paySupplier(supplier.id, effective);
-    }
-    if (mode === 'auto') {
-      allocation.forEach((a) =>
-        addPayment(a.purchaseId, {
-          method,
-          amount: a.apply,
-          reference: reference || undefined,
-          paidAt: new Date().toISOString(),
-        }),
-      );
-    } else {
-      Object.entries(picked).forEach(([id, amt]) => {
-        if (amt > 0)
-          addPayment(id, {
-            method,
-            amount: amt,
-            reference: reference || undefined,
-            paidAt: new Date().toISOString(),
-          });
-      });
-    }
+  // ONE backend call, one transaction (services/accounts.ts). This used to loop
+  // one un-awaited purchases.addPayment per bill, and money beyond the bills was
+  // saved nowhere.
+  const submit = async () => {
+    if (!supplier || effective <= 0 || saving) return;
+    setSaving(true);
+    const allocations =
+      mode === 'pick'
+        ? Object.entries(picked)
+            .filter(([, v]) => v > 0)
+            .map(([docId, v]) => ({ docId, amount: v }))
+        : undefined;
+    const res = await paySupplier(supplier.id, effective, method, reference || undefined, allocations);
+    setSaving(false);
+    if (!res) return;
+    const parts: string[] = [];
+    if (res.toOpening > 0) parts.push(`Opening balance ${formatBDT(res.toOpening)}`);
+    if (res.allocated > 0) parts.push(`Bills ${formatBDT(res.allocated)}`);
+    if (res.advance > 0) parts.push(`Advance ${formatBDT(res.advance)}`);
+    toast.success('Payment recorded', { description: parts.join(' · ') });
     onClose();
   };
 
@@ -209,7 +209,7 @@ export function PayBillModal({ open, onClose, initialSupplierId }: Props) {
         <div className="flex items-center justify-between">
           <div className="text-sm">
             <span className="text-muted-foreground">Paying </span>
-            <span className="font-mono tabular font-semibold text-success">
+            <span className="tabular font-semibold text-success">
               {formatBDT(effective)}
             </span>
           </div>
@@ -217,7 +217,7 @@ export function PayBillModal({ open, onClose, initialSupplierId }: Props) {
             <Button variant="outline" onClick={onClose}>
               Cancel
             </Button>
-            <Button onClick={submit} disabled={!supplier || effective <= 0}>
+            <Button onClick={() => void submit()} disabled={!supplier || effective <= 0 || saving}>
               <Save className="size-4" /> Save Payment
             </Button>
           </div>
@@ -226,13 +226,13 @@ export function PayBillModal({ open, onClose, initialSupplierId }: Props) {
     >
       <div className="p-4 space-y-4">
         <div>
-          <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+          <label className="text-xs font-semibold text-muted-foreground">
             Supplier *
           </label>
           <select
             value={supplierId}
             onChange={(e) => setSupplierId(e.target.value)}
-            className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+            className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="">Select supplier…</option>
             {supplierOptions.map((s) => (
@@ -284,14 +284,14 @@ export function PayBillModal({ open, onClose, initialSupplierId }: Props) {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {mode === 'auto' && (
                 <div>
-                  <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+                  <label className="text-xs font-semibold text-muted-foreground">
                     Amount
                   </label>
                   <NumberField value={amount} onChangeNumber={setAmount} className="text-right text-base" />
                   <div className="flex items-center gap-1 mt-1">
                     <button
                       onClick={() => setAmount(supplier.due)}
-                      className="text-[10px] px-2 h-6 rounded border border-border hover:bg-secondary"
+                      className="text-xs px-2 h-6 rounded border border-border hover:bg-secondary"
                     >
                       Full payable ({formatBDT(supplier.due, { withSymbol: false })})
                     </button>
@@ -300,7 +300,7 @@ export function PayBillModal({ open, onClose, initialSupplierId }: Props) {
               )}
               {m.needsRef && (
                 <div>
-                  <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+                  <label className="text-xs font-semibold text-muted-foreground">
                     Reference / TxID
                   </label>
                   <Input
@@ -312,17 +312,34 @@ export function PayBillModal({ open, onClose, initialSupplierId }: Props) {
               )}
             </div>
 
+            {mode === 'auto' && (allocation.opening > 0 || allocation.advance > 0) && (
+              <div className="rounded-md border border-border bg-secondary/40 px-3 py-2 text-sm space-y-1">
+                {allocation.opening > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Opening balance</span>
+                    <span className="tabular text-success">{formatBDT(allocation.opening)}</span>
+                  </div>
+                )}
+                {allocation.advance > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Kept as an advance with the supplier</span>
+                    <span className="tabular text-success">{formatBDT(allocation.advance)}</span>
+                  </div>
+                )}
+              </div>
+            )}
             {dueBills.length === 0 ? (
               <div className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-                No outstanding bills. Payment will be recorded as advance.
+                No open bills. The payment goes to the opening balance first; anything more is kept as an
+                advance with the supplier.
               </div>
             ) : (
               <div className="rounded-lg border border-border overflow-hidden">
-                <div className="px-3 py-2 border-b border-border bg-secondary/40 text-[11px] uppercase font-semibold text-muted-foreground">
+                <div className="px-3 py-2 border-b border-border bg-secondary/40 text-xs font-semibold text-muted-foreground">
                   {mode === 'auto' ? 'Will apply to' : 'Choose how much per bill'}
                 </div>
                 <table className="w-full text-sm">
-                  <thead className="text-[10px] uppercase text-muted-foreground border-b border-border">
+                  <thead className="text-xs text-muted-foreground border-b border-border">
                     <tr>
                       <th className="text-left px-3 py-2 font-medium">Reference</th>
                       <th className="text-left px-2 py-2 font-medium">Date</th>
@@ -333,7 +350,7 @@ export function PayBillModal({ open, onClose, initialSupplierId }: Props) {
                   </thead>
                   <tbody>
                     {dueBills.map((p) => {
-                      const auto = allocation.find((a) => a.purchaseId === p.id)?.apply ?? 0;
+                      const auto = allocation.bills.find((a) => a.purchaseId === p.id)?.apply ?? 0;
                       const cur = mode === 'auto' ? auto : picked[p.id] ?? 0;
                       return (
                         <tr key={p.id} className="border-t border-border">
@@ -341,15 +358,15 @@ export function PayBillModal({ open, onClose, initialSupplierId }: Props) {
                           <td className="px-2 py-2 text-xs text-muted-foreground">
                             {new Date(p.date).toLocaleDateString('en-GB')}
                           </td>
-                          <td className="px-2 py-2 text-right font-mono tabular">
+                          <td className="px-2 py-2 text-right tabular">
                             {formatBDT(p.total, { withSymbol: false })}
                           </td>
-                          <td className="px-2 py-2 text-right font-mono tabular text-destructive">
+                          <td className="px-2 py-2 text-right tabular text-destructive">
                             {formatBDT(p.due, { withSymbol: false })}
                           </td>
                           <td className="px-3 py-2 text-right">
                             {mode === 'auto' ? (
-                              <span className="font-mono tabular text-success">
+                              <span className="tabular text-success">
                                 {cur > 0 ? formatBDT(cur, { withSymbol: false }) : '—'}
                               </span>
                             ) : (

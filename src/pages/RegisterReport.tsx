@@ -86,7 +86,7 @@ export default function RegisterReport() {
           <select
             value={range}
             onChange={(e) => setRange(e.target.value as Range)}
-            className="h-9 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
+            className="h-10 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="all">All time</option>
             <option value="today">Today</option>
@@ -113,7 +113,7 @@ export default function RegisterReport() {
 
         <Card className="overflow-hidden">
           <table className="w-full text-sm">
-            <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50">
+            <thead className="text-xs text-muted-foreground bg-secondary/50">
               <tr>
                 <th className="text-left px-4 py-2.5 font-medium">Shift</th>
                 <th className="text-left px-2 py-2.5 font-medium">Branch</th>
@@ -144,13 +144,13 @@ export default function RegisterReport() {
                     <td className="px-2 py-2.5 text-xs">{s.branch}</td>
                     <td className="px-2 py-2.5 text-xs text-muted-foreground">
                       {new Date(s.openedAt).toLocaleString('en-GB')}
-                      <div className="text-[10px]">by {s.openedBy}</div>
+                      <div className="text-xs">by {s.openedBy}</div>
                     </td>
                     <td className="px-2 py-2.5 text-xs text-muted-foreground">
                       {s.closedAt ? (
                         <>
                           {new Date(s.closedAt).toLocaleString('en-GB')}
-                          <div className="text-[10px]">by {s.closedBy}</div>
+                          <div className="text-xs">by {s.closedBy}</div>
                         </>
                       ) : (
                         '—'
@@ -159,23 +159,23 @@ export default function RegisterReport() {
                     <td className="px-2 py-2.5 text-right text-xs text-muted-foreground tabular">
                       {shiftDuration(s)}
                     </td>
-                    <td className="px-2 py-2.5 text-right font-mono tabular">
+                    <td className="px-2 py-2.5 text-right tabular">
                       {formatBDT(s.openingCash, { withSymbol: false })}
                     </td>
-                    <td className="px-2 py-2.5 text-right font-mono tabular text-success">
+                    <td className="px-2 py-2.5 text-right tabular text-success">
                       {formatBDT(cashIn, { withSymbol: false })}
                     </td>
-                    <td className="px-2 py-2.5 text-right font-mono tabular text-warning">
+                    <td className="px-2 py-2.5 text-right tabular text-warning">
                       {formatBDT(cashOut, { withSymbol: false })}
                     </td>
-                    <td className="px-2 py-2.5 text-right font-mono tabular font-semibold">
+                    <td className="px-2 py-2.5 text-right tabular font-semibold">
                       {s.countedTotal !== undefined
                         ? formatBDT(s.countedTotal, { withSymbol: false })
                         : '—'}
                     </td>
                     <td
                       className={cn(
-                        'px-2 py-2.5 text-right font-mono tabular',
+                        'px-2 py-2.5 text-right tabular',
                         variance === undefined
                           ? 'text-muted-foreground'
                           : variance === 0

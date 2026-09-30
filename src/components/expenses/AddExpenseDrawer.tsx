@@ -11,10 +11,12 @@ import {
   type RecurringFrequency,
 } from '@/stores/expenses';
 import { confirm } from '@/stores/confirm';
+import { toast } from '@/stores/toast';
 import { useBranches } from '@/stores/branches';
 import { DateTimeField, DateField } from '@/components/ui/DateTimeField';
 import { toLocalInput, nowLocalInput, fromLocalInput } from '@/lib/datetime';
 import { cn } from '@/lib/utils';
+import { currentUserName } from '@/lib/actor';
 import { NewExpenseCategoryModal } from './NewExpenseCategoryModal';
 
 const METHODS: { id: ExpensePaymentMethod; icon: any; label: string; needsRef?: boolean }[] = [
@@ -78,6 +80,7 @@ export function AddExpenseDrawer({ open, onClose, initial }: Props) {
   const [recurringEnd, setRecurringEnd] = useState(initial?.recurringEnd ?? '');
 
   const [newCatOpen, setNewCatOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   // Branches arrive asynchronously, so adopt the default once the list lands
   // (the same pattern as AddPurchase / AddSale).
@@ -107,8 +110,9 @@ export function AddExpenseDrawer({ open, onClose, initial }: Props) {
   const m = METHODS.find((x) => x.id === paymentMethod)!;
   const isValid = categoryId && amount > 0 && paymentMethod;
 
-  const submit = () => {
-    if (!isValid) return;
+  // Closes only once the backend has saved it; a refusal keeps what was typed.
+  const submit = async () => {
+    if (!isValid || saving) return;
     const data: Omit<ExpenseRecord, 'id'> = {
       // The box holds local wall-clock time; the database stores a UTC instant.
       date: fromLocalInput(date),
@@ -118,14 +122,17 @@ export function AddExpenseDrawer({ open, onClose, initial }: Props) {
       reference: reference || undefined,
       note: note || undefined,
       branch,
-      user: 'Seam',
+      user: currentUserName(),
       attachmentName,
       recurring,
       frequency: recurring ? frequency : undefined,
       recurringEnd: recurring && recurringEnd ? recurringEnd : undefined,
     };
-    if (initial) updateExpense(initial.id, data);
-    else addExpense(data);
+    setSaving(true);
+    const ok = initial ? await updateExpense(initial.id, data) : await addExpense(data);
+    setSaving(false);
+    if (!ok) return;
+    toast.success(initial ? 'Expense updated' : 'Expense saved');
     onClose();
   };
 
@@ -161,7 +168,7 @@ export function AddExpenseDrawer({ open, onClose, initial }: Props) {
               <select
                 value={categoryId}
                 onChange={(e) => setCategoryId(e.target.value)}
-                className="h-9 flex-1 min-w-0 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                className="h-10 flex-1 min-w-0 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
               >
                 <option value="">Choose category…</option>
                 {/* Top level categories */}
@@ -188,7 +195,7 @@ export function AddExpenseDrawer({ open, onClose, initial }: Props) {
                 type="button"
                 onClick={() => setNewCatOpen(true)}
                 title="Add new category"
-                className="size-9 grid place-items-center rounded-md border border-border hover:border-primary hover:bg-primary/10 hover:text-primary text-muted-foreground transition shrink-0"
+                className="size-10 grid place-items-center rounded-md border border-border hover:border-primary hover:bg-primary/10 hover:text-primary text-muted-foreground transition shrink-0"
               >
                 <Plus className="size-4" />
               </button>
@@ -247,7 +254,7 @@ export function AddExpenseDrawer({ open, onClose, initial }: Props) {
               <select
                 value={branch}
                 onChange={(e) => setBranch(e.target.value)}
-                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
               >
                 {(branches.length > 0
                   ? branches.map((b) => b.name)
@@ -262,7 +269,7 @@ export function AddExpenseDrawer({ open, onClose, initial }: Props) {
               </select>
             </Field>
             <Field label="Attach receipt">
-              <label className="cursor-pointer flex items-center gap-2 px-3 h-9 rounded-md border border-input bg-background hover:bg-secondary/50 transition text-xs">
+              <label className="cursor-pointer flex items-center gap-2 px-3 h-10 rounded-md border border-input bg-background hover:bg-secondary/50 transition text-xs">
                 <Paperclip className="size-3.5" />
                 <span className="flex-1 truncate">{attachmentName ?? 'Browse…'}</span>
                 <input type="file" className="hidden" onChange={handleFile} />
@@ -277,7 +284,7 @@ export function AddExpenseDrawer({ open, onClose, initial }: Props) {
                 <div className="text-sm font-medium inline-flex items-center gap-1.5">
                   <Repeat className="size-3.5 text-primary" /> Recurring expense
                 </div>
-                <div className="text-[11px] text-muted-foreground">
+                <div className="text-xs text-muted-foreground">
                   Automatically create future copies (rent, salary…)
                 </div>
               </div>
@@ -300,13 +307,13 @@ export function AddExpenseDrawer({ open, onClose, initial }: Props) {
             {recurring && (
               <div className="grid grid-cols-2 gap-2 mt-3">
                 <div>
-                  <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+                  <label className="text-xs font-semibold text-muted-foreground">
                     Frequency
                   </label>
                   <select
                     value={frequency}
                     onChange={(e) => setFrequency(e.target.value as RecurringFrequency)}
-                    className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                    className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
                   >
                     {FREQS.map((f) => (
                       <option key={f.id} value={f.id}>
@@ -316,7 +323,7 @@ export function AddExpenseDrawer({ open, onClose, initial }: Props) {
                   </select>
                 </div>
                 <div>
-                  <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+                  <label className="text-xs font-semibold text-muted-foreground">
                     End date (optional)
                   </label>
                   <DateField
@@ -334,8 +341,11 @@ export function AddExpenseDrawer({ open, onClose, initial }: Props) {
             <Button
               variant="outline"
               onClick={async () => {
-                if (await confirm({ title: 'Delete this expense?', variant: 'destructive' })) {
-                  removeExpense(initial.id);
+                if (
+                  (await confirm({ title: 'Delete this expense?', variant: 'destructive' })) &&
+                  (await removeExpense(initial.id))
+                ) {
+                  toast.success('Expense deleted');
                   onClose();
                 }
               }}
@@ -349,7 +359,7 @@ export function AddExpenseDrawer({ open, onClose, initial }: Props) {
             <Button variant="outline" onClick={onClose}>
               Cancel
             </Button>
-            <Button onClick={submit} disabled={!isValid}>
+            <Button onClick={() => void submit()} disabled={!isValid || saving}>
               <Save className="size-4" /> {initial ? 'Save Changes' : 'Save Expense'}
             </Button>
           </div>
@@ -376,7 +386,7 @@ function Field({
 }) {
   return (
     <div>
-      <label className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+      <label className="text-xs font-semibold text-muted-foreground">
         {label} {required && <span className="text-destructive">*</span>}
       </label>
       {children}

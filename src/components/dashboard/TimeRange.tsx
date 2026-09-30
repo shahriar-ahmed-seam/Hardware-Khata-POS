@@ -60,10 +60,10 @@ export function TimeRange() {
           onClick={() => set(true)}
           title={`Range: ${LABELS[range]}`}
           aria-label="Time range"
-          className="h-9 px-2.5 inline-flex items-center gap-1 rounded-md border border-border hover:bg-secondary text-muted-foreground hover:text-foreground transition"
+          className="h-10 px-2.5 inline-flex items-center gap-1 rounded-md border border-border hover:bg-secondary text-muted-foreground hover:text-foreground transition"
         >
           <Calendar className="size-4" />
-          <span className="text-[11px] font-medium hidden xl:inline">{LABELS[range]}</span>
+          <span className="text-xs font-medium hidden xl:inline">{LABELS[range]}</span>
           <ChevronDown className="size-3" />
         </button>
       )}
@@ -90,10 +90,10 @@ export function TimeRange() {
           ))}
           {range === 'custom' && (
             <div className="border-t border-border mt-2 pt-3 px-3 pb-3 space-y-2">
-              <div className="text-[10px] uppercase text-muted-foreground">Custom range</div>
+              <div className="text-xs text-muted-foreground">Custom range</div>
               <div className="grid grid-cols-2 gap-2">
                 <label className="block">
-                  <span className="text-[10px] text-muted-foreground">From</span>
+                  <span className="text-xs text-muted-foreground">From</span>
                   <input
                     type="date"
                     value={from}
@@ -103,7 +103,7 @@ export function TimeRange() {
                   />
                 </label>
                 <label className="block">
-                  <span className="text-[10px] text-muted-foreground">To</span>
+                  <span className="text-xs text-muted-foreground">To</span>
                   <input
                     type="date"
                     value={to}
@@ -114,7 +114,7 @@ export function TimeRange() {
                 </label>
               </div>
               {swapped && (
-                <div className="text-[10px] text-destructive">
+                <div className="text-xs text-destructive">
                   The end date is before the start date.
                 </div>
               )}
@@ -131,7 +131,7 @@ export function TimeRange() {
                 Apply
               </Button>
               {customRange && (
-                <div className="text-[10px] text-muted-foreground text-center">
+                <div className="text-xs text-muted-foreground text-center">
                   Showing {customRange.from} to {customRange.to}
                 </div>
               )}

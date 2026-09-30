@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { HandCoins, Search } from 'lucide-react';
 import {
   ReportToolbar,
@@ -120,9 +121,11 @@ export default function SalesRepPage() {
           <Card className="p-10 text-center text-sm text-muted-foreground">
             <HandCoins className="size-6 mx-auto mb-2 opacity-50" />
             No commission agents configured.{' '}
-            <a className="underline text-primary" href="/settings/sales-agents">
+            {/* A router Link: a raw href under the HashRouter navigated the
+                whole window to file:///settings/sales-agents. */}
+            <Link className="underline text-primary" to="/settings/sales-agents">
               Add agents
-            </a>{' '}
+            </Link>{' '}
             to start tracking.
           </Card>
         ) : (
@@ -150,7 +153,7 @@ export default function SalesRepPage() {
               <div
                 className={cn(
                   GRID,
-                  'px-4 py-2.5 border-b border-border bg-secondary/40 text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]',
+                  'px-4 py-2.5 border-b border-border bg-secondary/40 text-xs font-semibold text-muted-foreground',
                 )}
               >
                 <div>Agent</div>
@@ -230,7 +233,7 @@ export default function SalesRepPage() {
               )}
             </Card>
 
-            <Card className="p-3 bg-secondary/30 text-[12px] text-muted-foreground">
+            <Card className="p-3 bg-secondary/30 text-sm text-muted-foreground">
               Commission is calculated as <span className="font-mono">net sales × commission %</span>.
               Returns within the period reduce net sales. There is no payout ledger yet, so Paid
               shows '—' and all earned commission is reported as pending.
@@ -253,7 +256,7 @@ function Kpi({
 }) {
   return (
     <Card className="p-4">
-      <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-[0.06em]">
+      <div className="text-xs font-semibold text-muted-foreground">
         {label}
       </div>
       <div

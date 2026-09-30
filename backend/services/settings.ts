@@ -3,6 +3,7 @@ import { tx } from '../db/connection.ts';
 import { newId } from '../core/ids.ts';
 import { logActivity } from './activity.ts';
 import { hashSecret } from './auth.ts';
+import { markDefaultBranch } from './branch.ts';
 
 /**
  * Settings service — the write-side for the Settings slice.
@@ -106,6 +107,9 @@ export function updateBusinessInfo(db: DB, patch: BusinessInfoPatch) {
     }
     sets.push('updated_at = @now');
     db.prepare(`UPDATE business_info SET ${sets.join(', ')} WHERE id = 1`).run(params);
+    // Choosing the default branch here also moves the branch list's default flag,
+    // so the screens and the writes agree on one default (services/branch.ts).
+    if (patch.defaultBranchId) markDefaultBranch(db, patch.defaultBranchId);
 
     logActivity(db, {
       by: patch.userId,
@@ -155,10 +159,8 @@ export function createBranch(db: DB, input: BranchInput) {
       active: input.active === false ? 0 : 1,
       now,
     });
-    // If created as default, demote the others so only one default remains.
-    if (input.isDefault) {
-      db.prepare('UPDATE branches SET is_default = 0 WHERE id != ?').run(id);
-    }
+    // If created as default, it becomes THE default everywhere (one default only).
+    if (input.isDefault) markDefaultBranch(db, id);
     logActivity(db, {
       by: input.userId,
       action: 'created',
@@ -204,9 +206,7 @@ export function updateBranch(db: DB, id: string, patch: Partial<BranchInput>) {
       db.prepare(`UPDATE branches SET ${sets.join(', ')} WHERE id = @id`).run(params);
     }
     // Keep the single-default invariant if this update set the branch as default.
-    if (patch.isDefault) {
-      db.prepare('UPDATE branches SET is_default = 0 WHERE id != ?').run(id);
-    }
+    if (patch.isDefault) markDefaultBranch(db, id);
     return { id };
   });
 }
@@ -215,8 +215,7 @@ export function setDefaultBranch(db: DB, id: string) {
   return tx(db, () => {
     const existing = db.prepare('SELECT id FROM branches WHERE id = ?').get(id);
     if (!existing) throw new Error('Branch not found');
-    db.prepare('UPDATE branches SET is_default = 0').run();
-    db.prepare('UPDATE branches SET is_default = 1 WHERE id = ?').run(id);
+    markDefaultBranch(db, id);
     return { id };
   });
 }

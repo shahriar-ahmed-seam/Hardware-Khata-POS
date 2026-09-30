@@ -27,7 +27,7 @@ export function ShortcutsOverlay({ open, onClose }: Props) {
         {map.map((m) => (
           <div key={m.keys} className="flex items-center justify-between text-sm">
             <span className="text-muted-foreground">{m.desc}</span>
-            <kbd className="font-mono text-[11px] bg-secondary border border-border px-2 py-0.5 rounded">
+            <kbd className="font-mono text-xs bg-secondary border border-border px-2 py-0.5 rounded">
               {m.keys}
             </kbd>
           </div>

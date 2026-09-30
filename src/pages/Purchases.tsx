@@ -4,7 +4,6 @@ import {
   Search,
   Plus,
   Settings2,
-  Upload,
   Download,
   Eye,
   EyeOff,
@@ -202,9 +201,7 @@ export default function Purchases() {
             <IconBtn title="Customize columns" onClick={() => setColsOpen(true)}>
               <Settings2 className="size-4" />
             </IconBtn>
-            <Button variant="outline" size="sm" onClick={() => nav('/purchases/import')}>
-              <Upload className="size-4" /> Import
-            </Button>
+            {/* Import is switched off until real importers exist (see /import). */}
             {/* Was a button with no handler. Same `backup.export` channel as
                 Settings, so there is one exporter in the app. "All" is literal:
                 the whole purchases table, not the filtered page. */}
@@ -234,7 +231,7 @@ export default function Purchases() {
         {/* KPI strip — PAGE-SCOPED. Only the current page is in memory, so these
             are explicitly labelled instead of masquerading as range totals. */}
         <div>
-          <div className="text-[11px] text-muted-foreground mb-1.5">
+          <div className="text-xs text-muted-foreground mb-1.5">
             Totals for this page only. Use Reports for full-range figures.
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
@@ -263,7 +260,7 @@ export default function Purchases() {
               setSupplierId(e.target.value);
               void loadPage({ supplierId: e.target.value });
             }}
-            className="h-9 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
+            className="h-10 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="all">All suppliers</option>
             {suppliers.map((s) => (
@@ -279,7 +276,7 @@ export default function Purchases() {
               setDate(preset);
               void loadPage(presetToRange(preset));
             }}
-            className="h-9 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
+            className="h-10 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
           >
             <option value="all">All dates</option>
             <option value="today">Today</option>
@@ -358,7 +355,7 @@ export default function Purchases() {
               </div>
             ) : (
             <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50 sticky top-0">
+              <thead className="text-xs text-muted-foreground bg-secondary/50 sticky top-0">
                 <tr>
                   {columns.map((c) => (
                     <th
@@ -459,7 +456,7 @@ export default function Purchases() {
 }
 
 function Cell({ c, p }: { c: PurchaseColumn; p: PurchaseRecord }) {
-  const align = PURCHASE_COLUMN_META[c].align === 'right' ? 'text-right font-mono tabular' : '';
+  const align = PURCHASE_COLUMN_META[c].align === 'right' ? 'text-right tabular' : '';
   switch (c) {
     case 'date':
       return (
@@ -502,7 +499,11 @@ function Cell({ c, p }: { c: PurchaseColumn; p: PurchaseRecord }) {
         </td>
       );
     case 'paymentStatus':
-      return <td className="px-3 py-2.5"><SettlementBadge paid={p.paid} due={p.due} /></td>;
+      return (
+        <td className="px-3 py-2.5">
+          <SettlementBadge paid={p.paid} due={p.due} credited={p.credited} />
+        </td>
+      );
     case 'status':
       return (
         <td className="px-3 py-2.5">
@@ -535,7 +536,7 @@ function Stat({
 }) {
   return (
     <Card className="p-4">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="text-xs text-muted-foreground">{label}</div>
       <div
         className={cn(
           'text-lg font-bold mt-0.5 tabular',
@@ -563,7 +564,7 @@ function IconBtn({
     <button
       onClick={onClick}
       title={title}
-      className="h-9 w-9 grid place-items-center rounded-md border border-border hover:bg-secondary text-muted-foreground hover:text-foreground transition"
+      className="h-10 w-10 grid place-items-center rounded-md border border-border hover:bg-secondary text-muted-foreground hover:text-foreground transition"
     >
       {children}
     </button>

@@ -28,7 +28,7 @@ export interface RangeInput {
  * their Recharts/markup; only the data source swaps.
  *
  * DEFERRALS (see useDashboardData.tsx header for the full list):
- *  - Single-branch assumption (DEFAULT_BRANCH = 'br_mp').
+ *  - Whole-shop figures (DASHBOARD_BRANCH = undefined).
  *  - salesTrend is fixed at 7 days; salesVsPurchaseVsExpense at 6 months,
  *    regardless of the selected range (these widgets are multi-period).
  */
@@ -37,7 +37,8 @@ export interface RangeInput {
 
 /** The full object returned by `dashboard.stats`. */
 export interface BackendStats {
-  sales: { total: number; deltaPct: number };
+  // deltaPct is null when the previous period had nothing to compare with.
+  sales: { total: number; deltaPct: number | null };
   profit: {
     revenue: number;
     cogs: number;
@@ -45,11 +46,11 @@ export interface BackendStats {
     marginPct: number;
     expenses: number;
     netProfit: number;
-    deltaPct: number;
+    deltaPct: number | null;
   };
-  transactions: { count: number; deltaPct: number };
-  itemsSold: { count: number; deltaPct: number };
-  newCustomers: { count: number; deltaPct: number };
+  transactions: { count: number; deltaPct: number | null };
+  itemsSold: { count: number; deltaPct: number | null };
+  newCustomers: { count: number; deltaPct: number | null };
   cashInDrawer: number;
   customerDuesTotal: number;
   supplierDuesTotal: number;

@@ -1,10 +1,10 @@
 import { useMemo, useRef, useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useBackup } from '@/stores/backup';
 import {
   Search,
   Plus,
   Settings2,
-  Upload,
   Download,
   LayoutGrid,
   List,
@@ -40,6 +40,8 @@ import { formatBDT, formatNumber, cn } from '@/lib/utils';
 
 export default function Suppliers() {
   const nav = useNavigate();
+  const exportCsv = useBackup((s) => s.exportCsv);
+  const exportBusy = useBackup((s) => s.busy);
   const { items, add, update, remove } = useSuppliers();
   const loading = useSuppliers((s) => s.loading);
   const total = useSuppliers((s) => s.total);
@@ -108,11 +110,15 @@ export default function Suppliers() {
               <Settings2 className="size-4" />
             </IconBtn>
             <ViewToggle value={supplierView} onChange={setSupplierView} />
-            <Button variant="outline" size="sm" onClick={() => nav('/contacts/suppliers/import')}>
-              <Upload className="size-4" /> Import
-            </Button>
-            <Button variant="outline" size="sm">
-              <Download className="size-4" /> Export
+            {/* Import is switched off until real importers exist (see /import). */}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={exportBusy}
+              onClick={() => void exportCsv('suppliers')}
+              title="Write every supplier to a CSV file in your backup folder"
+            >
+              <Download className="size-4" /> Export all
             </Button>
             <Button onClick={() => setDrawerId('new')}>
               <Plus className="size-4" /> Add Supplier
@@ -124,7 +130,7 @@ export default function Suppliers() {
       <div className="p-6 space-y-4">
         {/* KPI strip — PAGE-SCOPED. Only the current page is in memory. */}
         <div>
-          <div className="text-[11px] text-muted-foreground mb-1.5">
+          <div className="text-xs text-muted-foreground mb-1.5">
             Totals for this page only. Use Reports for full-range figures.
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -154,7 +160,7 @@ export default function Suppliers() {
           <Card className="overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="text-[11px] uppercase text-muted-foreground bg-secondary/50 sticky top-0">
+                <thead className="text-xs text-muted-foreground bg-secondary/50 sticky top-0">
                   <tr>
                     {supplierCols.map((c) => (
                       <th
@@ -261,16 +267,16 @@ export default function Suppliers() {
                 </div>
                 <div className="grid grid-cols-2 gap-2 mt-4 pt-4 border-t border-border">
                   <div>
-                    <div className="text-[10px] text-muted-foreground uppercase">Total Purchase</div>
-                    <div className="text-sm font-semibold font-mono tabular">
+                    <div className="text-xs text-muted-foreground">Total Purchase</div>
+                    <div className="text-sm font-semibold tabular">
                       {formatBDT(s.totalPurchase)}
                     </div>
                   </div>
                   <div>
-                    <div className="text-[10px] text-muted-foreground uppercase">Payable</div>
+                    <div className="text-xs text-muted-foreground">Payable</div>
                     <div
                       className={cn(
-                        'text-sm font-semibold font-mono tabular',
+                        'text-sm font-semibold tabular',
                         s.due > 0 ? 'text-destructive' : 'text-muted-foreground',
                       )}
                     >
@@ -331,18 +337,17 @@ export default function Suppliers() {
         <SupplierForm
           asDrawer
           initial={editing}
-          onSave={(s) => {
-            if (drawerId === 'new') add(s);
-            else update(s.id, s);
-            setDrawerId(null);
+          onSave={async (s) => {
+            // Closes only once saved; a refusal keeps the form open as typed.
+            const ok = drawerId === 'new' ? !!(await add(s)) : await update(s.id, s);
+            if (ok) setDrawerId(null);
           }}
           onCancel={() => setDrawerId(null)}
           onDelete={
             editing
               ? async () => {
                   if (await confirm({ title: `Delete "${editing.name}"?`, variant: 'destructive' })) {
-                    remove(editing.id);
-                    setDrawerId(null);
+                    if (await remove(editing.id)) setDrawerId(null);
                   }
                 }
               : undefined
@@ -356,7 +361,7 @@ export default function Suppliers() {
 }
 
 function SupplierCell({ col, s }: { col: SupplierColumn; s: Supplier }) {
-  const align = SUPPLIER_COLUMN_META[col].align === 'right' ? 'text-right font-mono tabular' : '';
+  const align = SUPPLIER_COLUMN_META[col].align === 'right' ? 'text-right tabular' : '';
   switch (col) {
     case 'avatar':
       return (
@@ -413,7 +418,7 @@ function SupplierCell({ col, s }: { col: SupplierColumn; s: Supplier }) {
             {(s.tags ?? []).map((t) => (
               <span
                 key={t}
-                className="text-[10px] px-1.5 py-0 rounded bg-primary/10 text-primary font-medium"
+                className="text-xs px-1.5 py-0 rounded bg-primary/10 text-primary font-medium"
               >
                 {t}
               </span>
@@ -468,7 +473,7 @@ function Stat({
 }) {
   return (
     <Card className="p-4">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="text-xs text-muted-foreground">{label}</div>
       <div
         className={cn(
           'text-xl font-bold mt-0.5 tabular',
@@ -495,7 +500,7 @@ function IconBtn({
     <button
       onClick={onClick}
       title={title}
-      className="h-9 w-9 grid place-items-center rounded-md border border-border hover:bg-secondary text-muted-foreground hover:text-foreground transition"
+      className="h-10 w-10 grid place-items-center rounded-md border border-border hover:bg-secondary text-muted-foreground hover:text-foreground transition"
     >
       {children}
     </button>
