@@ -173,3 +173,79 @@ export function parseLsblk(stdout: string): LsblkResult | null {
 
   return { drives: found, unmounted };
 }
+
+// ------------------------------------------------------------ Windows answers
+
+/** One row of Win32_LogicalDisk, however it was asked for. */
+export interface LogicalDiskRow {
+  DeviceID?: string;
+  VolumeName?: string;
+  FreeSpace?: number | string | null;
+  Size?: number | string | null;
+}
+
+/**
+ * The Windows 7 query. Windows 7 ships PowerShell 2.0, which has neither
+ * `Get-CimInstance` nor `ConvertTo-Json` (both 3.0), so the modern query failed
+ * on the owner's PC and every pendrive backup said "could not check". This one
+ * uses only 2.0 commands and prints one `DeviceID|VolumeName|FreeSpace|Size`
+ * line per removable drive.
+ */
+export const PS2_LOGICAL_DISK_SCRIPT =
+  'Get-WmiObject -Class Win32_LogicalDisk -Filter "DriveType=2" | ' +
+  'ForEach-Object { [string]$_.DeviceID + "|" + [string]$_.VolumeName + "|" + [string]$_.FreeSpace + "|" + [string]$_.Size }';
+
+/** Read {@link PS2_LOGICAL_DISK_SCRIPT} output. Lines that are not drives are skipped. */
+export function parseLogicalDiskLines(stdout: string): LogicalDiskRow[] {
+  const rows: LogicalDiskRow[] = [];
+  for (const line of stdout.split(/\r?\n/)) {
+    const parts = line.trim().split('|');
+    if (parts.length < 4 || !/^[A-Za-z]:$/.test(parts[0].trim())) continue;
+    rows.push({
+      DeviceID: parts[0].trim(),
+      VolumeName: parts[1].trim(),
+      FreeSpace: parts[2].trim() || null,
+      Size: parts[3].trim() || null,
+    });
+  }
+  return rows;
+}
+
+/**
+ * `wmic logicaldisk where drivetype=2 get DeviceID,FreeSpace,Size,VolumeName
+ * /format:csv` — the last resort when PowerShell will not run at all. Windows 7
+ * always has wmic (it is newer Windows 11 builds that drop it). Columns come
+ * back as `Node,DeviceID,FreeSpace,Size,VolumeName`, read by header name.
+ */
+export const WMIC_LOGICAL_DISK_ARGS = [
+  'logicaldisk',
+  'where',
+  'drivetype=2',
+  'get',
+  'DeviceID,FreeSpace,Size,VolumeName',
+  '/format:csv',
+];
+
+export function parseWmicCsv(stdout: string): LogicalDiskRow[] {
+  const lines = stdout
+    .split(/\r?\n/)
+    .map((l) => l.replace(/\r/g, '').trim())
+    .filter(Boolean);
+  const headerAt = lines.findIndex((l) => /(^|,)DeviceID(,|$)/i.test(l));
+  if (headerAt < 0) return [];
+  const header = lines[headerAt].split(',').map((h) => h.trim().toLowerCase());
+  const col = (name: string) => header.indexOf(name.toLowerCase());
+  const rows: LogicalDiskRow[] = [];
+  for (const line of lines.slice(headerAt + 1)) {
+    const cells = line.split(',');
+    const id = (cells[col('DeviceID')] ?? '').trim();
+    if (!/^[A-Za-z]:$/.test(id)) continue;
+    rows.push({
+      DeviceID: id,
+      VolumeName: (cells[col('VolumeName')] ?? '').trim(),
+      FreeSpace: (cells[col('FreeSpace')] ?? '').trim() || null,
+      Size: (cells[col('Size')] ?? '').trim() || null,
+    });
+  }
+  return rows;
+}

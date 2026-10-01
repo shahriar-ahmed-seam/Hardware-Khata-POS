@@ -250,15 +250,33 @@ interface State {
 
   // Users
   users: User[];
-  addUser: (data: Omit<User, 'id' | 'createdAt'>) => User;
-  updateUser: (id: string, patch: Partial<User>) => void;
-  removeUser: (id: string) => void;
+  /** Resolve true once the backend has saved it; a refusal is shown as a toast. */
+  addUser: (data: Omit<User, 'id' | 'createdAt'>) => Promise<boolean>;
+  updateUser: (id: string, patch: Partial<User>) => Promise<boolean>;
+  removeUser: (id: string) => Promise<boolean>;
 
   // Commission agents
   agents: CommissionAgent[];
   addAgent: (data: Omit<CommissionAgent, 'id'>) => CommissionAgent;
   updateAgent: (id: string, patch: Partial<CommissionAgent>) => void;
   removeAgent: (id: string) => void;
+}
+
+/** Wait for a write, then re-read either way. True only when the backend accepted it. */
+async function settleUsers(
+  get: () => { hydrate: () => Promise<void> },
+  write: Promise<unknown>,
+  failure: string,
+): Promise<boolean> {
+  try {
+    await write;
+    void get().hydrate();
+    return true;
+  } catch (e: unknown) {
+    toast.error(e instanceof Error ? e.message : failure);
+    void get().hydrate();
+    return false;
+  }
 }
 
 export const useUsers = create<State>()(
@@ -349,14 +367,8 @@ export const useUsers = create<State>()(
       },
 
       users: [],
-      addUser: (data) => {
-        // NOTE: optimistic id; the real backend id arrives after rehydrate.
-        const item: User = {
-          id: 'u_' + Date.now(),
-          createdAt: new Date().toISOString(),
-          ...data,
-        };
-        void api('users.create', {
+      addUser: (data) =>
+        settleUsers(get, api('users.create', {
           name: data.name,
           username: data.username,
           phone: data.phone,
@@ -366,16 +378,9 @@ export const useUsers = create<State>()(
           branchIds: data.branchIds,
           status: data.status,
           lastLoginAt: data.lastLoginAt,
-        })
-          .then(() => get().hydrate())
-          .catch((e: unknown) => {
-            toast.error(e instanceof Error ? e.message : 'Failed to save user');
-            void get().hydrate();
-          });
-        return item;
-      },
-      updateUser: (id, patch) => {
-        void api('users.update', {
+        }), 'Failed to save user'),
+      updateUser: (id, patch) =>
+        settleUsers(get, api('users.update', {
           id,
           patch: {
             name: patch.name,
@@ -388,21 +393,8 @@ export const useUsers = create<State>()(
             status: patch.status,
             lastLoginAt: patch.lastLoginAt,
           },
-        })
-          .then(() => get().hydrate())
-          .catch((e: unknown) => {
-            toast.error(e instanceof Error ? e.message : 'Failed to update user');
-            void get().hydrate();
-          });
-      },
-      removeUser: (id) => {
-        void api('users.delete', { id })
-          .then(() => get().hydrate())
-          .catch((e: unknown) => {
-            toast.error(e instanceof Error ? e.message : 'Failed to delete user');
-            void get().hydrate();
-          });
-      },
+        }), 'Failed to update user'),
+      removeUser: (id) => settleUsers(get, api('users.delete', { id }), 'Failed to delete user'),
 
       agents: [],
       addAgent: (data) => {

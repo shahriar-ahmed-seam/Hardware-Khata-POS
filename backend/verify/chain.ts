@@ -1924,12 +1924,15 @@ export function runChain(s: Suite) {
     const file = path.join(dir, 'pos.db');
     const a = openDatabase(file);
     migrate(a);
-    a.prepare('DELETE FROM schema_migrations WHERE version = 11').run();
+    // Take the database back one step, as though an older build wrote it.
+    a.prepare('DELETE FROM schema_migrations WHERE version = ?').run(CURRENT_SCHEMA_VERSION);
     a.close();
     const b = openDatabase(file);
     migrate(b);
     b.close();
-    const copies = fs.readdirSync(dir).filter((f) => f.startsWith('pos.db.pre-v10-') && f.endsWith('.sqlite3'));
+    const copies = fs
+      .readdirSync(dir)
+      .filter((f) => f.startsWith(`pos.db.pre-v${CURRENT_SCHEMA_VERSION - 1}-`) && f.endsWith('.sqlite3'));
     s.eq('an upgrade first copies the database beside it', copies.length, 1);
     const c = openDatabase(file);
     migrate(c);

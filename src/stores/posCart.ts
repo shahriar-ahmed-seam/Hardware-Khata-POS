@@ -50,6 +50,16 @@ export function makeCart(defaults: { taxPct: number }): ParkedCart {
 }
 
 /**
+ * A held cart gets an id of its own. It used to keep the id of the slot it came
+ * from — the same id the fresh cart in that slot kept — so holding twice from
+ * one slot made two held carts with ONE id, and discarding either threw both
+ * away.
+ */
+function asHeld(c: ParkedCart): ParkedCart {
+  return { ...c, id: `held_${Date.now()}_${(cartCounter += 1)}` };
+}
+
+/**
  * Label every open cart by its POSITION: Cart 1 … Cart N.
  *
  * WHY NOT A MONOTONIC COUNTER (which is what this used to do)
@@ -145,6 +155,11 @@ export const usePOSCart = create<State>()(
           // runaway numbers ("Cart 14" on its own).
           const renumbered = renumber(s.carts);
           if (renumbered.some((c, i) => c !== s.carts[i])) patch.carts = renumbered;
+          // Held carts saved by an older build may share an id (see asHeld).
+          const seen = new Set<string>();
+          if (s.held.some((h) => (seen.has(h.id) ? true : (seen.add(h.id), false)))) {
+            patch.held = s.held.map(asHeld);
+          }
           if (Object.keys(patch).length > 0) set(patch);
           return;
         }
@@ -202,20 +217,26 @@ export const usePOSCart = create<State>()(
           if (!current || current.lines.length === 0) return {};
           const fresh = makeCart(d);
           return {
-            held: [...s.held, current],
+            held: [...s.held, asHeld(current)],
             carts: s.carts.map((c) =>
               c.id === s.activeId ? { ...fresh, id: current.id, label: current.label } : c,
             ),
           };
         }),
 
+      /**
+       * Bring a held cart back into the current slot. If the current cart has
+       * items it is HELD in its place (B5) — it used to be overwritten with no
+       * warning, and whatever the cashier had rung up was gone.
+       */
       resumeHeld: (id) =>
         set((s) => {
           const hc = s.held.find((h) => h.id === id);
           if (!hc) return {};
           const current = s.carts.find((c) => c.id === s.activeId);
+          const rest = s.held.filter((h) => h.id !== id);
           return {
-            held: s.held.filter((h) => h.id !== id),
+            held: current && current.lines.length > 0 ? [...rest, asHeld(current)] : rest,
             carts: s.carts.map((c) =>
               c.id === s.activeId ? { ...hc, id: c.id, label: current?.label ?? c.label } : c,
             ),

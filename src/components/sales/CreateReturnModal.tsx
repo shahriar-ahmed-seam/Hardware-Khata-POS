@@ -33,7 +33,7 @@ const REFUND: {
 }[] = [
   { id: 'Cash', label: 'Cash', icon: Banknote, hint: 'Refund from drawer' },
   { id: 'CreditAdjust', label: 'Credit Adjust', icon: HandCoins, hint: 'Reduce customer due' },
-  { id: 'StoreCredit', label: 'Store Credit', icon: Wallet, hint: 'Future-use balance' },
+  { id: 'StoreCredit', label: 'Store Credit', icon: Wallet, hint: 'Kept on their account for next time' },
   { id: 'bKash', label: 'bKash', icon: Smartphone, hint: 'Reverse to bKash' },
   { id: 'Nagad', label: 'Nagad', icon: Smartphone, hint: 'Reverse to Nagad' },
   { id: 'Card', label: 'Card', icon: CreditCard, hint: 'Reverse to card' },

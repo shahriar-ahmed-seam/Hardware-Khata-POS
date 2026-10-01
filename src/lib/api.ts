@@ -7,6 +7,8 @@
  * Frontend hooks (TanStack Query) call `api(channel, payload)`.
  */
 
+import { afterWrite } from './queryClient';
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -28,6 +30,8 @@ export async function api<T = unknown>(channel: string, payload?: unknown): Prom
   }
   const res = await window.api!.db.invoke<T>(channel, payload);
   if (!res.ok) throw new ApiError(res.error, channel);
+  // Refresh whatever this write made stale — stock, dues, the drawer (R84).
+  afterWrite(channel);
   return res.data;
 }
 

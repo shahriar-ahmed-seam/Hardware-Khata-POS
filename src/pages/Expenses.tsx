@@ -27,7 +27,7 @@ import {
   useExpensesUI,
   type ExpenseColumn,
 } from '@/stores/expensesUI';
-import { confirm } from '@/stores/confirm';
+import { promptText } from '@/stores/prompt';
 import { formatBDT, formatNumber, cn } from '@/lib/utils';
 import { hasBackend } from '@/lib/api';
 import { AddExpenseDrawer } from '@/components/expenses/AddExpenseDrawer';
@@ -288,18 +288,22 @@ export default function Expenses() {
               variant="destructive"
               size="sm"
               onClick={async () => {
-                if (
-                  await confirm({
-                    title: `Delete ${selected.size} expense(s)?`,
-                    variant: 'destructive',
-                  })
-                ) {
-                  Array.from(selected).forEach(removeExpense);
-                  setSelected(new Set());
-                }
+                // Voided, not erased: the expenses stay on record with the reason
+                // and any cash goes back into the drawer.
+                const reason = await promptText({
+                  title: 'Why are these expenses being voided?',
+                  message: 'They stay on record, marked void. Cash expenses go back into the drawer.',
+                  label: 'Reason',
+                  placeholder: 'e.g. entered twice',
+                  confirmLabel: 'Void',
+                  required: true,
+                });
+                if (reason === null) return;
+                for (const id of Array.from(selected)) await removeExpense(id, reason);
+                setSelected(new Set());
               }}
             >
-              <Trash2 className="size-3.5" /> Delete
+              <Trash2 className="size-3.5" /> Void
             </Button>
             <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
               Clear

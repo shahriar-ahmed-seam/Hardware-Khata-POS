@@ -150,6 +150,30 @@ export default function ProductEdit() {
     }
   };
 
+  /**
+   * WAIT FOR THE PRODUCT (B2). The form reads `initial` once, when it mounts,
+   * and it used to mount before the product had loaded — so opening a product
+   * showed an EMPTY form, and saving it would have written that. It now mounts
+   * only once the product is here (keyed by id, so another product remounts it).
+   */
+  if (!isNew && !initial) {
+    const failed = productQuery.isError || (productQuery.isFetched && !productQuery.data);
+    return (
+      <div className="h-full grid place-items-center p-8 text-center">
+        <div className="space-y-3">
+          <div className="text-sm text-muted-foreground">
+            {failed ? 'This product could not be found.' : 'Loading the product…'}
+          </div>
+          {failed && (
+            <Button variant="outline" onClick={() => nav('/products')}>
+              Back to Products
+            </Button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       {/* An archived product is still fully editable — a retired line may still
@@ -172,6 +196,7 @@ export default function ProductEdit() {
         </div>
       )}
       <ProductForm
+        key={initial?.id ?? 'new'}
         initial={initial}
         onSave={(p) => {
           void handleSave(p);

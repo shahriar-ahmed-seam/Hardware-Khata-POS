@@ -19,10 +19,12 @@ import {
   ListChecks,
   SlidersHorizontal,
   Split,
+  Printer,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Popover } from '@/components/ui/Popover';
 import { NumberField } from '@/components/ui/NumberField';
+import { useCan } from '@/hooks/useCan';
 import { cn, formatBDT } from '@/lib/utils';
 import {
   type CartLine,
@@ -76,6 +78,10 @@ interface Props {
   onShowHeld: () => void;
   onSaveAsDraft: () => void;
   onSaveAsQuotation: () => void;
+  /** How many carts are held. Shown on the tab strip so none is forgotten. */
+  heldCount?: number;
+  /** Re-print the last receipt; undefined when there is none (or no right). */
+  onReprintLast?: () => void;
 }
 
 export function CartPanel({
@@ -98,6 +104,8 @@ export function CartPanel({
   onShowHeld,
   onSaveAsDraft,
   onSaveAsQuotation,
+  heldCount = 0,
+  onReprintLast,
 }: Props) {
   const active = carts.find((c) => c.id === activeId)!;
   // Resolved against the live customer list only (seed fallback removed). May be
@@ -125,6 +133,8 @@ export function CartPanel({
     setChargesOverride(null);
   }, [activeId]);
   const chargesOpen = chargesOverride ?? hasOrderCharges;
+  // An order discount needs the discount right, checked again on save.
+  const canDiscount = useCan('pos.discount');
 
   const updateLine = (i: number, next: CartLine) => {
     const lines = [...active.lines];
@@ -176,6 +186,19 @@ export function CartPanel({
             </button>
           ))}
         </div>
+        {/* Held carts are out of sight in the ⋯ menu, so how many there are
+            is shown here — a held sale is money the customer will come back to pay. */}
+        {heldCount > 0 && (
+          <button
+            onClick={onShowHeld}
+            className="h-9 shrink-0 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-warning/50 bg-warning/10 text-warning hover:bg-warning/20 text-xs font-semibold transition"
+            title="Held carts (F5)"
+          >
+            <Pause className="size-3.5 shrink-0" />
+            <span className="tabular">{heldCount}</span>
+            <span>held</span>
+          </button>
+        )}
         <button
           onClick={addCart}
           className="size-9 shrink-0 grid place-items-center rounded-md border border-border bg-card hover:bg-secondary text-muted-foreground hover:text-foreground transition"
@@ -337,12 +360,14 @@ export function CartPanel({
                   label="Disc %"
                   value={active.orderDiscountPct}
                   onChange={(v) => setCart({ ...active, orderDiscountPct: v })}
+                  disabled={!canDiscount}
                 />
                 <ChargeInput
                   icon={Tag}
                   label="Disc ৳"
                   value={active.orderDiscountFlat}
                   onChange={(v) => setCart({ ...active, orderDiscountFlat: v })}
+                  disabled={!canDiscount}
                 />
                 <ChargeInput
                   icon={Receipt}
@@ -420,6 +445,7 @@ export function CartPanel({
               onSaveAsQuotation={onSaveAsQuotation}
               onShowHeld={onShowHeld}
               onClearCart={clearCart}
+              onReprintLast={onReprintLast}
               onSwapOrientation={swapOrientation}
               orientation={orientation}
               disabled={busy}
@@ -462,11 +488,13 @@ function ChargeInput({
   label,
   value,
   onChange,
+  disabled = false,
 }: {
   icon: any;
   label: string;
   value: number;
   onChange: (v: number) => void;
+  disabled?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-1 min-w-0">
@@ -477,6 +505,8 @@ function ChargeInput({
       <NumberField
         value={value}
         onChangeNumber={onChange}
+        disabled={disabled}
+        title={disabled ? 'You do not have the right to change this. Ask the owner or a manager.' : undefined}
         placeholder="0.00"
         className="h-11 px-2 text-right text-sm"
       />
@@ -536,11 +566,13 @@ function MoreActions({
   onSwapOrientation,
   orientation,
   disabled,
+  onReprintLast,
 }: {
   onSaveAsDraft: () => void;
   onSaveAsQuotation: () => void;
   onShowHeld: () => void;
   onClearCart: () => void;
+  onReprintLast?: () => void;
   onSwapOrientation: () => void;
   orientation: Orientation;
   disabled?: boolean;
@@ -580,6 +612,17 @@ function MoreActions({
                 onShowHeld();
               }}
             />
+            {onReprintLast && (
+              <MenuRow
+                icon={Printer}
+                label="Re-print last receipt"
+                hint="Ctrl+P"
+                onClick={() => {
+                  close();
+                  onReprintLast();
+                }}
+              />
+            )}
             <MenuRow
               icon={PenSquare}
               label="Save as Draft"

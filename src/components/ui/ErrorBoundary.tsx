@@ -1,6 +1,7 @@
 import { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertOctagon, RotateCcw, Copy } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { logScreenError } from '@/lib/errorLog';
 
 interface Props {
   children: ReactNode;
@@ -25,9 +26,16 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    // In production this would log to a crash store / file. For now, console.
     // eslint-disable-next-line no-console
     console.error('ErrorBoundary caught:', error, info);
+    // And into the app's log file, with the component stack, so it can be read later.
+    logScreenError(
+      'screen',
+      Object.assign(new Error(error.message), {
+        name: error.name,
+        stack: `${error.stack ?? ''}\n${info.componentStack ?? ''}`,
+      }),
+    );
     this.setState({ info });
   }
 

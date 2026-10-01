@@ -303,7 +303,8 @@ function main() {
     for (const sp of sups) {
       const due = supplierDue(db, sp.id);
       const open = row<{ b: number }>(db, 'SELECT opening_balance AS b FROM suppliers WHERE id = ?', sp.id).b;
-      const pur = row<{ s: number }>(db, "SELECT COALESCE(SUM(total),0) AS s FROM purchases WHERE supplier_id=? AND status!='cancelled'", sp.id).s;
+      // Received bills are owed; payments on any live bill (an order's advance) count (R51).
+      const pur = row<{ s: number }>(db, "SELECT COALESCE(SUM(total),0) AS s FROM purchases WHERE supplier_id=? AND status='received'", sp.id).s;
       const pays = row<{ s: number }>(
         db,
         "SELECT COALESCE(SUM(p.amount),0) AS s FROM purchase_payments p JOIN purchases pu ON pu.id=p.purchase_id WHERE pu.supplier_id=? AND pu.status!='cancelled'",

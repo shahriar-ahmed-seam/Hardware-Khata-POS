@@ -10,7 +10,7 @@ import {
   type ExpenseRecord,
   type RecurringFrequency,
 } from '@/stores/expenses';
-import { confirm } from '@/stores/confirm';
+import { promptText } from '@/stores/prompt';
 import { toast } from '@/stores/toast';
 import { useBranches } from '@/stores/branches';
 import { DateTimeField, DateField } from '@/components/ui/DateTimeField';
@@ -341,16 +341,21 @@ export function AddExpenseDrawer({ open, onClose, initial }: Props) {
             <Button
               variant="outline"
               onClick={async () => {
-                if (
-                  (await confirm({ title: 'Delete this expense?', variant: 'destructive' })) &&
-                  (await removeExpense(initial.id))
-                ) {
-                  toast.success('Expense deleted');
+                const reason = await promptText({
+                  title: 'Why is this expense being voided?',
+                  message: 'It stays on record, marked void. A cash expense goes back into the drawer.',
+                  label: 'Reason',
+                  placeholder: 'e.g. entered twice',
+                  confirmLabel: 'Void',
+                  required: true,
+                });
+                if (reason !== null && (await removeExpense(initial.id, reason))) {
+                  toast.success('Expense voided');
                   onClose();
                 }
               }}
             >
-              <Trash2 className="size-4" /> Delete
+              <Trash2 className="size-4" /> Void
             </Button>
           ) : (
             <span />

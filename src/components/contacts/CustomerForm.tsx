@@ -8,6 +8,7 @@ import { todayLocalDateInput } from '@/lib/datetime';
 import { Avatar } from './Avatar';
 import type { Customer } from '@/types/domain';
 import { cn } from '@/lib/utils';
+import { useCan } from '@/hooks/useCan';
 
 interface Props {
   initial?: Customer;
@@ -34,6 +35,9 @@ const EMPTY: Customer = {
 
 export function CustomerForm({ initial, asDrawer, onSave, onDelete, onCancel }: Props) {
   const [c, setC] = useState<Customer>(initial ?? EMPTY);
+  // Opening balance and credit limit change what is owed: owner or manager only
+  // (the backend refuses it too — electron/guard.ts contactBalanceGateError).
+  const canEditMoney = useCan('sales.void');
   const [tagInput, setTagInput] = useState('');
 
   const set = <K extends keyof Customer>(k: K, v: Customer[K]) => setC((x) => ({ ...x, [k]: v }));
@@ -129,16 +133,24 @@ export function CustomerForm({ initial, asDrawer, onSave, onDelete, onCancel }: 
           {/* Credit */}
           <Section title="Credit & Balances" subtitle="Optional">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <Field label="Credit limit (৳)" hint="Cap on outstanding due">
-                <NumberField value={c.creditLimit ?? 0} onChangeNumber={(v) => set('creditLimit', v || undefined)} />
+              <Field
+                label="Credit limit (৳)"
+                hint={canEditMoney ? 'Cap on outstanding due' : 'Only the owner or a manager can change this'}
+              >
+                <NumberField
+                  value={c.creditLimit ?? 0}
+                  onChangeNumber={(v) => set('creditLimit', v || undefined)}
+                  disabled={!canEditMoney}
+                />
               </Field>
               <Field
                 label="Opening balance (৳)"
-                hint="Use when migrating from another system"
+                hint={canEditMoney ? 'Use when migrating from another system' : 'Only the owner or a manager can change this'}
               >
                 <NumberField
                   value={c.openingBalance ?? 0}
                   onChangeNumber={(v) => set('openingBalance', v || undefined)}
+                  disabled={!canEditMoney}
                 />
               </Field>
               <Field label="Date of birth">

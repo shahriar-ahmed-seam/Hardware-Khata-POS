@@ -12,6 +12,7 @@ import {
   getSetting,
 } from './settings.ts';
 import { addDefaultCategoryAndBrand } from '../seed/addDefaults.ts';
+import { assertPin } from '../core/validate.ts';
 import { setBackupConfig } from './backup.ts';
 
 /**
@@ -111,6 +112,7 @@ export function completeSetup(db: DB, input: SetupInput): SetupResult {
     if (isSetupComplete(db)) {
       throw new Error('Setup already completed');
     }
+    if (!input.shop?.name?.trim()) throw new Error("Enter the shop's name.");
 
     const now = new Date().toISOString();
 
@@ -140,12 +142,16 @@ export function completeSetup(db: DB, input: SetupInput): SetupResult {
     }
 
     // 4) Admin user — configure the seeded owner (u_admin) and hash the PIN.
+    // The owner's PIN follows the same rule as everyone's: 4 to 6 digits.
+    const adminPin = assertPin(input.admin.pin);
+    if (!input.admin.name?.trim()) throw new Error("Enter the owner's name.");
+    if (!input.admin.username?.trim()) throw new Error('Choose a username for the owner.');
     updateUser(db, ADMIN_USER_ID, {
       name: input.admin.name,
       username: input.admin.username.trim().toLowerCase(),
       status: 'active',
     });
-    setUserSecret(db, ADMIN_USER_ID, { pin: input.admin.pin });
+    setUserSecret(db, ADMIN_USER_ID, { pin: adminPin });
 
     // 5) Printer (optional) — persist a default printer profile in settings_kv
     //    so the Settings slice hydrates it via kv.printers.

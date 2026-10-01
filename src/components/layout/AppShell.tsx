@@ -2,6 +2,7 @@ import { ReactNode, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Titlebar } from './Titlebar';
 import { Sidebar } from './Sidebar';
+import { BackupBanner } from './BackupBanner';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { useUI } from '@/stores/ui';
 import { useBelow } from '@/hooks/useBreakpoint';
@@ -78,9 +79,12 @@ export function AppShell({ children }: { children: ReactNode }) {
           />
         )}
 
-        <main className="flex-1 min-w-0 overflow-auto bg-background">
-          <ErrorBoundary>{children}</ErrorBoundary>
-        </main>
+        <div className="flex-1 min-w-0 flex flex-col">
+          <BackupBanner />
+          <main className="flex-1 min-h-0 min-w-0 overflow-auto bg-background">
+            <ErrorBoundary>{children}</ErrorBoundary>
+          </main>
+        </div>
       </div>
     </div>
   );

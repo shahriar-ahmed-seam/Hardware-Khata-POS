@@ -15,7 +15,7 @@
  *
  * Run standalone: npx tsx backend/verify/costing.ts
  */
-import { openDatabase, migrate, type DB } from '../db/connection.ts';
+import { openDatabase, migrate, CURRENT_SCHEMA_VERSION, type DB } from '../db/connection.ts';
 import { seedMaster } from '../seed/master.ts';
 import { simulate } from '../seed/simulate.ts';
 import { buildApi } from '../api.ts';
@@ -60,7 +60,11 @@ export function runCosting(s: Suite) {
       version: number;
     }[]
   ).map((r) => r.version);
-  s.eq('every migration up to the head is recorded', versions.join(','), '1,2,3,4,5,6,7,8,9,10,11');
+  s.eq(
+    'every migration up to the head is recorded',
+    versions.join(','),
+    Array.from({ length: CURRENT_SCHEMA_VERSION }, (_, i) => i + 1).join(','),
+  );
   s.ok(
     'purchases.credited exists (v10)',
     new Set(

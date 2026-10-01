@@ -243,10 +243,11 @@ export default function UsersPage() {
         {editing && (
           <UserForm
             initial={editing === 'new' ? undefined : editing}
-            onSave={(data) => {
-              if (editing === 'new') addUser(data);
-              else updateUser(editing.id, data);
-              setEditing(null);
+            onSave={async (data) => {
+              // Stays open on a refusal (a PIN that breaks the rule, the last
+              // admin) so nothing typed is lost.
+              const ok = editing === 'new' ? await addUser(data) : await updateUser(editing.id, data);
+              if (ok) setEditing(null);
             }}
             onCancel={() => setEditing(null)}
           />
@@ -326,7 +327,7 @@ function UserForm({
   onCancel,
 }: {
   initial?: User;
-  onSave: (data: Omit<User, 'id' | 'createdAt'>) => void;
+  onSave: (data: Omit<User, 'id' | 'createdAt'>) => void | Promise<void>;
   onCancel: () => void;
 }) {
   const roles = useUsers((s) => s.roles);
@@ -335,13 +336,16 @@ function UserForm({
   const [username, setUsername] = useState(initial?.username ?? '');
   const [phone, setPhone] = useState(initial?.phone ?? '');
   const [email, setEmail] = useState(initial?.email ?? '');
-  const [pin, setPin] = useState(initial?.pin ?? '');
+  // Never pre-filled: an empty box means "keep the PIN" on an existing user.
+  const [pin, setPin] = useState('');
   const [roleId, setRoleId] = useState(initial?.roleId ?? roles[0]?.id ?? '');
   const [branchIds, setBranchIds] = useState<string[]>(initial?.branchIds ?? []);
   const [status, setStatus] = useState<UserStatus>(initial?.status ?? 'active');
   const [allBranches, setAllBranches] = useState((initial?.branchIds.length ?? 0) === 0);
 
-  const isValid = name.trim() && username.trim() && roleId;
+  // A new user needs a PIN; an edited one keeps theirs when the box is empty.
+  const pinOk = pin === '' ? !!initial : /^\d{4,6}$/.test(pin);
+  const isValid = !!(name.trim() && username.trim() && roleId && pinOk);
 
   const toggleBranch = (id: string) => {
     setBranchIds((prev) =>
@@ -396,11 +400,16 @@ function UserForm({
             />
           </Field>
           <Field label="PIN (4-6 digits)">
+            {/* Masked (B10): a PIN typed in plain view is a PIN the room knows.
+                Empty on an existing user = keep the current PIN. */}
             <Input
+              type="password"
+              inputMode="numeric"
+              autoComplete="new-password"
               value={pin}
               onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
-              placeholder="e.g. 1234"
-              className="font-mono"
+              placeholder={initial ? 'Leave empty to keep the current PIN' : '4 to 6 digits'}
+              className="font-mono tracking-widest"
             />
           </Field>
           <Field label="Status">

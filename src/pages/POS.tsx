@@ -28,6 +28,21 @@ import { currentUserId } from '@/lib/actor';
 import { useSales } from '@/stores/sales';
 import { useCashRegister } from '@/stores/cashRegister';
 import { toast } from '@/stores/toast';
+import { confirm } from '@/stores/confirm';
+
+type ReceiptState = {
+  invoiceNo: string;
+  cart: ParkedCart;
+  payment: PaymentResult;
+  /** True the first time it is shown, straight after the sale (auto-print). */
+  fresh?: boolean;
+};
+
+/**
+ * The last receipt, kept for the session outside the component: "Re-print last
+ * receipt" still works after the cashier has been to another screen and back.
+ */
+let lastReceiptMemo: ReceiptState | null = null;
 
 /**
  * Map a cart 1:1 to the `sales.create` line/order-level fields. The frontend
@@ -166,12 +181,23 @@ export default function POS() {
   const [touched, setTouched] = useState<{ cartId: string; productId: string; n: number } | null>(null);
   const [paymentStartMode, setPaymentStartMode] = useState<'single' | 'split'>('single');
   const [paymentStartMethod, setPaymentStartMethod] = useState<PaymentMethod>('Cash');
-  const [receipt, setReceipt] = useState<{
-    invoiceNo: string;
-    cart: ParkedCart;
-    payment: PaymentResult;
-  } | null>(null);
-  const [lastReceipt, setLastReceipt] = useState<typeof receipt>(null);
+  const [receipt, setReceipt] = useState<ReceiptState | null>(null);
+  const [lastReceipt, setLastReceiptState] = useState<ReceiptState | null>(() => lastReceiptMemo);
+  const setLastReceipt = (r: ReceiptState) => {
+    lastReceiptMemo = { ...r, fresh: false };
+    setLastReceiptState(lastReceiptMemo);
+  };
+  const autoPrint = useSettings((s) => s.pos.autoPrintOnSave);
+  const canReprint =
+    permissions.length > 0 ? permissions.includes('pos.reprint') : useAuth.getState().can('pos.reprint');
+  const reprintLast = () => {
+    if (!lastReceipt) return;
+    if (!canReprint) {
+      toast.error("You don't have permission to re-print receipts");
+      return;
+    }
+    setReceipt({ ...lastReceipt, fresh: false });
+  };
 
   const active = carts.find((c) => c.id === activeId);
 
@@ -305,8 +331,38 @@ export default function POS() {
 
   const setActiveId = (id: string) => usePOSCart.getState().setActiveId(id);
   const addCart = () => usePOSCart.getState().addCart(cartDefaults);
-  const closeCart = (id: string) => usePOSCart.getState().closeCart(id, cartDefaults);
-  const clearCart = () => usePOSCart.getState().clearActive();
+  /**
+   * Closing a cart tab or clearing a cart throws its items away, so a cart
+   * with items asks first (B5). An empty one just goes.
+   */
+  const closeCart = async (id: string) => {
+    const c = usePOSCart.getState().carts.find((x) => x.id === id);
+    if (c && c.lines.length > 0) {
+      const ok = await confirm({
+        title: `Close ${c.label}?`,
+        message: `It has ${c.lines.length} item${c.lines.length === 1 ? '' : 's'} in it. To keep them for later, use Suspend instead.`,
+        confirmLabel: 'Close cart',
+        cancelLabel: 'Keep it',
+        variant: 'destructive',
+      });
+      if (!ok) return;
+    }
+    usePOSCart.getState().closeCart(id, cartDefaults);
+  };
+  const clearCart = async () => {
+    const c = usePOSCart.getState().carts.find((x) => x.id === usePOSCart.getState().activeId);
+    if (c && c.lines.length > 0) {
+      const ok = await confirm({
+        title: 'Clear this cart?',
+        message: `All ${c.lines.length} item${c.lines.length === 1 ? '' : 's'} will be removed from ${c.label}.`,
+        confirmLabel: 'Clear cart',
+        cancelLabel: 'Keep it',
+        variant: 'destructive',
+      });
+      if (!ok) return;
+    }
+    usePOSCart.getState().clearActive();
+  };
 
   const onPickCustomer = () => setPickerOpen(true);
   const onSelectCustomer = (id: string) => {
@@ -401,6 +457,9 @@ export default function POS() {
     try {
       let res: { invoiceNo: string; totals: { total: number }; due: number };
       if (!hasBackend()) {
+        // A preview number is only ever made in development (a browser with no
+        // database). The installed app always has one; without it, say so.
+        if (!import.meta.env.DEV) throw new Error('The shop database is not connected.');
         const rand = Math.floor(1000 + Math.random() * 9000);
         res = {
           invoiceNo: `INV-PREVIEW-${rand}`,
@@ -432,7 +491,7 @@ export default function POS() {
       // Use the backend-returned invoice number + due for the receipt (source
       // of truth), not the modal's locally-computed remaining.
       const receiptPayment: PaymentResult = { ...result, due: res.due };
-      setReceipt({ invoiceNo, cart: snapshot, payment: receiptPayment });
+      setReceipt({ invoiceNo, cart: snapshot, payment: receiptPayment, fresh: true });
       setLastReceipt({ invoiceNo, cart: snapshot, payment: receiptPayment });
       setPaymentOpen(false);
       toast.success(`Sale ${invoiceNo} recorded`);
@@ -467,11 +526,27 @@ export default function POS() {
   const onSuspend = () => usePOSCart.getState().suspendActive(cartDefaults);
 
   const resumeHeld = (id: string) => {
+    // A cart with items on screen is held in its place, not overwritten (B5).
+    const current = usePOSCart.getState().carts.find((c) => c.id === usePOSCart.getState().activeId);
+    const swapped = !!current && current.lines.length > 0;
     usePOSCart.getState().resumeHeld(id);
     setHeldOpen(false);
+    if (swapped) toast.info('The cart that was open has been held. Find it in Held carts (F5).');
   };
 
-  const discardHeld = (id: string) => usePOSCart.getState().discardHeld(id);
+  const discardHeld = async (id: string) => {
+    const c = usePOSCart.getState().held.find((h) => h.id === id);
+    const ok = await confirm({
+      title: 'Discard this held cart?',
+      message: c
+        ? `Its ${c.lines.length} item${c.lines.length === 1 ? '' : 's'} will be thrown away. This cannot be undone.`
+        : 'It will be thrown away. This cannot be undone.',
+      confirmLabel: 'Discard',
+      cancelLabel: 'Keep it',
+      variant: 'destructive',
+    });
+    if (ok) usePOSCart.getState().discardHeld(id);
+  };
 
   const persistAsStatus = async (status: 'draft' | 'quotation') => {
     if (!active || active.lines.length === 0) return;
@@ -496,6 +571,7 @@ export default function POS() {
     try {
       let res: { invoiceNo: string };
       if (!hasBackend()) {
+        if (!import.meta.env.DEV) throw new Error('The shop database is not connected.');
         const rand = Math.floor(1000 + Math.random() * 9000);
         res = { invoiceNo: `${status === 'draft' ? 'DFT' : 'QUO'}-${rand}` };
       } else {
@@ -574,7 +650,7 @@ export default function POS() {
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
         e.preventDefault();
-        if (lastReceipt) setReceipt(lastReceipt);
+        reprintLast();
         return;
       }
       if (isFKey) {
@@ -584,7 +660,7 @@ export default function POS() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, lastReceipt, held]);
+  }, [active, lastReceipt, held, canReprint]);
 
   const customerForActive = customers.find((c) => c.id === active?.customerId);
 
@@ -621,8 +697,10 @@ export default function POS() {
       setActiveId={setActiveId}
       setCart={setActiveCart}
       addCart={addCart}
-      closeCart={closeCart}
-      clearCart={clearCart}
+      closeCart={(id) => void closeCart(id)}
+      clearCart={() => void clearCart()}
+      heldCount={held.length}
+      onReprintLast={lastReceipt && canReprint ? reprintLast : undefined}
       customers={customers}
       busy={submitting}
       costOf={costOf}
@@ -695,7 +773,7 @@ export default function POS() {
         onClose={() => setHeldOpen(false)}
         carts={held}
         onResume={resumeHeld}
-        onDiscard={discardHeld}
+        onDiscard={(id) => void discardHeld(id)}
         customers={customers}
       />
 
@@ -738,9 +816,9 @@ export default function POS() {
           customer={customers.find((c) => c.id === receipt.cart.customerId)}
           cashierName={useAuth.getState().currentUser()?.name}
           onNewSale={startNewSale}
-          onReprint={() => {
-            // already showing it; tells user it's the last receipt
-          }}
+          // "Auto-print receipt on save" (Settings → POS) was never read (B4).
+          // Only straight after the sale — a re-print is printed by hand.
+          autoPrint={!!receipt.fresh && autoPrint}
         />
       )}
 

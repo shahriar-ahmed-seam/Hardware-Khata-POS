@@ -8,6 +8,7 @@ import { postCashToOpenShift } from './cash.ts';
 import { logActivity } from './activity.ts';
 import { nextRef } from './sequences.ts';
 import { shopBranchId } from './branch.ts';
+import { canonicalRefundMethod } from '../core/validate.ts';
 
 // ---------- Sell return ----------
 export interface SellReturnLineInput {
@@ -108,6 +109,12 @@ interface DocLine {
   factor: number;
   /** Highest per-document-unit value on any line — the refund ceiling per unit. */
   maxUnitValue: number;
+  /**
+   * What ONE BASE UNIT cost on the source document (the sale's recorded cost, or
+   * the bill's receipt cost). A return goes back at that cost — it used to use
+   * today's average (sale) or whatever the screen sent (purchase).
+   */
+  baseCost?: number;
 }
 
 /**
@@ -226,6 +233,7 @@ function assertRefundWithinSettlement(
 export function createSellReturn(db: DB, input: CreateSellReturnInput) {
   return tx(db, () => {
     assertReturnLines(input.lines);
+    input = { ...input, refundMethod: canonicalRefundMethod('sell', input.refundMethod) };
     // A return with no invoice skipped every guard: any quantity back on the
     // shelf, any amount out of the drawer. Every return is against a sale.
     if (!input.saleId) {
@@ -258,7 +266,7 @@ export function createSellReturn(db: DB, input: CreateSellReturnInput) {
     if (input.saleId && sale) {
       const rows = db
         .prepare(
-          `SELECT product_id, name_at_sale AS name, qty, unit_factor, line_subtotal
+          `SELECT product_id, name_at_sale AS name, qty, unit_factor, line_subtotal, unit_cost_at_sale
              FROM sale_lines WHERE sale_id = ? ORDER BY line_no`,
         )
         .all(input.saleId) as {
@@ -267,6 +275,7 @@ export function createSellReturn(db: DB, input: CreateSellReturnInput) {
         qty: number;
         unit_factor: number;
         line_subtotal: number;
+        unit_cost_at_sale: number;
       }[];
       const head = db
         .prepare('SELECT subtotal, order_discount, tax_pct FROM sales WHERE id = ?')
@@ -297,6 +306,7 @@ export function createSellReturn(db: DB, input: CreateSellReturnInput) {
             base: r.qty * factor,
             factor,
             maxUnitValue: perUnit,
+            baseCost: r.unit_cost_at_sale,
           });
         }
       }
@@ -316,8 +326,11 @@ export function createSellReturn(db: DB, input: CreateSellReturnInput) {
       assertRefundWithinValue(input.lines, docLines);
     }
 
-    // Inherit the customer from the source sale when not explicitly provided.
-    const customerId = input.customerId ?? sale?.customer_id ?? undefined;
+    /**
+     * The customer IS the sale's customer. The caller could name anyone, so a
+     * credit note settled sale A while customer B got the credit (R28).
+     */
+    const customerId = sale ? (sale.customer_id ?? undefined) : input.customerId;
 
     /**
      * Store credit and a credit note both belong to SOMEONE. On a walk-in sale
@@ -369,7 +382,7 @@ export function createSellReturn(db: DB, input: CreateSellReturnInput) {
       const prod = db.prepare('SELECT name, sku FROM products WHERE id = ?').get(l.productId) as
         | { name: string; sku: string }
         | undefined;
-      const cost = weightedAvgCost(db, l.productId);
+      const cost = docLines.get(l.productId)?.baseCost ?? weightedAvgCost(db, l.productId);
       lineStmt.run(
         newId('rl'),
         id,
@@ -411,12 +424,11 @@ export function createSellReturn(db: DB, input: CreateSellReturnInput) {
         userId: input.userId,
         at: date,
       });
-    } else if (input.refundMethod === 'StoreCredit' && customerId) {
-      db.prepare('UPDATE customers SET store_credit = store_credit + ? WHERE id = ?').run(
-        total,
-        customerId,
-      );
     }
+    // 'StoreCredit' moves no money: what the customer paid stays with the shop
+    // as credit on THEIR account. `customerDue` counts the return (ledger.ts
+    // LIVE_CREDIT_SELL_RETURNS), so the khata shows it and the next sale uses
+    // it. It used to go into `customers.store_credit`, which nothing read.
     /**
      * A CreditAdjust return settles part of the INVOICE, not just the customer's
      * balance.
@@ -494,6 +506,7 @@ export interface CreatePurchaseReturnInput {
 export function createPurchaseReturn(db: DB, input: CreatePurchaseReturnInput) {
   return tx(db, () => {
     assertReturnLines(input.lines);
+    input = { ...input, refundMethod: canonicalRefundMethod('purchase', input.refundMethod) };
     if (!input.purchaseId) {
       throw new Error('A purchase return must be made against the bill the goods came on.');
     }
@@ -543,6 +556,18 @@ export function createPurchaseReturn(db: DB, input: CreatePurchaseReturnInput) {
         } else {
           docLines.set(r.product_id, { name: r.name, base: r.qty * factor, factor, maxUnitValue: perUnit });
         }
+      }
+      // What each product went onto the shelf at, per base unit (the receipt).
+      const received = db
+        .prepare(
+          `SELECT product_id, unit_cost FROM stock_movements
+            WHERE ref_type = 'purchase' AND ref_id = ? AND reason IN ('purchase','purchase_edit') AND qty > 0
+            ORDER BY at DESC, rowid DESC`,
+        )
+        .all(input.purchaseId) as { product_id: string; unit_cost: number }[];
+      for (const m of received) {
+        const d = docLines.get(m.product_id);
+        if (d && d.baseCost === undefined) d.baseCost = m.unit_cost;
       }
       const already = db
         .prepare(
@@ -627,7 +652,8 @@ export function createPurchaseReturn(db: DB, input: CreatePurchaseReturnInput) {
         reason: 'purchase_return',
         qty: -(l.qty * factor),
         unit: factor > 1 ? 'pc' : (l.unit ?? 'pc'),
-        unitCost: l.unitCost / factor,
+        // At the cost it came in at, not whatever the screen sent (R42).
+        unitCost: docLines.get(l.productId)?.baseCost ?? l.unitCost / factor,
         refType: 'purchase',
         refId: input.purchaseId ?? id,
         refNo,
@@ -655,7 +681,7 @@ export function createPurchaseReturn(db: DB, input: CreatePurchaseReturnInput) {
       // we get cash back from supplier
       postCashToOpenShift(db, branchId, {
         direction: 'in',
-        reason: 'manual_in',
+        reason: 'supplier_refund',
         amount: total,
         refType: 'purchase_return',
         refId: id,

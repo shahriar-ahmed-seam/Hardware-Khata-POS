@@ -7,7 +7,10 @@ import {
   AlertCircle,
   ExternalLink,
   Wifi,
+  FolderOpen,
 } from 'lucide-react';
+import { api, hasBackend } from '@/lib/api';
+import { toast } from '@/stores/toast';
 import { SettingsHeader } from '@/components/settings/SettingsHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -205,8 +208,9 @@ export default function UpdatesPage() {
             <div className="min-w-0">
               <div className="font-semibold text-sm">Check automatically</div>
               <div className="text-xs text-muted-foreground mt-0.5">
-                Looks for a new version a few seconds after the app opens. Nothing is ever
-                downloaded or installed without you pressing the button.
+                Looks for a new version a few seconds after the app opens, and again every few
+                hours while it stays open. Nothing is ever downloaded or installed without you
+                pressing the button.
               </div>
             </div>
             <button
@@ -237,6 +241,30 @@ export default function UpdatesPage() {
             </div>
           </div>
         </Card>
+        {/* ---------------- Log file ---------------- */}
+        {hasBackend() && (
+          <Card className="p-5 flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="font-semibold text-sm">Log file</div>
+              <div className="text-xs text-muted-foreground mt-0.5">
+                The app writes down errors here. If something goes wrong, this is what to send to
+                whoever looks after the app.
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={() =>
+                void api('app.openLogFolder', {}).catch((e: unknown) =>
+                  toast.error(e instanceof Error ? e.message : 'Could not open the log folder'),
+                )
+              }
+            >
+              <FolderOpen className="size-4" /> Open log folder
+            </Button>
+          </Card>
+        )}
       </div>
     </div>
   );

@@ -11,9 +11,20 @@ import {
   verifySnapshot,
   isDailyBackupDue,
   isSnapshotName,
+  makeBackupFolder,
 } from '../backend/services/backup.ts';
 import { getDb, closeDb, dbFilePath, initDb } from './db.ts';
-import { LSBLK_COLUMNS, LSBLK_COLUMNS_BASIC, parseLsblk, type UsbDrive } from './drives.ts';
+import {
+  LSBLK_COLUMNS,
+  LSBLK_COLUMNS_BASIC,
+  PS2_LOGICAL_DISK_SCRIPT,
+  WMIC_LOGICAL_DISK_ARGS,
+  parseLogicalDiskLines,
+  parseLsblk,
+  parseWmicCsv,
+  type LogicalDiskRow,
+  type UsbDrive,
+} from './drives.ts';
 
 export type { UsbDrive };
 
@@ -231,9 +242,10 @@ function noDriveMessage(probe: UsbProbe): string {
  *
  * WHY POWERSHELL
  * Node has no API for "is this drive removable". Windows knows: WMI's
- * Win32_LogicalDisk exposes DriveType, where 2 = removable. We ask for JSON and
- * parse it. `wmic` would be shorter but Microsoft has been removing it from
- * Windows since 2023, so it cannot be relied on.
+ * Win32_LogicalDisk exposes DriveType, where 2 = removable. We ask PowerShell
+ * first, in the Windows 8+ form and then the Windows 7 (PowerShell 2.0) form,
+ * and fall back to `wmic` — which Windows 7 always has, though newer Windows 11
+ * builds are dropping it (see windowsRemovableDisks).
  *
  * We never guess. A fixed disk offered as a "pendrive" would be worse than
  * admitting we could not find one: the owner would think the shop's data is on a
@@ -241,6 +253,42 @@ function noDriveMessage(probe: UsbProbe): string {
  * `detection` says `unavailable` and the UI offers to let them pick the drive
  * themselves instead (see `backupToChosenFolder`).
  */
+/**
+ * Removable drives from Windows, trying three ways in turn, or null when none
+ * of them would run. An exec error means the tool did not run (missing, blocked
+ * by policy, too old, timed out) — that is NOT "no drives". A run that works
+ * and prints nothing IS the honest empty answer.
+ *   1. PowerShell 3.0+ (Windows 8 and later): Get-CimInstance → JSON.
+ *   2. PowerShell 2.0 (Windows 7): Get-WmiObject → one line per drive.
+ *   3. wmic, when PowerShell will not start at all.
+ */
+async function windowsRemovableDisks(): Promise<LogicalDiskRow[] | null> {
+  const ps = (script: string) =>
+    runQuiet('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script]);
+
+  const modern = await ps(
+    'Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DriveType=2" | ' +
+      'Select-Object DeviceID,VolumeName,FreeSpace,Size | ConvertTo-Json -Compress',
+  );
+  if (!modern.failed) {
+    if (!modern.stdout.trim()) return [];
+    try {
+      const parsed = JSON.parse(modern.stdout) as unknown;
+      // ConvertTo-Json emits a bare object for a single result and an array for many.
+      return (Array.isArray(parsed) ? parsed : [parsed]) as LogicalDiskRow[];
+    } catch {
+      /* unreadable — try the older way */
+    }
+  }
+
+  const ps2 = await ps(PS2_LOGICAL_DISK_SCRIPT);
+  if (!ps2.failed) return parseLogicalDiskLines(ps2.stdout);
+
+  const wmic = await runQuiet('wmic.exe', WMIC_LOGICAL_DISK_ARGS);
+  if (!wmic.failed) return parseWmicCsv(wmic.stdout);
+  return null;
+}
+
 export async function probeUsbDrives(): Promise<UsbProbe> {
   if (process.platform === 'linux') return probeLinuxDrives();
   if (process.platform !== 'win32') {
@@ -252,51 +300,15 @@ export async function probeUsbDrives(): Promise<UsbProbe> {
     };
   }
 
-  const script =
-    'Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DriveType=2" | ' +
-    'Select-Object DeviceID,VolumeName,FreeSpace,Size | ConvertTo-Json -Compress';
-
-  // An exec error means PowerShell did not run (missing, blocked by policy,
-  // timed out). That is NOT "no drives".
-  const { stdout, failed } = await runQuiet('powershell.exe', [
-    '-NoProfile',
-    '-NonInteractive',
-    '-ExecutionPolicy',
-    'Bypass',
-    '-Command',
-    script,
-  ]);
-
-  if (failed) {
+  const raw = await windowsRemovableDisks();
+  if (raw === null) {
     return {
       drives: [],
       detection: 'unavailable',
       detail:
-        'Windows would not let the app check which drives are removable (PowerShell may be blocked on this computer). Choose the drive folder yourself instead.',
+        'Windows would not let the app check which drives are removable (PowerShell and WMIC may be blocked on this computer). Choose the drive folder yourself instead.',
     };
   }
-
-  // A successful run with no output is the honest empty case: no removable drive.
-  if (!stdout.trim()) return { drives: [], detection: 'ok' };
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stdout);
-  } catch {
-    return {
-      drives: [],
-      detection: 'unavailable',
-      detail:
-        'The drive list came back in a form the app could not read. Choose the drive folder yourself instead.',
-    };
-  }
-  // ConvertTo-Json emits a bare object for a single result and an array for many.
-  const raw = (Array.isArray(parsed) ? parsed : [parsed]) as {
-    DeviceID?: string;
-    VolumeName?: string;
-    FreeSpace?: number | string | null;
-    Size?: number | string | null;
-  }[];
 
   const num = (v: number | string | null | undefined): number | null => {
     if (v === null || v === undefined || v === '') return null;
@@ -506,7 +518,15 @@ export function initBackupDefaults(): void {
     // Create it now rather than lazily on the first snapshot, so "Open folder"
     // works immediately and the owner can see WHERE their backups will go before
     // one has been taken.
-    if (cfg.folder) fs.mkdirSync(cfg.folder, { recursive: true });
+    // Only the app's own subfolders are made: a missing cloud folder or drive is
+    // reported (backup banner), not silently rebuilt on the local disk.
+    if (cfg.folder) {
+      try {
+        makeBackupFolder(cfg.folder);
+      } catch (e) {
+        setBackupConfig(getDb(), { lastError: e instanceof Error ? e.message : String(e) });
+      }
+    }
     // Keep the cloud flag honest even if the folder was set by an older build.
     const seen = classifyFolder(cfg.folder);
     if (seen.cloud !== cfg.cloudFolder || seen.label !== cfg.cloudLabel) {
@@ -581,7 +601,7 @@ export async function revealBackupFolder(): Promise<{ ok: boolean; error?: strin
   const folder = getBackupConfig(getDb()).folder;
   if (!folder) return { ok: false, error: 'No backup folder is set.' };
   try {
-    fs.mkdirSync(folder, { recursive: true });
+    makeBackupFolder(folder);
     const failure = await shell.openPath(folder);
     return failure ? { ok: false, error: failure } : { ok: true };
   } catch (e) {

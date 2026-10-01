@@ -62,6 +62,18 @@ function openShiftInTx(db: DB, i: OpenShiftInput): string {
     userId: i.userId,
     at,
   });
+  // In the activity log too — a drawer that opened itself included (R31).
+  logActivity(db, {
+    by: i.userId,
+    branchId: i.branchId,
+    action: 'opened',
+    entity: 'shift',
+    entityId: id,
+    entityRef: `#${maxNo.n + 1}`,
+    message: i.note ? `Drawer opened: ${i.note}` : 'Drawer opened',
+    amount: round2(i.openingCash),
+    at,
+  });
   return id;
 }
 
@@ -118,9 +130,11 @@ export function carriedForwardCash(db: DB, branchId: string): { amount: number; 
   if (!last) return { amount: 0, fromShiftNo: null };
   if (last.status === 'closed') {
     const amount = last.carried_float ?? last.counted_cash ?? shiftTotals(db, last.id).expected;
-    return { amount: round2(amount), fromShiftNo: last.shift_no };
+    // Never negative: an old close with a bad float would otherwise make the
+    // next drawer refuse to open, and with it every cash sale.
+    return { amount: round2(Math.max(0, amount)), fromShiftNo: last.shift_no };
   }
-  return { amount: round2(shiftTotals(db, last.id).expected), fromShiftNo: last.shift_no };
+  return { amount: round2(Math.max(0, shiftTotals(db, last.id).expected)), fromShiftNo: last.shift_no };
 }
 
 /** Somebody to open an automatic drawer under when the event names no user. */
@@ -210,6 +224,11 @@ export function manualCashMove(db: DB, i: ManualCashMoveInput): string {
     throw new Error('Enter an amount above zero.');
   }
   if (!i.branchId) throw new Error('No branch is set for this drawer.');
+  // The movement and its log row stand or fall together.
+  return tx(db, () => manualCashMoveInTx(db, i as ManualCashMoveInput & { branchId: string }));
+}
+
+function manualCashMoveInTx(db: DB, i: ManualCashMoveInput & { branchId: string }): string {
   const id = postCashToOpenShift(db, i.branchId, {
     direction: i.direction,
     reason: MANUAL_REASONS[i.direction],
@@ -268,6 +287,27 @@ export interface CloseShiftInput {
 }
 
 export function closeShift(db: DB, i: CloseShiftInput) {
+  /**
+   * The count and the float are checked. A float above the count put cash into
+   * the next drawer that was never there; a negative one made the next drawer
+   * refuse to open, and with it every later cash sale, expense and refund.
+   */
+  if (!Number.isFinite(i.countedCash) || i.countedCash < 0) {
+    throw new Error('The counted cash must be zero or more.');
+  }
+  if (i.carriedFloat !== undefined && i.carriedFloat !== null) {
+    if (!Number.isFinite(i.carriedFloat) || i.carriedFloat < 0) {
+      throw new Error('The cash left in the drawer must be zero or more.');
+    }
+    if (i.carriedFloat > i.countedCash + 0.004) {
+      throw new Error('The cash left in the drawer cannot be more than the cash counted.');
+    }
+  }
+  // The close and its log row stand or fall together.
+  return tx(db, () => closeShiftInTx(db, i));
+}
+
+function closeShiftInTx(db: DB, i: CloseShiftInput) {
   const t = shiftTotals(db, i.shiftId);
   // Closing twice overwrote the counted cash and the variance of a shift that
   // was already reported on its Z-report.
@@ -288,7 +328,7 @@ export function closeShift(db: DB, i: CloseShiftInput) {
     counted: round2(i.countedCash),
     expected: t.expected,
     variance,
-    float: i.carriedFloat ?? null,
+    float: i.carriedFloat === undefined || i.carriedFloat === null ? null : round2(i.carriedFloat),
     note: i.note ?? null,
     closedBy: i.closedBy ?? null,
   });

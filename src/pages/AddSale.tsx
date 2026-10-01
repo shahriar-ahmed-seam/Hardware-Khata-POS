@@ -571,14 +571,20 @@ function AddSaleForm({ editing }: { editing?: SaleRecord }) {
             {/* A finalized invoice is corrected, not re-filed as a draft or a
                 quotation — those two buttons would change what the document IS.
                 They stay for a new sale and for an unfinalized one. */}
-            {editing?.status !== 'final' && !converting && (
+            {/* Quick "save as" for the OTHER document kinds of a new sale — the
+                one chosen in the Status box is the main button. */}
+            {!editing && !converting && (
               <>
-                <Button variant="outline" disabled={saving} onClick={() => void save('draft')}>
-                  <PenSquare className="size-4" /> Save as Draft
-                </Button>
-                <Button variant="outline" disabled={saving} onClick={() => void save('quotation')}>
-                  <FileText className="size-4" /> Save as Quotation
-                </Button>
+                {status !== 'draft' && (
+                  <Button variant="outline" disabled={saving} onClick={() => void save('draft')}>
+                    <PenSquare className="size-4" /> Save as Draft
+                  </Button>
+                )}
+                {status !== 'quotation' && (
+                  <Button variant="outline" disabled={saving} onClick={() => void save('quotation')}>
+                    <FileText className="size-4" /> Save as Quotation
+                  </Button>
+                )}
               </>
             )}
             {converting ? (
@@ -594,8 +600,17 @@ function AddSaleForm({ editing }: { editing?: SaleRecord }) {
                 <CheckCircle2 className="size-4" /> Save Correction
               </Button>
             ) : (
-              <Button disabled={saving} onClick={() => void save('final')}>
-                <CheckCircle2 className="size-4" /> Save Sale
+              // B1: this used to save a FINAL sale whatever the Status box said,
+              // so a "quotation" took the stock and put the amount on the khata.
+              <Button disabled={saving} onClick={() => void save(status)}>
+                <CheckCircle2 className="size-4" />{' '}
+                {status === 'quotation' ? (
+                  <span>Save Quotation</span>
+                ) : status === 'draft' ? (
+                  <span>Save Draft</span>
+                ) : (
+                  <span>Save Sale</span>
+                )}
               </Button>
             )}
           </>
@@ -671,14 +686,22 @@ function AddSaleForm({ editing }: { editing?: SaleRecord }) {
               </select>
             </Field>
             <Field label="Status">
+              {/* Only the changes the backend accepts are offered: a final invoice
+                  stays final (void it instead), a draft or quotation becomes a
+                  sale only through "Convert to Sale". */}
               <select
                 value={status}
                 onChange={(e) => setStatus(e.target.value as SaleStatus)}
-                className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                disabled={converting || editing?.status === 'final'}
+                className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 disabled:opacity-60"
               >
-                <option value="final">Final</option>
-                <option value="draft">Draft</option>
-                <option value="quotation">Quotation</option>
+                {(!editing || editing.status === 'final' || converting) && (
+                  <option value="final">Final</option>
+                )}
+                {!converting && editing?.status !== 'final' && <option value="draft">Draft</option>}
+                {!converting && editing?.status !== 'final' && (
+                  <option value="quotation">Quotation</option>
+                )}
               </select>
             </Field>
             {status === 'quotation' && (

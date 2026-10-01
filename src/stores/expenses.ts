@@ -110,7 +110,8 @@ interface State {
   addExpense: (data: Omit<ExpenseRecord, 'id'>) => Promise<boolean>;
   updateExpense: (id: string, patch: Partial<ExpenseRecord>) => Promise<boolean>;
   voidExpense: (id: string, reason?: string) => Promise<boolean>;
-  deleteExpense: (id: string) => Promise<boolean>;
+  /** "Delete" voids: the record stays, with the reason (backend/services/expenses.ts). */
+  deleteExpense: (id: string, reason?: string) => Promise<boolean>;
 }
 
 export const useExpenses = create<State>()(
@@ -277,9 +278,9 @@ export const useExpenses = create<State>()(
           'Failed to void expense',
           true,
         ),
-      deleteExpense: (id) =>
-        // Deleting a cash expense reverses the drawer hit — refresh cash too.
-        settleExpense(get, api('expenses.delete', { id }), 'Failed to delete expense', true),
+      deleteExpense: (id, reason) =>
+        // Voids (the row is kept); a cash expense's drawer hit is reversed — refresh cash too.
+        settleExpense(get, api('expenses.delete', { id, reason }), 'Failed to void expense', true),
     }),
     {
       name: 'pos-expenses',

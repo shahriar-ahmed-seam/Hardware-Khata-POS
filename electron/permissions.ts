@@ -184,6 +184,9 @@ export const CHANNEL_PERMISSIONS: Record<string, string> = {
   'update.install': 'settings.business',
   'update.setPrefs': 'settings.business',
   'update.openReleases': 'settings.business',
+  // The app's log file (electron/log.ts). Opening Explorer on it is the
+  // owner's; writing a screen error to it (`app.logError`) is open to all.
+  'app.openLogFolder': 'settings.business',
 
   // ----- invoice PDFs -----
   // Saving an invoice PDF is part of completing a sale, so it sits behind the

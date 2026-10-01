@@ -258,6 +258,15 @@ export const ACTOR_FIELDS: Readonly<Record<string, readonly string[]>> = {
   'adjustments.create': ['createdBy'],
   'expenses.create': ['userId'],
   'expenses.void': ['userId'],
+  'expenses.update': ['patch.userId'],
+  // Staff and roles: who gave whom which rights.
+  'users.create': ['actorId'],
+  'users.update': ['actorId'],
+  'users.delete': ['actorId'],
+  'roles.create': ['actorId'],
+  'roles.update': ['actorId'],
+  'roles.delete': ['actorId'],
+  'expenses.delete': ['userId'],
   'cash.openShift': ['userId'],
   'cash.closeShift': ['closedBy'],
   'cash.move': ['userId'],
@@ -270,6 +279,11 @@ export const ACTOR_FIELDS: Readonly<Record<string, readonly string[]>> = {
   'products.setCost': ['userId'],
   'customers.create': ['userId'],
   'suppliers.create': ['userId'],
+  // Contact edits and deletes: the log used to take the name from the screen.
+  'customers.update': ['patch.userId'],
+  'suppliers.update': ['patch.userId'],
+  'customers.delete': ['userId'],
+  'suppliers.delete': ['userId'],
 };
 
 /**
@@ -339,4 +353,76 @@ export function varianceGateError(opts: {
   if (Math.abs(opts.variance) < limit) return null;
   if (opts.permissions.has(VARIANCE_OVERRIDE_PERMISSION)) return null;
   return VARIANCE_BLOCKED;
+}
+
+// ------------------------------------------ what a contact owes, by hand
+
+/**
+ * Owner-and-manager powers without a permission of their own use the right to
+ * void a sale — see VARIANCE_OVERRIDE_PERMISSION for why not a new permission.
+ */
+export const MANAGER_PERMISSION = VARIANCE_OVERRIDE_PERMISSION;
+
+/**
+ * The counter's price rights, checked by backend/services/saleRules.ts from
+ * the IPC boundary (R16). Every role that could sell was given both by the v12
+ * migration, so the owner takes them away per role in Roles.
+ */
+export const DISCOUNT_PERMISSION = 'pos.discount';
+export const PRICE_OVERRIDE_PERMISSION = 'pos.priceOverride';
+
+export const BALANCE_EDIT_BLOCKED =
+  'Only the owner or a manager can change an opening balance or a credit limit.';
+
+/**
+ * Null when this contact edit may go ahead, else the reason not.
+ *
+ * `contacts.editCustomers` is a cashier right (fixing a phone number at the
+ * counter), and it also let a cashier rewrite a customer's opening balance —
+ * i.e. write off what they owe — with nothing but "Updated customer" in the
+ * log. The money fields now need the manager right; everything else on the
+ * form stays open. A value sent unchanged (the form always sends the whole
+ * record) is not a change.
+ */
+export function contactBalanceGateError(opts: {
+  current: { opening_balance: number; credit_limit?: number | null } | undefined;
+  patch: unknown;
+  permissions: Set<string>;
+}): string | null {
+  if (!opts.current || opts.permissions.has(MANAGER_PERMISSION)) return null;
+  const p = (opts.patch ?? {}) as { openingBalance?: unknown; creditLimit?: unknown };
+  if ('openingBalance' in p) {
+    const next = Number(p.openingBalance ?? 0);
+    if (!Number.isFinite(next) || Math.abs(next - opts.current.opening_balance) > 0.004) {
+      return BALANCE_EDIT_BLOCKED;
+    }
+  }
+  if ('creditLimit' in p && opts.current.credit_limit !== undefined) {
+    const raw = p.creditLimit;
+    const next = raw === undefined || raw === null || raw === '' ? null : Number(raw);
+    const old = opts.current.credit_limit ?? null;
+    if (next === null ? old !== null : old === null || !Number.isFinite(next) || Math.abs(next - old) > 0.004) {
+      return BALANCE_EDIT_BLOCKED;
+    }
+  }
+  return null;
+}
+
+// ------------------------------------------------------ rights are live
+
+/**
+ * The session's rights as they are NOW. Permissions used to be copied once at
+ * sign-in, so a user who was deactivated, demoted or deleted — or whose role
+ * lost a right — kept everything until they signed out (R17). Pure: the caller
+ * reads the user row and the role's permissions and passes them in.
+ *
+ * Returns null when the session must end (user gone or no longer active).
+ */
+export function refreshedSession(
+  session: GateSession,
+  user: { status: string; role_id: string } | undefined,
+  rolePermissions: (roleId: string) => string[],
+): GateSession | null {
+  if (!user || user.status !== 'active') return null;
+  return { ...session, roleId: user.role_id, permissions: new Set(rolePermissions(user.role_id)) };
 }

@@ -302,6 +302,68 @@ export function ensureBackupFolder(db: DB, defaultFolder: string): BackupConfig 
   return setBackupConfig(db, { folder: defaultFolder });
 }
 
+/**
+ * Create the backup folder, but only the app's own last two levels of it
+ * (…/HardwareKhataPOS/Backups). If more than that is missing, the drive or the
+ * cloud folder it lives in is gone: `mkdir -p` used to quietly rebuild the
+ * whole path on the local disk, so a removed OneDrive folder turned "cloud
+ * backups" into local ones and nobody was told.
+ */
+export function makeBackupFolder(folder: string): void {
+  let missing = 0;
+  let p = path.resolve(folder);
+  while (!fs.existsSync(p)) {
+    missing++;
+    const up = path.dirname(p);
+    if (up === p) break;
+    p = up;
+  }
+  if (missing > 2) {
+    throw new Error(
+      `The backup folder's drive or cloud folder is missing (${p} has no ${path.relative(p, folder)}). Connect it, or choose another folder in Settings → Backup.`,
+    );
+  }
+  fs.mkdirSync(folder, { recursive: true });
+}
+
+// ------------------------------------------------------------------ health
+
+export type BackupHealthState = 'ok' | 'failed' | 'stale' | 'never' | 'off';
+
+export interface BackupHealth {
+  state: BackupHealthState;
+  auto: BackupConfig['auto'];
+  lastBackupAt?: string;
+  lastError?: string;
+  /** Whole days since the last good backup, or null when there has been none. */
+  daysSince: number | null;
+}
+
+/** How many days without a good backup count as "too old", per schedule. */
+export const STALE_AFTER_DAYS: Record<BackupConfig['auto'], number> = {
+  daily: 2,
+  'on-shift-close': 7,
+  off: Number.POSITIVE_INFINITY,
+};
+
+/**
+ * Is the shop's data actually being copied? Shown app-wide (the backup banner):
+ * a failed automatic backup used to be visible only on Settings → Backup, so it
+ * could fail for weeks with nobody knowing.
+ */
+export function backupHealth(db: DB, now: Date = new Date()): BackupHealth {
+  const cfg = getBackupConfig(db);
+  const last = cfg.lastBackupAt ? new Date(cfg.lastBackupAt) : null;
+  const daysSince =
+    last && !Number.isNaN(last.getTime()) ? Math.max(0, Math.floor((now.getTime() - last.getTime()) / 86_400_000)) : null;
+  const base = { auto: cfg.auto, lastBackupAt: cfg.lastBackupAt, lastError: cfg.lastError, daysSince };
+  if (cfg.lastError) return { ...base, state: 'failed' };
+  if (cfg.auto === 'off') return { ...base, state: 'off' };
+  if (daysSince === null) return { ...base, state: 'never' };
+  if (daysSince > STALE_AFTER_DAYS[cfg.auto]) return { ...base, state: 'stale' };
+  return { ...base, state: 'ok' };
+}
+
 // ------------------------------------------------------------------ snapshots
 
 /** List our snapshots in `folder`, newest first. Missing folder → empty list. */
@@ -410,7 +472,7 @@ export function runBackup(
   const dest = path.join(folder, name);
 
   try {
-    fs.mkdirSync(folder, { recursive: true });
+    makeBackupFolder(folder);
 
     // VACUUM INTO refuses to overwrite. Two snapshots inside the same second
     // (only really possible from a script) would collide, so step the name.
@@ -549,7 +611,7 @@ export function backupStatus(db: DB): BackupStatus {
   let folderReady = false;
   if (config.folder) {
     try {
-      fs.mkdirSync(config.folder, { recursive: true });
+      makeBackupFolder(config.folder);
       fs.accessSync(config.folder, fs.constants.W_OK);
       folderReady = true;
     } catch {

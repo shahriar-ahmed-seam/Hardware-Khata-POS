@@ -119,6 +119,14 @@ function toMovementType(direction: 'in' | 'out', reason: string): MovementType {
       return 'refund';
     case 'expense':
       return 'expense';
+    // A voided or corrected expense puts its cash back.
+    case 'expense_reversal':
+      return 'expense_reversal';
+    case 'supplier_refund':
+      return 'supplier_refund';
+    // A corrected sale re-posts its cash both ways.
+    case 'sale_edit':
+      return direction === 'in' ? 'sale_cash' : 'refund';
     case 'supplier_paid':
       return 'supplier_paid';
     case 'manual_in':

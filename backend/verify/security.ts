@@ -87,7 +87,7 @@ export function runSecurity() {
   // ----------------------------------------------------- every write is gated
   s.section('gate coverage');
   const READ =
-    /^(dashboard|reports)\.|\.(list\w*|get\w*|status|usage|costHistory|costInfo|global|openShiftFor|shiftTotals|carriedForward|movements)$/;
+    /^(dashboard|reports)\.|\.(list\w*|get\w*|status|health|usage|costHistory|costInfo|global|openShiftFor|shiftTotals|carriedForward|movements)$/;
   const ungated = API_CHANNELS.filter((c) => !(c in CHANNEL_PERMISSIONS));
   const suspicious = ungated.filter(
     (c) => !READ.test(c) && !isInternalOnlyChannel(c) && !c.startsWith('setup.'),
@@ -219,7 +219,14 @@ export function runSecurity() {
     actorChannels.filter((c) => !(c in CHANNEL_PERMISSIONS)).join(', '),
     '',
   );
-  s.ok('users.update is never stamped (its id is the TARGET user)', !('users.update' in ACTOR_FIELDS));
+  // The TARGET user is `id`; who made the change goes in its own `actorId`.
+  s.eq(
+    'users.update stamps only actorId, never the target id',
+    JSON.stringify(ACTOR_FIELDS['users.update'] ?? []),
+    JSON.stringify(['actorId']),
+  );
+  const target = stampActor('users.update', { id: 'u_target', patch: { name: 'x' } }, 'u_admin') as { id: string; actorId: string };
+  s.ok('the edited user stays the edited user', target.id === 'u_target' && target.actorId === 'u_admin');
 
   const sent = { saleId: 's1', userId: 'Seam', reason: 'x' };
   const stamped = stampActor('sales.void', sent, 'u_cashier') as typeof sent;

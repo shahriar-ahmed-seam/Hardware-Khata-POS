@@ -5,6 +5,54 @@ import { round2 } from '../core/money.ts';
 import { payToSupplier, type AccountAllocation } from './accounts.ts';
 import { logActivity } from './activity.ts';
 import { shopBranchId } from './branch.ts';
+import { customerDue, supplierDue } from './ledger.ts';
+
+/**
+ * A money figure typed on a contact form. Finite and rounded, or refused — a
+ * NaN or a string used to go straight into the column. The credit limit may be
+ * left empty (no limit) but not negative.
+ */
+function balanceAmount(v: unknown, label: string): number {
+  const n = typeof v === 'number' ? v : Number(v ?? 0);
+  if (!Number.isFinite(n)) throw new Error(`${label} must be a number.`);
+  return round2(n);
+}
+function creditLimitAmount(v: unknown): number | null {
+  if (v === undefined || v === null || v === '') return null;
+  const n = typeof v === 'number' ? v : Number(v);
+  if (!Number.isFinite(n) || n < 0) throw new Error('The credit limit cannot be negative.');
+  return round2(n);
+}
+const money = (n: number | null) => (n === null ? 'none' : round2(n).toFixed(2));
+
+/**
+ * What changed on a contact's MONEY fields, for the activity log. An opening
+ * balance edit rewrites what the person owes (or is owed), so it is recorded
+ * old → new with the difference and the reason; before, the log said only
+ * "Updated customer".
+ */
+function balanceChange(
+  cur: { opening_balance: number; credit_limit?: number | null },
+  patch: { openingBalance?: unknown; creditLimit?: unknown },
+): { message: string; amount?: number; openingChanged: boolean } | null {
+  const parts: string[] = [];
+  let amount: number | undefined;
+  let openingChanged = false;
+  if ('openingBalance' in patch) {
+    const next = balanceAmount(patch.openingBalance, 'The opening balance');
+    if (Math.abs(next - cur.opening_balance) > 0.004) {
+      openingChanged = true;
+      amount = round2(next - cur.opening_balance);
+      parts.push(`opening balance ${money(cur.opening_balance)} → ${money(next)}`);
+    }
+  }
+  if ('creditLimit' in patch && cur.credit_limit !== undefined) {
+    const next = creditLimitAmount(patch.creditLimit);
+    const old = cur.credit_limit ?? null;
+    if ((old ?? -1) !== (next ?? -1)) parts.push(`credit limit ${money(old)} → ${money(next)}`);
+  }
+  return parts.length ? { message: parts.join('; '), amount, openingChanged } : null;
+}
 
 /**
  * Contacts CRUD: customers + suppliers. Mirrors catalog.ts — keeps the FTS index
@@ -70,8 +118,8 @@ export function createCustomer(db: DB, input: CustomerInput) {
       email: input.email ?? null,
       address: input.address ?? null,
       priceGroup: input.priceGroup ?? input.group ?? 'Retail',
-      openingBalance: round2(input.openingBalance ?? 0),
-      creditLimit: input.creditLimit ?? null,
+      openingBalance: balanceAmount(input.openingBalance ?? 0, 'The opening balance'),
+      creditLimit: creditLimitAmount(input.creditLimit),
       dob: input.dob ?? null,
       tags: input.tags ? JSON.stringify(input.tags) : null,
       notes: input.notes ?? null,
@@ -93,11 +141,27 @@ export function createCustomer(db: DB, input: CustomerInput) {
   });
 }
 
-export function updateCustomer(db: DB, id: string, patch: Partial<CustomerInput>) {
+export function updateCustomer(
+  db: DB,
+  id: string,
+  patch: Partial<CustomerInput> & { balanceReason?: string },
+) {
   return tx(db, () => {
-    const existing = db.prepare('SELECT id FROM customers WHERE id = ?').get(id);
+    const existing = db
+      .prepare('SELECT id, name, opening_balance, credit_limit FROM customers WHERE id = ?')
+      .get(id) as { id: string; name: string; opening_balance: number; credit_limit: number | null } | undefined;
     if (!existing) throw new Error('Customer not found');
     const now = new Date().toISOString();
+    const change = balanceChange(existing, patch);
+    if (change?.openingChanged && !patch.balanceReason?.trim()) {
+      throw new Error('Say why the opening balance is changing — it changes what the customer owes.');
+    }
+    if ('openingBalance' in patch) {
+      patch = { ...patch, openingBalance: balanceAmount(patch.openingBalance, 'The opening balance') };
+    }
+    if ('creditLimit' in patch) {
+      patch = { ...patch, creditLimit: creditLimitAmount(patch.creditLimit) ?? undefined };
+    }
 
     // Map camelCase patch keys to columns; only set provided keys.
     const colMap: Record<string, string> = {
@@ -141,15 +205,46 @@ export function updateCustomer(db: DB, id: string, patch: Partial<CustomerInput>
       action: 'edited',
       entity: 'customer',
       entityId: id,
-      message: `Updated customer`,
+      entityRef: existing.name,
+      message: change
+        ? `Updated customer: ${change.message}${patch.balanceReason?.trim() ? ` — ${patch.balanceReason.trim()}` : ''}`
+        : 'Updated customer',
+      amount: change?.amount,
       at: now,
     });
     return { id };
   });
 }
 
-export function deleteCustomer(db: DB, id: string) {
+/**
+ * Nothing owed either way, no credit held, no money paid on account. Deleting a
+ * contact used to be checked against documents only, so an opening balance or
+ * store credit vanished with the row — money nobody could see any more.
+ */
+function assertNoBalance(db: DB, kind: 'customer' | 'supplier', id: string) {
+  const due = kind === 'customer' ? customerDue(db, id) : supplierDue(db, id);
+  if (Math.abs(due) > 0.004) {
+    throw new Error(
+      due > 0
+        ? `Cannot delete: ${kind === 'customer' ? 'they owe' : 'the shop owes them'} ৳${due.toFixed(2)}. Settle it first.`
+        : `Cannot delete: ${kind === 'customer' ? 'they have' : 'the shop has'} ৳${(-due).toFixed(2)} in advance. Settle it first.`,
+    );
+  }
+  // Store credit is part of the due now (ledger.ts), so the check above covers it.
+  const paid = db
+    .prepare('SELECT COUNT(*) c FROM account_payments WHERE party_type = ? AND party_id = ?')
+    .get(kind, id) as { c: number };
+  if (paid.c > 0) {
+    throw new Error('Cannot delete: there are payments on this account. Keep the record for the history.');
+  }
+}
+
+export function deleteCustomer(db: DB, id: string, userId?: string) {
   return tx(db, () => {
+    const row = db.prepare('SELECT name, phone FROM customers WHERE id = ?').get(id) as
+      | { name: string; phone: string | null }
+      | undefined;
+    if (!row) throw new Error('Customer not found');
     // Guard: don't delete a customer referenced by any sales document — keeps
     // ledger/audit history intact.
     const refs = [
@@ -162,8 +257,17 @@ export function deleteCustomer(db: DB, id: string) {
         throw new Error(`Cannot delete: customer has ${label}. Keep the record for audit history instead.`);
       }
     }
+    assertNoBalance(db, 'customer', id);
     db.prepare('DELETE FROM fts_customers WHERE customer_id = ?').run(id);
     db.prepare('DELETE FROM customers WHERE id = ?').run(id);
+    logActivity(db, {
+      by: userId,
+      action: 'deleted',
+      entity: 'customer',
+      entityId: id,
+      entityRef: row.phone ?? undefined,
+      message: `Deleted customer: ${row.name}`,
+    });
     return { id };
   });
 }
@@ -225,7 +329,7 @@ export function createSupplier(db: DB, input: SupplierInput) {
       bankAccount: input.bankAccount ?? null,
       leadTimeDays: input.leadTimeDays ?? null,
       paymentTerms: input.paymentTerms ?? null,
-      openingBalance: round2(input.openingBalance ?? 0),
+      openingBalance: balanceAmount(input.openingBalance ?? 0, 'The opening balance'),
       tags: input.tags ? JSON.stringify(input.tags) : null,
       notes: input.notes ?? null,
       now,
@@ -245,11 +349,24 @@ export function createSupplier(db: DB, input: SupplierInput) {
   });
 }
 
-export function updateSupplier(db: DB, id: string, patch: Partial<SupplierInput>) {
+export function updateSupplier(
+  db: DB,
+  id: string,
+  patch: Partial<SupplierInput> & { balanceReason?: string },
+) {
   return tx(db, () => {
-    const existing = db.prepare('SELECT id FROM suppliers WHERE id = ?').get(id);
+    const existing = db.prepare('SELECT id, name, opening_balance FROM suppliers WHERE id = ?').get(id) as
+      | { id: string; name: string; opening_balance: number }
+      | undefined;
     if (!existing) throw new Error('Supplier not found');
     const now = new Date().toISOString();
+    const change = balanceChange(existing, patch);
+    if (change?.openingChanged && !patch.balanceReason?.trim()) {
+      throw new Error('Say why the opening balance is changing — it changes what the shop owes this supplier.');
+    }
+    if ('openingBalance' in patch) {
+      patch = { ...patch, openingBalance: balanceAmount(patch.openingBalance, 'The opening balance') };
+    }
 
     const colMap: Record<string, string> = {
       name: 'name',
@@ -289,15 +406,23 @@ export function updateSupplier(db: DB, id: string, patch: Partial<SupplierInput>
       action: 'edited',
       entity: 'supplier',
       entityId: id,
-      message: `Updated supplier`,
+      entityRef: existing.name,
+      message: change
+        ? `Updated supplier: ${change.message}${patch.balanceReason?.trim() ? ` — ${patch.balanceReason.trim()}` : ''}`
+        : 'Updated supplier',
+      amount: change?.amount,
       at: now,
     });
     return { id };
   });
 }
 
-export function deleteSupplier(db: DB, id: string) {
+export function deleteSupplier(db: DB, id: string, userId?: string) {
   return tx(db, () => {
+    const row = db.prepare('SELECT name, phone FROM suppliers WHERE id = ?').get(id) as
+      | { name: string; phone: string | null }
+      | undefined;
+    if (!row) throw new Error('Supplier not found');
     // Guard: don't delete a supplier referenced by any purchase document.
     const refs = [
       ['purchases', 'purchase history'],
@@ -309,8 +434,17 @@ export function deleteSupplier(db: DB, id: string) {
         throw new Error(`Cannot delete: supplier has ${label}. Keep the record for audit history instead.`);
       }
     }
+    assertNoBalance(db, 'supplier', id);
     db.prepare('DELETE FROM fts_suppliers WHERE supplier_id = ?').run(id);
     db.prepare('DELETE FROM suppliers WHERE id = ?').run(id);
+    logActivity(db, {
+      by: userId,
+      action: 'deleted',
+      entity: 'supplier',
+      entityId: id,
+      entityRef: row.phone ?? undefined,
+      message: `Deleted supplier: ${row.name}`,
+    });
     return { id };
   });
 }

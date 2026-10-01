@@ -13,8 +13,10 @@ import { round2 } from '../core/money.ts';
  * only CreditAdjust returns reduce the customer's outstanding balance.
  */
 /**
- * THE CREDIT NOTES THAT COUNT against a balance: CreditAdjust returns whose
- * document is still live (or that were entered with no document at all).
+ * THE CREDIT NOTES THAT COUNT against a balance: CreditAdjust returns (which
+ * also settle the invoice) and StoreCredit returns (the refund stays on the
+ * account as credit — they used to go nowhere), whose document is still live
+ * (or that were entered with no document at all).
  *
  * Every other term of a balance is status-scoped — only FINAL sales, only
  * non-cancelled purchases — but the credit notes were not. A credit note on a
@@ -28,7 +30,7 @@ import { round2 } from '../core/money.ts';
  */
 export const LIVE_CREDIT_SELL_RETURNS = `FROM sell_returns r
    LEFT JOIN sales rs ON rs.id = r.sale_id
-  WHERE r.refund_method = 'CreditAdjust'
+  WHERE r.refund_method IN ('CreditAdjust', 'StoreCredit')
     AND (r.sale_id IS NULL OR rs.status = 'final')`;
 
 /**
@@ -111,9 +113,18 @@ export function customerTotals(db: DB, customerId: string) {
 }
 
 /**
+ * A BILL IS OWED ONLY ONCE ITS GOODS ARRIVE (R51). An ordered or in-transit
+ * purchase used to count as payable in full, and "Pay supplier" allocated money
+ * to it, so the khata said the shop owed for goods it had not received. Its
+ * total now counts once it is `received`; money already paid on it (an advance
+ * on the order) still counts, so it shows as paid ahead until the goods come.
+ */
+export const PAYABLE_PURCHASE = "status = 'received'";
+
+/**
  * Supplier due = opening_balance
- *   + sum(non-cancelled purchase totals)   (what we owe them)
- *   - sum(purchase payments)               (what we've paid)
+ *   + sum(RECEIVED purchase totals)        (what we owe them)
+ *   - sum(payments on non-cancelled bills) (what we've paid, advances included)
  *   - sum(purchase returns CreditAdjust)   (credited against payable)
  */
 export function supplierDue(db: DB, supplierId: string): number {
@@ -122,7 +133,7 @@ export function supplierDue(db: DB, supplierId: string): number {
     | undefined;
   if (!s) return 0;
   const purchases = db
-    .prepare("SELECT COALESCE(SUM(total),0) AS s FROM purchases WHERE supplier_id = ? AND status != 'cancelled'")
+    .prepare(`SELECT COALESCE(SUM(total),0) AS s FROM purchases WHERE supplier_id = ? AND ${PAYABLE_PURCHASE}`)
     .get(supplierId) as { s: number };
   const paid = db
     .prepare(
@@ -156,8 +167,9 @@ export function heldBySupplier(db: DB, supplierId: string): number {
 }
 
 export function supplierTotals(db: DB, supplierId: string) {
+  // Received bills only, the same terms as supplierDue, so the two agree.
   const purchases = db
-    .prepare("SELECT COALESCE(SUM(total),0) AS s, COUNT(*) AS c FROM purchases WHERE supplier_id = ? AND status != 'cancelled'")
+    .prepare(`SELECT COALESCE(SUM(total),0) AS s, COUNT(*) AS c FROM purchases WHERE supplier_id = ? AND ${PAYABLE_PURCHASE}`)
     .get(supplierId) as { s: number; c: number };
   const paid = db
     .prepare(
@@ -229,13 +241,13 @@ export function customerLedger(db: DB, customerId: string): LedgerEntry[] {
       docId: p.sale_id,
     });
   const rets = db
-    .prepare(`SELECT r.ref_no, r.date, r.total, r.sale_id ${LIVE_CREDIT_SELL_RETURNS} AND r.customer_id = ?`)
-    .all(customerId) as { ref_no: string; date: string; total: number; sale_id: string | null }[];
+    .prepare(`SELECT r.ref_no, r.date, r.total, r.sale_id, r.refund_method ${LIVE_CREDIT_SELL_RETURNS} AND r.customer_id = ?`)
+    .all(customerId) as { ref_no: string; date: string; total: number; sale_id: string | null; refund_method: string }[];
   for (const r of rets)
     events.push({
       date: r.date,
       type: 'return',
-      reference: r.ref_no,
+      reference: r.refund_method === 'StoreCredit' ? `${r.ref_no} · store credit` : r.ref_no,
       debit: 0,
       credit: round2(r.total),
       docId: r.sale_id ?? undefined,
@@ -276,8 +288,10 @@ export function supplierLedger(db: DB, supplierId: string): LedgerEntry[] {
       credit: 0,
     });
   }
+  // Only bills whose goods have arrived are owed (PAYABLE_PURCHASE); an advance
+  // paid on an order still shows below, as a payment.
   const bills = db
-    .prepare("SELECT id, ref_no, date, total FROM purchases WHERE supplier_id = ? AND status != 'cancelled'")
+    .prepare(`SELECT id, ref_no, date, total FROM purchases WHERE supplier_id = ? AND ${PAYABLE_PURCHASE}`)
     .all(supplierId) as { id: string; ref_no: string; date: string; total: number }[];
   for (const b of bills)
     events.push({ date: b.date, type: 'purchase', reference: b.ref_no, debit: round2(b.total), credit: 0, docId: b.id });

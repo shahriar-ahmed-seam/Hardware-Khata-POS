@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { PrintSheet } from '@/components/ui/PrintSheet';
 import { usePaperWidth } from '@/hooks/usePaperWidth';
 import { Receipt } from './Receipt';
-import { Printer, Plus, RotateCcw, FileDown } from 'lucide-react';
+import { Printer, Plus, FileDown } from 'lucide-react';
 import { api } from '@/lib/api';
 import { toast } from '@/stores/toast';
 import type { ParkedCart } from './types';
@@ -23,7 +23,11 @@ interface Props {
   /** Signed-in user, printed as "Served by" when that setting is on. */
   cashierName?: string;
   onNewSale: () => void;
-  onReprint: () => void;
+  /**
+   * Print as soon as it opens ("Auto-print receipt on save", Settings → POS).
+   * The POS passes it only straight after a sale, never for a re-print.
+   */
+  autoPrint?: boolean;
 }
 
 export function ReceiptModal({
@@ -35,11 +39,22 @@ export function ReceiptModal({
   customer,
   cashierName,
   onNewSale,
-  onReprint,
+  autoPrint = false,
 }: Props) {
   // Layout width follows the printer configured in Settings → Printers.
   const paper = usePaperWidth();
   const [savingPdf, setSavingPdf] = useState(false);
+
+  // Once per invoice, after the print sheet below is on the page.
+  const printedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!open || !autoPrint || printedFor.current === invoiceNo) return;
+    const t = setTimeout(() => {
+      printedFor.current = invoiceNo;
+      window.print();
+    }, 250);
+    return () => clearTimeout(t);
+  }, [open, autoPrint, invoiceNo]);
 
   /**
    * Save the invoice as a PDF.
@@ -96,10 +111,10 @@ export function ReceiptModal({
         title="Receipt Preview"
         subtitle={invoiceNo}
         footer={
-          <div className="flex items-center justify-between">
-            <Button variant="outline" onClick={onReprint}>
-              <RotateCcw className="size-4" /> Re-print Last
-            </Button>
+          <div className="flex items-center justify-end">
+            {/* "Re-print Last" used to sit here and did nothing — this IS the
+                last receipt. Print prints it; the POS ⋯ menu (Ctrl+P) brings
+                the last one back once this is closed (B4). */}
             <div className="flex items-center gap-2">
               <Button variant="outline" onClick={() => window.print()}>
                 <Printer className="size-4" /> Print

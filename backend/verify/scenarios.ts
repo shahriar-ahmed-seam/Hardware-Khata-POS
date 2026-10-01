@@ -197,6 +197,7 @@ export function runScenarios(s: Suite) {
       payments: [{ method: 'Cash', amount: 5200 }],
     });
     s.money('stock after sale', stockOnHand(db, 'p1', 'br_mp'), 90);
+    const dueBefore = customerDue(db, 'cu5');
     createSellReturn(db, {
       saleId: sale.id,
       branchId: 'br_mp',
@@ -205,8 +206,9 @@ export function runScenarios(s: Suite) {
       lines: [{ productId: 'p1', qty: 4, unitPrice: 520, refundAmount: 2080 }],
     });
     s.money('stock restored by return', stockOnHand(db, 'p1', 'br_mp'), 94);
-    const credit = db.prepare('SELECT store_credit FROM customers WHERE id = ?').get('cu5') as { store_credit: number };
-    s.money('store credit added', credit.store_credit, 2080);
+    // Store credit is credit on the customer's ACCOUNT (it used to be written to
+    // customers.store_credit, which nothing read): the due drops by the refund.
+    s.money('store credit lowers the customer balance', customerDue(db, 'cu5'), round2(dueBefore - 2080));
     db.close();
   }
 
@@ -1921,7 +1923,7 @@ export function runScenarios(s: Suite) {
     voidExpense(db, cashExp.id, 'again', 'u_admin');
     s.money('re-void does not change drawer', shiftTotals(db, shiftId).expected, 5000);
 
-    // a second cash expense, then delete it -> drawer restored and row gone
+    // a second cash expense, then delete it -> drawer restored, row kept as void
     const cashExp2 = createExpense(db, {
       branchId: 'br_mp',
       userId: 'u_admin',
@@ -1932,8 +1934,9 @@ export function runScenarios(s: Suite) {
     s.money('drawer drops by second cash expense', shiftTotals(db, shiftId).expected, 5000 - 800);
     deleteExpense(db, cashExp2.id);
     s.money('drawer restored after delete', shiftTotals(db, shiftId).expected, 5000);
-    const goneRow = db.prepare('SELECT COUNT(*) c FROM expenses WHERE id = ?').get(cashExp2.id) as { c: number };
-    s.eq('deleted expense row gone', goneRow.c, 0);
+    // "Delete" voids: the record stays (it may already be on a Z-report).
+    const keptRow = db.prepare('SELECT voided FROM expenses WHERE id = ?').get(cashExp2.id) as { voided: number } | undefined;
+    s.eq('a deleted expense is kept, marked void', keptRow?.voided, 1);
 
     // a non-cash (bKash) expense never touches the drawer; void is drawer-neutral
     const bkExp = createExpense(db, {
@@ -2093,7 +2096,7 @@ export function runScenarios(s: Suite) {
     // username UNIQUE conflict throws friendly error
     let dupBlocked = false;
     try {
-      createUser(db, { name: 'Dup', username: 'testcashier', roleId: 'role_cashier' });
+      createUser(db, { name: 'Dup', username: 'testcashier', pin: '4321', roleId: 'role_cashier' });
     } catch {
       dupBlocked = true;
     }
@@ -2123,7 +2126,7 @@ export function runScenarios(s: Suite) {
     s.eq('clean user deleted', userGone.c, 0);
 
     // a user referenced by a sale is soft-deactivated, not deleted
-    const refUser = createUser(db, { name: 'Has Sale', username: 'hassale', roleId: 'role_cashier' });
+    const refUser = createUser(db, { name: 'Has Sale', username: 'hassale', pin: '5555', roleId: 'role_cashier' });
     createSale(db, {
       branchId: 'br_mp',
       userId: refUser.id,

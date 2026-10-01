@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { currentUserId } from '@/lib/actor';
 import { persist } from 'zustand/middleware';
 import { api } from '@/lib/api';
+import { CASH_CHANGED_EVENT } from '@/lib/queryClient';
 import { toast } from '@/stores/toast';
 import {
   toMovement,
@@ -19,6 +20,8 @@ export type MovementType =
   | 'refund'
   | 'supplier_paid'
   | 'expense'
+  | 'expense_reversal'
+  | 'supplier_refund'
   | 'manual_out';
 
 export const MOVEMENT_LABEL: Record<MovementType, string> = {
@@ -28,6 +31,8 @@ export const MOVEMENT_LABEL: Record<MovementType, string> = {
   refund: 'Refund',
   supplier_paid: 'Paid supplier',
   expense: 'Expense',
+  expense_reversal: 'Expense reversed',
+  supplier_refund: 'Refund from supplier',
   manual_out: 'Manual cash out',
 };
 
@@ -38,6 +43,8 @@ export const MOVEMENT_DIRECTION: Record<MovementType, 'in' | 'out'> = {
   refund: 'out',
   supplier_paid: 'out',
   expense: 'out',
+  expense_reversal: 'in',
+  supplier_refund: 'in',
   manual_out: 'out',
 };
 
@@ -317,6 +324,8 @@ export const useCashRegister = create<State>()(
         try {
           await api('cash.closeShift', { shiftId, countedCash, carriedFloat, note });
           await get().hydrate();
+          // A shift close may take a backup; let the backup banner look again soon.
+          setTimeout(() => window.dispatchEvent(new Event('pos:backup-health')), 5000);
           return true;
         } catch (e: unknown) {
           // Resolves false so the Close Shift screen stays open on a refusal (a
@@ -347,4 +356,20 @@ export function shiftDuration(s: Shift): string {
   const h = Math.floor(ms / 3_600_000);
   const m = Math.floor((ms % 3_600_000) / 60_000);
   return `${h}h ${m}m`;
+}
+
+/**
+ * A sale, refund, payment or expense moved cash (src/lib/queryClient.ts
+ * afterWrite): re-read the drawer, so its figure is never left behind (R84).
+ * Debounced — one save can be followed by another at once.
+ */
+if (typeof window !== 'undefined') {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  window.addEventListener(CASH_CHANGED_EVENT, () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      void useCashRegister.getState().hydrate();
+    }, 300);
+  });
 }

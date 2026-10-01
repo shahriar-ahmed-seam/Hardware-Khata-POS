@@ -121,8 +121,11 @@ const SIDES: Record<
     openDocs: (db, id) =>
       db
         .prepare(
+          // Received bills only (R51): money is not spread onto an order whose
+          // goods have not come. Picking an ordered bill by hand still pays an
+          // advance on it (see `doc`).
           `SELECT id, ref_no AS ref, due FROM purchases
-            WHERE supplier_id = ? AND status != 'cancelled' AND due > 0.005
+            WHERE supplier_id = ? AND status = 'received' AND due > 0.005
             ORDER BY date, ref_no`,
         )
         .all(id) as OpenDoc[],

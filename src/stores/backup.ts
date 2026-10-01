@@ -352,6 +352,9 @@ export const useBackup = create<State>((set, get) => ({
       toast.error(message(e, 'Backup failed'));
       await get().hydrate();
       return false;
+    } finally {
+      // The app-wide backup banner (components/layout/BackupBanner) looks again.
+      window.dispatchEvent(new Event('pos:backup-health'));
     }
   },
 

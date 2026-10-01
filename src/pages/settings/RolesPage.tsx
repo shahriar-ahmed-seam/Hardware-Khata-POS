@@ -172,7 +172,14 @@ export default function RolesPage() {
                 </div>
               </div>
 
-              <div className="px-4 py-2 border-b border-border bg-secondary/30 flex items-center gap-2 flex-wrap text-sm">
+              {/* The Admin role always has every right (the backend refuses
+                  anything less): "Revoke all" on it used to lock the owner out. */}
+              {activeRole.id === 'role_admin' && (
+                <div className="px-4 py-2 border-b border-border bg-primary/5 text-sm text-muted-foreground">
+                  The Admin role always has every right. To limit someone, give them another role.
+                </div>
+              )}
+              <div className={cn('px-4 py-2 border-b border-border bg-secondary/30 flex items-center gap-2 flex-wrap text-sm', activeRole.id === 'role_admin' && 'hidden')}>
                 <span className="text-muted-foreground">Quick:</span>
                 <button
                   onClick={() => setRolePerms(activeRole.id, ALL_PERMISSIONS)}
@@ -191,7 +198,10 @@ export default function RolesPage() {
                 </span>
               </div>
 
-              <div className="divide-y divide-border max-h-[60vh] overflow-auto">
+              <fieldset
+                disabled={activeRole.id === 'role_admin'}
+                className="divide-y divide-border max-h-[60vh] overflow-auto disabled:opacity-70"
+              >
                 {PERMISSION_GROUPS.map((group) => {
                   const ids = group.actions.map((a) => a.id);
                   const onCount = ids.filter((id) => activeRole.permissions.includes(id)).length;
@@ -248,7 +258,7 @@ export default function RolesPage() {
                     </div>
                   );
                 })}
-              </div>
+              </fieldset>
             </Card>
           ) : (
             <Card className="p-8 text-center text-sm text-muted-foreground">Select a role.</Card>

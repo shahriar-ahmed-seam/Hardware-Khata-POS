@@ -479,6 +479,9 @@ CREATE TABLE IF NOT EXISTS purchase_lines (
   unit_cost_before_tax REAL NOT NULL DEFAULT 0,
   line_total           REAL NOT NULL DEFAULT 0,
   new_sell_price       REAL,
+  -- v12: the sell price this line REPLACED, so cancelling or correcting the
+  -- bill can put it back (it used to stay at the new price for good).
+  prev_sell_price      REAL,
   line_no              INTEGER NOT NULL DEFAULT 0
 );
 

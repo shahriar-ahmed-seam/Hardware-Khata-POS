@@ -5,6 +5,7 @@ import { type CartLine, lineSubtotal, unitPrice } from './types';
 import { useUnits } from '@/hooks/useCatalog';
 import { Badge } from '@/components/ui/Badge';
 import { NumberField } from '@/components/ui/NumberField';
+import { useCanAll } from '@/hooks/useCan';
 
 interface Props {
   line: CartLine;
@@ -101,6 +102,14 @@ export function CartLineRow({
   }, [flash]);
 
   const setQty = (qty: number) => onChange({ ...line, qty: q3(qty) });
+
+  // The same rights the main process checks on save (backend/services/saleRules.ts).
+  // Without them the boxes are shown but locked, so nothing is typed that the
+  // sale would then refuse.
+  const can = useCanAll(['pos.priceOverride', 'pos.discount'] as const);
+  const canPrice = can['pos.priceOverride'];
+  const canDiscount = can['pos.discount'];
+  const noRight = 'You do not have the right to change this. Ask the owner or a manager.';
 
   return (
     <div
@@ -233,7 +242,8 @@ export function CartLineRow({
               })
             }
             aria-label="Selling price"
-            title="Price for this sale only — the product's price does not change"
+            title={canPrice ? "Price for this sale only — the product's price does not change" : noRight}
+            disabled={!canPrice}
             className="h-9 w-full px-2 text-right text-sm font-semibold text-success"
           />
         </div>
@@ -282,21 +292,24 @@ export function CartLineRow({
         <div className="mt-2 ml-8 flex flex-wrap items-center gap-x-4 gap-y-2">
           <InlineNum
             label="Markup %"
-            hint="Adds % to SPR for unit price"
+            hint={canPrice ? 'Adds % to SPR for unit price' : noRight}
             value={line.markupPct}
             onChange={(v) => onChange({ ...line, markupPct: v })}
+            disabled={!canPrice}
           />
           <InlineNum
             label="Discount %"
-            hint="Line discount as percent"
+            hint={canDiscount ? 'Line discount as percent' : noRight}
             value={line.discountPct}
             onChange={(v) => onChange({ ...line, discountPct: v })}
+            disabled={!canDiscount}
           />
           <InlineNum
             label="Discount ৳"
-            hint="Line discount as flat amount"
+            hint={canDiscount ? 'Line discount as flat amount' : noRight}
             value={line.discountFlat}
             onChange={(v) => onChange({ ...line, discountFlat: v })}
+            disabled={!canDiscount}
           />
         </div>
       )}
@@ -334,11 +347,13 @@ function InlineNum({
   hint,
   value,
   onChange,
+  disabled = false,
 }: {
   label: string;
   hint: string;
   value: number;
   onChange: (v: number) => void;
+  disabled?: boolean;
 }) {
   return (
     <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground" title={hint}>
@@ -346,6 +361,7 @@ function InlineNum({
       <NumberField
         value={value}
         onChangeNumber={onChange}
+        disabled={disabled}
         placeholder="0"
         className="h-8 w-20 px-2 text-right text-sm text-foreground"
       />

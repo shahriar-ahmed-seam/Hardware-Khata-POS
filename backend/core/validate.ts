@@ -42,6 +42,32 @@ export function canonicalMethod(method: unknown): PaymentMethodName {
   return hit;
 }
 
+/**
+ * How a sell return can be refunded. 'CreditAdjust' settles what is still owed
+ * on the invoice; 'StoreCredit' keeps the money on the customer's account (an
+ * advance the khata shows and the next sale uses); the rest pay money back.
+ */
+export const SELL_REFUND_METHODS = ['Cash', 'CreditAdjust', 'StoreCredit', ...PAYMENT_METHODS.filter((m) => m !== 'Cash')] as const;
+/** How a supplier refunds a purchase return ('CashRefund' = cash into the drawer). */
+export const PURCHASE_REFUND_METHODS = ['CashRefund', 'CreditAdjust', ...PAYMENT_METHODS.filter((m) => m !== 'Cash')] as const;
+
+/**
+ * The stored spelling of a refund method, or a readable refusal. Matching used
+ * to be exact, so 'cash' or 'creditadjust' recorded the return and put the stock
+ * back but moved no money and settled nothing.
+ */
+export function canonicalRefundMethod(kind: 'sell' | 'purchase', method: unknown): string {
+  const list: readonly string[] = kind === 'sell' ? SELL_REFUND_METHODS : PURCHASE_REFUND_METHODS;
+  const raw = typeof method === 'string' ? method.trim().toLowerCase().replace(/[\s_-]+/g, '') : '';
+  // A supplier's cash refund is also written 'Cash'.
+  const alias = kind === 'purchase' && raw === 'cash' ? 'cashrefund' : raw;
+  const hit = list.find((m) => m.toLowerCase() === alias);
+  if (!hit) {
+    throw new Error(`"${String(method ?? '')}" is not a refund method. Use one of: ${list.join(', ')}.`);
+  }
+  return hit;
+}
+
 function finite(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v);
 }
@@ -202,3 +228,25 @@ export function assertPurchaseSettlement(args: {
     throw new Error('Paying more than the bill needs a supplier to hold the advance. Choose the supplier.');
   }
 }
+
+// ------------------------------------------------------------ sign-in secrets
+
+/**
+ * A PIN is 4 to 6 digits. Any string used to be accepted — a 1-digit PIN, or
+ * letters the PIN pad cannot even type — and one guessed PIN signs in as that
+ * person, including the owner.
+ */
+export function assertPin(pin: unknown): string {
+  const p = typeof pin === 'string' ? pin.trim() : '';
+  if (!/^\d{4,6}$/.test(p)) throw new Error('A PIN must be 4 to 6 digits.');
+  return p;
+}
+
+/** A password is at least 6 characters (spaces at the ends do not count). */
+export function assertPassword(pw: unknown): string {
+  const p = typeof pw === 'string' ? pw.trim() : '';
+  if (p.length < 6) throw new Error('A password must be at least 6 characters.');
+  return p;
+}
+
+export const USER_STATUSES = ['active', 'inactive', 'suspended'] as const;

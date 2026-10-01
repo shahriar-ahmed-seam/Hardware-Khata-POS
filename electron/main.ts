@@ -8,6 +8,24 @@ import { initBackupDefaults, startAutoBackup, stopAutoBackup } from './backup.ts
 import { initInvoicePdfDefaults } from './invoicePdf.ts';
 import { initUpdater } from './updater.ts';
 import { applyPerfFlagsBeforeReady } from './perf.ts';
+import { initLog, logFolder } from './log.ts';
+
+// The log file first, so everything after it — including a failure to start —
+// is written down (electron/log.ts). A packaged Windows build has no console.
+initLog();
+
+/**
+ * NOTHING FAILS SILENTLY IN THE MAIN PROCESS (R72). An error nobody caught used
+ * to go to a console that does not exist in the installed app. It is logged,
+ * and the app keeps the till open: every database write is its own
+ * transaction, so a stray error in one request cannot leave half a sale.
+ */
+process.on('uncaughtException', (err) => {
+  console.error('[crash] uncaught exception in the main process:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[crash] unhandled promise rejection in the main process:', reason);
+});
 
 // MODULE SCOPE, ON PURPOSE. `app.disableHardwareAcceleration()` throws once the
 // app is ready, so the owner's performance preference has to be read and applied
@@ -205,6 +223,42 @@ function createWindow() {
   });
   mainWindow.webContents.on('will-attach-webview', (event) => event.preventDefault());
 
+  /**
+   * THE SCREEN STOPPED (R72): the renderer crashed or was killed (out of memory
+   * on an old PC, a GPU driver fault). The window used to stay blank. It is
+   * reloaded — the sign-in lives in this process and carts are saved, so the
+   * cashier carries on — and if it keeps happening the owner is told where the
+   * log is instead of the app looping.
+   */
+  const crashes: number[] = [];
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    console.error(`[window] the screen stopped: ${details.reason} (exit code ${details.exitCode})`);
+    if (details.reason === 'clean-exit' || !mainWindow || mainWindow.isDestroyed()) return;
+    const now = Date.now();
+    while (crashes.length && now - crashes[0] > 60_000) crashes.shift();
+    crashes.push(now);
+    if (crashes.length <= 2) {
+      mainWindow.webContents.reload();
+      return;
+    }
+    void dialog
+      .showMessageBox(mainWindow, {
+        type: 'error',
+        title: 'The screen keeps stopping',
+        message: 'The app screen stopped several times. Sales that were saved are safe.',
+        detail: `The log file is in:\n${logFolder()}`,
+        buttons: ['Try again', 'Close the app'],
+        defaultId: 0,
+        cancelId: 1,
+      })
+      .then(({ response }) => {
+        if (response === 0 && mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.reload();
+        else app.quit();
+      });
+  });
+  mainWindow.on('unresponsive', () => console.warn('[window] the screen is not responding'));
+  mainWindow.on('responsive', () => console.warn('[window] the screen is responding again'));
+
   mainWindow.on('maximize', () => mainWindow?.webContents.send('window:maximized', true));
   mainWindow.on('unmaximize', () => mainWindow?.webContents.send('window:maximized', false));
 
@@ -309,6 +363,20 @@ if (gotLock) app.whenReady().then(() => {
   // run after initDb(). Deliberately last and self-contained: initUpdater never
   // throws, because a failing update check must not stop the shop trading.
   initUpdater();
+}).catch((e) => {
+  // Starting up failed after the database opened (a window that could not be
+  // created, …). This used to be an unhandled rejection and a silent exit.
+  console.error('[app] could not start:', e);
+  dialog.showErrorBox(
+    'The app could not start',
+    `${e instanceof Error ? e.message : String(e)}\n\nThe log file is in:\n${logFolder()}`,
+  );
+  app.exit(1);
+});
+
+// A helper process that died (the GPU process on an old graphics driver, …).
+app.on('child-process-gone', (_e, details) => {
+  console.error(`[app] a helper process stopped: ${details.type} ${details.reason} (exit code ${details.exitCode})`);
 });
 
 app.on('window-all-closed', () => {

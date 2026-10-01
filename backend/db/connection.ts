@@ -5,7 +5,8 @@ export type DB = Database.Database;
 
 /**
  * Open (or create) a SQLite database with the right pragmas for an offline POS:
- *  - WAL journal for concurrent read/write
+ *  - WAL journal for concurrent read/write, synchronous=FULL so a power cut
+ *    cannot undo a committed sale
  *  - foreign_keys ON for referential integrity
  *  - busy_timeout so brief locks don't throw
  *
@@ -20,7 +21,11 @@ export function openDatabase(filePath: string, opts: { readonly?: boolean } = {}
       // sidecars next to it — something we must never do to a backup snapshot
       // sitting in a cloud-synced folder.
       db.pragma('journal_mode = WAL');
-      db.pragma('synchronous = NORMAL');
+      // FULL, not NORMAL: in WAL mode NORMAL keeps the file consistent but a
+      // power cut can roll back the last few commits — a sale whose receipt is
+      // already printed. Load-shedding makes that a real case for this shop;
+      // FULL costs one extra flush per commit, nothing at counter volumes.
+      db.pragma('synchronous = FULL');
     }
     db.pragma('foreign_keys = ON');
     db.pragma('busy_timeout = 5000');
@@ -88,9 +93,14 @@ export function openDatabase(filePath: string, opts: { readonly?: boolean } = {}
  *  v11 — `account_payments` (money paid on account: opening balances and
  *       advances), `cash_shifts.closed_by`, and the missing lookup indexes.
  *       See `addV11`.
+ *  v12 — `purchase_lines.prev_sell_price` (the sell price a bill replaced, put
+ *       back when the bill is cancelled or corrected), and the price rights: the
+ *       backend now checks `pos.discount` / `pos.priceOverride`, so every role
+ *       that could sell keeps them (the owner can take them away in Roles).
+ *       See `addV12`.
  */
 /** The newest schema this build understands. Bump with every new migration step. */
-export const CURRENT_SCHEMA_VERSION = 11;
+export const CURRENT_SCHEMA_VERSION = 12;
 
 /** The highest migration recorded in a database (0 for a brand-new file). */
 export function schemaVersionOf(db: DB): number {
@@ -164,7 +174,42 @@ const MIGRATIONS: MigrationStep[] = [
     name: 'account_payments, cash_shifts.closed_by, indexes for the hot lookups',
     run: addV11,
   },
+  {
+    version: 12,
+    name: 'purchase_lines.prev_sell_price; keep discount/price rights on roles that sell',
+    run: addV12,
+  },
 ];
+
+/**
+ * v12.
+ *  - `purchase_lines.prev_sell_price` — see the schema comment (R41).
+ *  - Until now `pos.discount` and `pos.priceOverride` were never checked, so a
+ *    cashier bargained freely. The backend checks them from this version (R16).
+ *    So nothing changes at the counter on upgrade, every role that can sell
+ *    (`sales.create`) is given both; the owner can take them away per role.
+ */
+function addV12(db: DB): void {
+  const cols = db.prepare('PRAGMA table_info(purchase_lines)').all() as { name: string }[];
+  if (!cols.some((c) => c.name === 'prev_sell_price')) {
+    db.exec('ALTER TABLE purchase_lines ADD COLUMN prev_sell_price REAL');
+  }
+  const roles = db.prepare('SELECT id, permissions FROM roles').all() as { id: string; permissions: string }[];
+  const save = db.prepare('UPDATE roles SET permissions = ? WHERE id = ?');
+  for (const r of roles) {
+    let perms: string[];
+    try {
+      const parsed = JSON.parse(r.permissions) as unknown;
+      perms = Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch {
+      continue;
+    }
+    if (!perms.includes('sales.create')) continue;
+    const next = [...perms];
+    for (const p of ['pos.discount', 'pos.priceOverride']) if (!next.includes(p)) next.push(p);
+    if (next.length !== perms.length) save.run(JSON.stringify(next), r.id);
+  }
+}
 
 /**
  * Bring a database up to CURRENT_SCHEMA_VERSION.

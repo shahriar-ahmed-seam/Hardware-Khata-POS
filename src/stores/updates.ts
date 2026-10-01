@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { api, hasBackend } from '@/lib/api';
 import { toast } from '@/stores/toast';
+import { confirm } from '@/stores/confirm';
 
 /**
  * IN-APP UPDATES (renderer store)
@@ -130,6 +131,16 @@ export const useUpdates = create<Store>((set, get) => ({
   },
 
   install: async () => {
+    // Installing closes the app, so it is always a choice made on screen — it
+    // never happens on its own when the app is closed (electron/updater.ts).
+    const ok = await confirm({
+      title: 'Restart and install now?',
+      message:
+        'The app will close, install the new version and open again. Carts on the POS screen are kept, and an open shift stays open.',
+      confirmLabel: 'Restart and install',
+      cancelLabel: 'Not now',
+    });
+    if (!ok) return;
     set({ busy: true });
     try {
       const res = await api<{ ok: boolean; error?: string }>('update.install', {});

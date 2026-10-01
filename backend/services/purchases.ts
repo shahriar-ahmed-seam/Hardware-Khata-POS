@@ -170,6 +170,65 @@ function assertPurchaseRefs(db: DB, branchId: string | undefined) {
  * never be written differently from a new one. `payments` is empty for a
  * correction: the payments already on the bill stay as they are.
  */
+/**
+ * A bill that sets a new SELL price: change it, remember the price it replaced
+ * on the line, and put the change in the activity log. It used to be a bare
+ * UPDATE with no trace, and cancelling the bill left the new price for good.
+ */
+function setSellPriceFromBill(
+  db: DB,
+  a: { purchaseId: string; refNo: string; productId: string; price: number; userId: string; at: string },
+) {
+  const cur = db.prepare('SELECT price, name FROM products WHERE id = ?').get(a.productId) as
+    | { price: number; name: string }
+    | undefined;
+  if (!cur || Math.abs(cur.price - a.price) < 0.004) return;
+  db.prepare('UPDATE products SET price = ?, updated_at = ? WHERE id = ?').run(a.price, a.at, a.productId);
+  db.prepare(
+    'UPDATE purchase_lines SET prev_sell_price = ? WHERE purchase_id = ? AND product_id = ? AND prev_sell_price IS NULL',
+  ).run(cur.price, a.purchaseId, a.productId);
+  logActivity(db, {
+    by: a.userId,
+    action: 'price',
+    entity: 'product',
+    entityId: a.productId,
+    entityRef: a.refNo,
+    message: `Sell price of ${cur.name}: ${round2(cur.price).toFixed(2)} → ${round2(a.price).toFixed(2)} (from ${a.refNo})`,
+    amount: a.price,
+    at: a.at,
+  });
+}
+
+/**
+ * Put back the sell prices a bill set — when it is cancelled, or corrected to
+ * drop the new price. Only where nobody has changed the price since: a price
+ * the owner set by hand afterwards is theirs and stays.
+ */
+function restoreSellPrices(
+  db: DB,
+  rows: { product_id: string; prev_sell_price: number | null; new_sell_price: number | null }[],
+  a: { refNo: string; why: string; userId: string; at: string },
+) {
+  for (const r of rows) {
+    if (r.prev_sell_price === null || r.new_sell_price === null) continue;
+    const cur = db.prepare('SELECT price, name FROM products WHERE id = ?').get(r.product_id) as
+      | { price: number; name: string }
+      | undefined;
+    if (!cur || Math.abs(cur.price - r.new_sell_price) > 0.004) continue;
+    db.prepare('UPDATE products SET price = ?, updated_at = ? WHERE id = ?').run(r.prev_sell_price, a.at, r.product_id);
+    logActivity(db, {
+      by: a.userId,
+      action: 'price',
+      entity: 'product',
+      entityId: r.product_id,
+      entityRef: a.refNo,
+      message: `Sell price of ${cur.name} back to ${round2(r.prev_sell_price).toFixed(2)} (${a.refNo} ${a.why})`,
+      amount: r.prev_sell_price,
+      at: a.at,
+    });
+  }
+}
+
 function writePurchaseBody(
   db: DB,
   args: {
@@ -327,11 +386,14 @@ function writePurchaseBody(
       // The SELL price is a separate decision and stays opt-in: it only moves
       // when the buyer typed a new one on the line.
       if (l.input.newSellPrice) {
-        db.prepare('UPDATE products SET price = ?, updated_at = ? WHERE id = ?').run(
-          l.input.newSellPrice,
-          date,
-          l.input.productId,
-        );
+        setSellPriceFromBill(db, {
+          purchaseId: id,
+          refNo,
+          productId: l.input.productId,
+          price: l.input.newSellPrice,
+          userId: input.userId,
+          at: date,
+        });
       }
     }
   }
@@ -588,6 +650,10 @@ export function updatePurchase(db: DB, purchaseId: string, input: UpdatePurchase
     }
 
     // ---- 2. the header and the new lines (and their stock-in) ----
+    // The sell prices the old bill replaced, before its lines go (R41).
+    const priorPrices = db
+      .prepare('SELECT product_id, prev_sell_price, new_sell_price FROM purchase_lines WHERE purchase_id = ? AND prev_sell_price IS NOT NULL')
+      .all(purchaseId) as { product_id: string; prev_sell_price: number | null; new_sell_price: number | null }[];
     db.prepare('DELETE FROM purchase_lines WHERE purchase_id = ?').run(purchaseId);
     db.prepare(
       `UPDATE purchases SET
@@ -629,6 +695,23 @@ export function updatePurchase(db: DB, purchaseId: string, input: UpdatePurchase
       computedLines,
       payments: [],
     });
+
+    // The price the ORIGINAL bill replaced stays the one to go back to; a
+    // correction that no longer sets a new price puts the old one back.
+    {
+      const carry = db.prepare(
+        'UPDATE purchase_lines SET prev_sell_price = ? WHERE purchase_id = ? AND product_id = ? AND new_sell_price IS NOT NULL',
+      );
+      const stillSets = db.prepare(
+        'SELECT 1 FROM purchase_lines WHERE purchase_id = ? AND product_id = ? AND new_sell_price IS NOT NULL',
+      );
+      const dropped: typeof priorPrices = [];
+      for (const p of priorPrices) {
+        if (stillSets.get(purchaseId, p.product_id)) carry.run(p.prev_sell_price, purchaseId, p.product_id);
+        else dropped.push(p);
+      }
+      restoreSellPrices(db, dropped, { refNo, why: 'corrected', userId: input.userId, at });
+    }
 
     // ---- 3. the old receipt comes off the shelf, in base units ----
     if (oldStatus === 'received') {
@@ -746,6 +829,15 @@ export function cancelPurchase(db: DB, purchaseId: string, userId: string, reaso
     }
     const at = new Date().toISOString();
 
+    // The sell prices this bill set go back to what they were (R41).
+    restoreSellPrices(
+      db,
+      db
+        .prepare('SELECT product_id, prev_sell_price, new_sell_price FROM purchase_lines WHERE purchase_id = ?')
+        .all(purchaseId) as { product_id: string; prev_sell_price: number | null; new_sell_price: number | null }[],
+      { refNo: pur.ref_no as string, why: 'cancelled', userId, at },
+    );
+
     // reverse stock-in for received purchases
     if (pur.status === 'received') {
       const lines = db.prepare('SELECT * FROM purchase_lines WHERE purchase_id = ?').all(purchaseId) as Record<
@@ -795,7 +887,8 @@ export function cancelPurchase(db: DB, purchaseId: string, userId: string, reaso
     if (cashPaid.s > 0) {
       postCashToOpenShift(db, pur.branch_id as string, {
         direction: 'in',
-        reason: 'manual_in',
+        // Cash the supplier gave back — not a hand-typed Cash In.
+        reason: 'supplier_refund',
         amount: cashPaid.s,
         refType: 'purchase',
         refId: purchaseId,

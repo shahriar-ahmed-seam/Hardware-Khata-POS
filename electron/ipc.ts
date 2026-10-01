@@ -1,4 +1,5 @@
-import { ipcMain } from 'electron';
+import { ipcMain, shell } from 'electron';
+import { logFolder, writeLog } from './log.ts';
 import { buildApi, API_CHANNELS } from '../backend/api.ts';
 import { getDb } from './db.ts';
 import {
@@ -37,8 +38,15 @@ import {
   settingsSetError,
   stampActor,
   varianceGateError,
+  contactBalanceGateError,
+  refreshedSession,
+  DISCOUNT_PERMISSION,
+  MANAGER_PERMISSION,
+  PRICE_OVERRIDE_PERMISSION,
   type GateSession,
 } from './guard.ts';
+import { rolePermissions } from '../backend/services/auth.ts';
+import { isSaleRuleChannel, saleRulesCheck, withRuleNotes } from '../backend/services/saleRules.ts';
 
 const api = buildApi();
 
@@ -123,6 +131,15 @@ const ELECTRON_PERF_CHANNELS = new Set(['perf.get', 'perf.set']);
  *   4. Writes before any login return { ok:false, error:'Not signed in …' }.
  */
 
+/** At most 30 screen errors a minute reach the log, so a render loop cannot fill it. */
+const rendererLogTimes: number[] = [];
+function rendererLogAllowed(now: number): boolean {
+  while (rendererLogTimes.length && now - rendererLogTimes[0] > 60_000) rendererLogTimes.shift();
+  if (rendererLogTimes.length >= 30) return false;
+  rendererLogTimes.push(now);
+  return true;
+}
+
 // Module-level session — main-process memory only. Null until the renderer logs in.
 let session: GateSession | null = null;
 
@@ -150,7 +167,26 @@ function currentSessionPayload(user: SanitizedSessionUser | null) {
  * `permissionError` in electron/guard.ts, which the verify harness tests.
  */
 function permissionError(channel: string): string | null {
+  refreshSession();
   return gateError(channel, session);
+}
+
+/**
+ * Bring the session in line with the database: a deactivated or deleted user is
+ * signed out, a changed role takes effect at once (electron/guard.ts
+ * refreshedSession). Two tiny indexed reads per call.
+ */
+function refreshSession(): void {
+  if (!session) return;
+  try {
+    const db = getDb();
+    const user = db.prepare('SELECT status, role_id FROM users WHERE id = ?').get(session.userId) as
+      | { status: string; role_id: string }
+      | undefined;
+    session = refreshedSession(session, user, (roleId) => rolePermissions(db, roleId));
+  } catch {
+    /* keep the session as it was if the database cannot answer this instant */
+  }
 }
 
 export function registerIpc(): void {
@@ -165,6 +201,7 @@ export function registerIpc(): void {
       return { ok: true, data: null };
     }
     if (channel === 'session.current') {
+      refreshSession();
       if (!session) return { ok: true, data: null };
       const user = readSessionUser(session.userId);
       return { ok: true, data: currentSessionPayload(user) };
@@ -230,6 +267,26 @@ export function registerIpc(): void {
       };
     }
 
+    // ---- 1d. The log file (electron/log.ts, R72) ----
+    // A screen error is written down whoever is signed in (or nobody): it is
+    // how a crash at the counter can be read afterwards. Capped in size and rate.
+    if (channel === 'app.logError') {
+      if (rendererLogAllowed(Date.now())) {
+        const p = (payload ?? {}) as { where?: unknown; message?: unknown; stack?: unknown };
+        const clip = (v: unknown, n: number) => String(v ?? '').slice(0, n);
+        writeLog('error', `[screen] ${clip(p.where, 80)}: ${clip(p.message, 2000)}\n${clip(p.stack, 4000)}`);
+      }
+      return { ok: true, data: null };
+    }
+    if (channel === 'app.openLogFolder') {
+      const denied = permissionError(channel);
+      if (denied) return { ok: false, error: denied };
+      const dir = logFolder();
+      return shell
+        .openPath(dir)
+        .then((err) => (err ? { ok: false, error: err } : { ok: true, data: dir }));
+    }
+
     // ---- 2. Generic backend channels (gated) ----
     const handler = api[channel];
     if (!handler) {
@@ -257,6 +314,30 @@ export function registerIpc(): void {
       if (badKey) return { ok: false, error: badKey };
     }
 
+    // An opening balance or a credit limit needs the owner or a manager; the
+    // rest of the contact form stays a cashier's (electron/guard.ts).
+    if ((channel === 'customers.create' || channel === 'suppliers.create') && session) {
+      // A new contact starts at nothing owed and no limit.
+      const blocked = contactBalanceGateError({
+        current: { opening_balance: 0, credit_limit: channel === 'customers.create' ? null : undefined },
+        patch: payload,
+        permissions: session.permissions,
+      });
+      if (blocked) return { ok: false, error: blocked };
+    }
+    if ((channel === 'customers.update' || channel === 'suppliers.update') && session) {
+      const p = (payload ?? {}) as { id?: string; patch?: unknown };
+      const current = getDb()
+        .prepare(
+          channel === 'customers.update'
+            ? 'SELECT opening_balance, credit_limit FROM customers WHERE id = ?'
+            : 'SELECT opening_balance FROM suppliers WHERE id = ?',
+        )
+        .get(p.id ?? '') as { opening_balance: number; credit_limit?: number | null } | undefined;
+      const blocked = contactBalanceGateError({ current, patch: p.patch, permissions: session.permissions });
+      if (blocked) return { ok: false, error: blocked };
+    }
+
     // A count past the hard variance limit needs the owner or a manager
     // (Settings → Cash Register). The variance is worked out HERE from the
     // backend's own expected figure, never taken from the renderer.
@@ -268,6 +349,24 @@ export function registerIpc(): void {
         const prefs = api['settings.get'](getDb(), { key: 'cashRegister' });
         const blocked = varianceGateError({ variance, prefs, permissions: session.permissions });
         if (blocked) return { ok: false, error: blocked };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    }
+
+    // Prices, discounts and credit limits on a sale (backend/services/saleRules.ts):
+    // a price below the list needs pos.priceOverride, a discount pos.discount,
+    // and passing a customer's credit limit the owner or a manager. What went
+    // through anyway is written into the sale's audit by the main process.
+    if (isSaleRuleChannel(channel) && session) {
+      try {
+        const rules = saleRulesCheck(getDb(), channel, payload, {
+          discount: session.permissions.has(DISCOUNT_PERMISSION),
+          priceOverride: session.permissions.has(PRICE_OVERRIDE_PERMISSION),
+          creditOverride: session.permissions.has(MANAGER_PERMISSION),
+        });
+        if (rules.error) return { ok: false, error: rules.error };
+        payload = withRuleNotes(channel, payload, rules.notes);
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }

@@ -3,6 +3,7 @@ import { tx } from '../db/connection.ts';
 import { newId } from '../core/ids.ts';
 import { logActivity } from './activity.ts';
 import { hashSecret } from './auth.ts';
+import { assertPassword, assertPin, USER_STATUSES } from '../core/validate.ts';
 import { markDefaultBranch } from './branch.ts';
 
 /**
@@ -417,9 +418,34 @@ function friendlyUserWrite<T>(fn: () => T): T {
   }
 }
 
-export function createUser(db: DB, input: UserInput) {
+/** Active users holding the Admin role, optionally not counting one of them. */
+function activeAdmins(db: DB, exceptId?: string): number {
+  return (
+    db
+      .prepare("SELECT COUNT(*) c FROM users WHERE role_id = ? AND status = 'active' AND id != ?")
+      .get(ADMIN_ROLE_ID, exceptId ?? '') as { c: number }
+  ).c;
+}
+
+function checkStatus(v: unknown): string {
+  const st = String(v ?? 'active');
+  if (!(USER_STATUSES as readonly string[]).includes(st)) {
+    throw new Error(`"${st}" is not a user status. Use active, inactive or suspended.`);
+  }
+  return st;
+}
+
+export function createUser(db: DB, input: UserInput & { actorId?: string }) {
   return friendlyUserWrite(() =>
     tx(db, () => {
+      if (!input.name?.trim()) throw new Error('A user needs a name.');
+      if (!input.username?.trim()) throw new Error('A user needs a username.');
+      // Someone who can never sign in is not a user; and a guessable PIN is one
+      // guess away from their rights (R19).
+      const pin = input.pin ? assertPin(input.pin) : undefined;
+      const password = input.password ? assertPassword(input.password) : undefined;
+      if (!pin && !password) throw new Error('Give the user a PIN (4 to 6 digits) or a password.');
+      const status = checkStatus(input.status);
       const id = input.id ?? newId('u');
       const now = new Date().toISOString();
       // PIN/password are bcrypt-hashed before storage (never plaintext).
@@ -428,24 +454,25 @@ export function createUser(db: DB, input: UserInput) {
          VALUES (@id, @name, @username, @phone, @email, @pinHash, @passwordHash, @roleId, @branchIds, @status, @lastLoginAt, @now)`,
       ).run({
         id,
-        name: input.name,
-        username: input.username,
+        name: input.name.trim(),
+        username: input.username.trim().toLowerCase(),
         phone: input.phone ?? null,
         email: input.email ?? null,
-        pinHash: input.pin ? hashSecret(input.pin) : null,
-        passwordHash: input.password ? hashSecret(input.password) : null,
+        pinHash: pin ? hashSecret(pin) : null,
+        passwordHash: password ? hashSecret(password) : null,
         roleId: input.roleId,
         branchIds: JSON.stringify(input.branchIds ?? []),
-        status: input.status ?? 'active',
+        status,
         lastLoginAt: input.lastLoginAt ?? null,
         now,
       });
       logActivity(db, {
+        by: input.actorId,
         action: 'created',
         entity: 'user',
         entityId: id,
         entityRef: input.username,
-        message: `New user: ${input.name}`,
+        message: `New user: ${input.name} (${roleName(db, input.roleId)})`,
         at: now,
       });
       return { id };
@@ -453,12 +480,36 @@ export function createUser(db: DB, input: UserInput) {
   );
 }
 
-export function updateUser(db: DB, id: string, patch: Partial<UserInput>) {
+function roleName(db: DB, roleId: string): string {
+  return (db.prepare('SELECT name FROM roles WHERE id = ?').get(roleId) as { name: string } | undefined)?.name ?? roleId;
+}
+
+export function updateUser(db: DB, id: string, patch: Partial<UserInput> & { actorId?: string }) {
   return friendlyUserWrite(() =>
     tx(db, () => {
-      const existing = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
+      const existing = db.prepare('SELECT id, name, username, role_id, status FROM users WHERE id = ?').get(id) as
+        | { id: string; name: string; username: string; role_id: string; status: string }
+        | undefined;
       if (!existing) throw new Error('User not found');
       const now = new Date().toISOString();
+
+      // An empty PIN/password field means "not changing it". It used to CLEAR
+      // it: the users screen sends the whole form, so editing someone's phone
+      // number without retyping their PIN wiped the PIN.
+      const pin = patch.pin ? assertPin(patch.pin) : undefined;
+      const password = patch.password ? assertPassword(patch.password) : undefined;
+      const nextStatus = 'status' in patch && patch.status !== undefined ? checkStatus(patch.status) : existing.status;
+      const nextRole = patch.roleId ?? existing.role_id;
+
+      // Nobody locks themselves out, and the shop always keeps an admin (R18).
+      if (patch.actorId && patch.actorId === id) {
+        if (nextStatus !== 'active') throw new Error('You cannot deactivate your own account. Ask another admin.');
+        if (nextRole !== existing.role_id) throw new Error('You cannot change your own role. Ask another admin.');
+      }
+      const stillAdmin = nextRole === ADMIN_ROLE_ID && nextStatus === 'active';
+      if (!stillAdmin && existing.role_id === ADMIN_ROLE_ID && activeAdmins(db, id) === 0) {
+        throw new Error('This is the last active admin. Make another user an admin first.');
+      }
 
       const colMap: Record<string, string> = {
         name: 'name',
@@ -472,32 +523,40 @@ export function updateUser(db: DB, id: string, patch: Partial<UserInput>) {
       const sets: string[] = [];
       const params: Record<string, unknown> = { id };
       for (const [k, col] of Object.entries(colMap)) {
-        if (k in patch) {
-          sets.push(`${col} = @${k}`);
-          params[k] = (patch as Record<string, unknown>)[k] ?? null;
-        }
+        const v = (patch as Record<string, unknown>)[k];
+        // Undefined = not sent. A required column is never blanked by a form.
+        if (v === undefined) continue;
+        if ((k === 'name' || k === 'username' || k === 'roleId') && !String(v).trim()) continue;
+        sets.push(`${col} = @${k}`);
+        params[k] = k === 'username' ? String(v).trim().toLowerCase() : k === 'status' ? nextStatus : v;
       }
-      if ('branchIds' in patch) {
+      if ('branchIds' in patch && patch.branchIds !== undefined) {
         sets.push('branch_ids = @branchIds');
         params.branchIds = JSON.stringify(patch.branchIds ?? []);
       }
-      // PIN/password are bcrypt-hashed before storage (never plaintext).
-      if ('pin' in patch) {
+      if (pin) {
         sets.push('pin_hash = @pinHash');
-        params.pinHash = patch.pin ? hashSecret(patch.pin) : null;
+        params.pinHash = hashSecret(pin);
       }
-      if ('password' in patch) {
+      if (password) {
         sets.push('password_hash = @passwordHash');
-        params.passwordHash = patch.password ? hashSecret(patch.password) : null;
+        params.passwordHash = hashSecret(password);
       }
       if (sets.length > 0) {
         db.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = @id`).run(params);
       }
+      const changes: string[] = [];
+      if (nextRole !== existing.role_id) changes.push(`role ${roleName(db, existing.role_id)} → ${roleName(db, nextRole)}`);
+      if (nextStatus !== existing.status) changes.push(`status ${existing.status} → ${nextStatus}`);
+      if (pin) changes.push('PIN changed');
+      if (password) changes.push('password changed');
       logActivity(db, {
+        by: patch.actorId,
         action: 'edited',
         entity: 'user',
         entityId: id,
-        message: 'Updated user',
+        entityRef: existing.username,
+        message: changes.length ? `Updated user ${existing.name}: ${changes.join('; ')}` : `Updated user ${existing.name}`,
         at: now,
       });
       return { id };
@@ -505,10 +564,10 @@ export function updateUser(db: DB, id: string, patch: Partial<UserInput>) {
   );
 }
 
-export function deleteUser(db: DB, id: string) {
+export function deleteUser(db: DB, id: string, actorId?: string) {
   return tx(db, () => {
-    const user = db.prepare('SELECT id, role_id, name FROM users WHERE id = ?').get(id) as
-      | { id: string; role_id: string; name: string }
+    const user = db.prepare('SELECT id, role_id, name, username, status FROM users WHERE id = ?').get(id) as
+      | { id: string; role_id: string; name: string; username: string; status: string }
       | undefined;
     if (!user) throw new Error('User not found');
 
@@ -516,12 +575,11 @@ export function deleteUser(db: DB, id: string) {
     if (id === 'u_admin') {
       throw new Error('Cannot delete the owner account (u_admin).');
     }
-    // Guard 2: never delete the last admin — there must always be one admin left.
-    if (user.role_id === ADMIN_ROLE_ID) {
-      const admins = db.prepare('SELECT COUNT(*) c FROM users WHERE role_id = ?').get(ADMIN_ROLE_ID) as { c: number };
-      if (admins.c <= 1) {
-        throw new Error('Cannot delete the last admin user.');
-      }
+    if (actorId && actorId === id) throw new Error('You cannot delete your own account.');
+    // Guard 2: there must always be one ACTIVE admin left — an inactive one
+    // cannot sign in, so counting it could leave the shop with no admin at all.
+    if (user.role_id === ADMIN_ROLE_ID && activeAdmins(db, id) === 0) {
+      throw new Error('Cannot delete the last active admin user.');
     }
 
     // Guard 3: a user referenced by transaction history is soft-deactivated
@@ -543,10 +601,20 @@ export function deleteUser(db: DB, id: string) {
     }
     if (referenced) {
       db.prepare("UPDATE users SET status = 'inactive' WHERE id = ?").run(id);
-      return { id, deactivated: true };
+    } else {
+      db.prepare('DELETE FROM users WHERE id = ?').run(id);
     }
-    db.prepare('DELETE FROM users WHERE id = ?').run(id);
-    return { id, deactivated: false };
+    logActivity(db, {
+      by: actorId,
+      action: referenced ? 'deactivated' : 'deleted',
+      entity: 'user',
+      entityId: id,
+      entityRef: user.username,
+      message: referenced
+        ? `User ${user.name} deactivated (kept: they are on past records)`
+        : `Deleted user ${user.name}`,
+    });
+    return { id, deactivated: referenced };
   });
 }
 
@@ -562,24 +630,50 @@ export interface RoleInput {
   isSystem?: boolean;
 }
 
-export function createRole(db: DB, input: RoleInput) {
+export function createRole(db: DB, input: RoleInput & { actorId?: string }) {
+  if (!input.name?.trim()) throw new Error('A role needs a name.');
   const id = input.id ?? newId('role');
   db.prepare(
     `INSERT INTO roles (id, name, description, is_system, permissions)
      VALUES (@id, @name, @description, @isSystem, @permissions)`,
   ).run({
     id,
-    name: input.name,
+    name: input.name.trim(),
     description: input.description ?? null,
-    isSystem: input.isSystem ? 1 : 0,
+    // Built-in roles come from the seed only; a role made here is never "system".
+    isSystem: 0,
     permissions: JSON.stringify(input.permissions ?? []),
+  });
+  logActivity(db, {
+    by: input.actorId,
+    action: 'created',
+    entity: 'role',
+    entityId: id,
+    entityRef: input.name,
+    message: `New role: ${input.name} (${(input.permissions ?? []).length} rights)`,
   });
   return { id };
 }
 
-export function updateRole(db: DB, id: string, patch: Partial<RoleInput>) {
-  const existing = db.prepare('SELECT id FROM roles WHERE id = ?').get(id);
+export function updateRole(db: DB, id: string, patch: Partial<RoleInput> & { actorId?: string }) {
+  const existing = db.prepare('SELECT id, name, permissions FROM roles WHERE id = ?').get(id) as
+    | { id: string; name: string; permissions: string }
+    | undefined;
   if (!existing) throw new Error('Role not found');
+  let before: string[] = [];
+  try {
+    before = JSON.parse(existing.permissions) as string[];
+  } catch {
+    before = [];
+  }
+  // The Admin role always has every right: "Revoke all" on it used to leave the
+  // owner locked out of Users, Roles and Backup with nobody able to undo it (B9).
+  if (id === ADMIN_ROLE_ID && 'permissions' in patch) {
+    const next = new Set(patch.permissions ?? []);
+    if (before.some((p) => !next.has(p))) {
+      throw new Error('The Admin role always keeps every right. Make a new role to limit someone.');
+    }
+  }
 
   const colMap: Record<string, string> = {
     name: 'name',
@@ -588,26 +682,40 @@ export function updateRole(db: DB, id: string, patch: Partial<RoleInput>) {
   const sets: string[] = [];
   const params: Record<string, unknown> = { id };
   for (const [k, col] of Object.entries(colMap)) {
-    if (k in patch) {
+    if (k in patch && (patch as Record<string, unknown>)[k] !== undefined) {
       sets.push(`${col} = @${k}`);
       params[k] = (patch as Record<string, unknown>)[k] ?? null;
     }
   }
   // permissions array <-> JSON TEXT
-  if ('permissions' in patch) {
+  if ('permissions' in patch && patch.permissions !== undefined) {
     sets.push('permissions = @permissions');
     params.permissions = JSON.stringify(patch.permissions ?? []);
   }
   if (sets.length > 0) {
     db.prepare(`UPDATE roles SET ${sets.join(', ')} WHERE id = @id`).run(params);
   }
+  const after = patch.permissions ?? before;
+  const added = after.filter((p) => !before.includes(p));
+  const removed = before.filter((p) => !after.includes(p));
+  const parts: string[] = [];
+  if (added.length) parts.push(`added ${added.join(', ')}`);
+  if (removed.length) parts.push(`removed ${removed.join(', ')}`);
+  logActivity(db, {
+    by: patch.actorId,
+    action: 'edited',
+    entity: 'role',
+    entityId: id,
+    entityRef: existing.name,
+    message: parts.length ? `Role ${existing.name}: ${parts.join('; ')}` : `Updated role ${existing.name}`,
+  });
   return { id };
 }
 
-export function deleteRole(db: DB, id: string) {
+export function deleteRole(db: DB, id: string, actorId?: string) {
   return tx(db, () => {
-    const role = db.prepare('SELECT id, is_system FROM roles WHERE id = ?').get(id) as
-      | { id: string; is_system: number }
+    const role = db.prepare('SELECT id, name, is_system FROM roles WHERE id = ?').get(id) as
+      | { id: string; name: string; is_system: number }
       | undefined;
     if (!role) throw new Error('Role not found');
     // Guard: system roles are built-in and cannot be deleted.
@@ -620,6 +728,7 @@ export function deleteRole(db: DB, id: string) {
       throw new Error(`Cannot delete: ${assigned.c} user(s) are assigned to this role.`);
     }
     db.prepare('DELETE FROM roles WHERE id = ?').run(id);
+    logActivity(db, { by: actorId, action: 'deleted', entity: 'role', entityId: id, entityRef: role.name, message: `Deleted role ${role.name}` });
     return { id };
   });
 }

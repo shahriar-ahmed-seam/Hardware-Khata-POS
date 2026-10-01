@@ -12,6 +12,41 @@ import { usePurchases } from './purchases';
 import { useSales } from './sales';
 import { useCashRegister } from './cashRegister';
 import { todayLocalDateInput } from '@/lib/datetime';
+import { promptText } from '@/stores/prompt';
+
+/**
+ * An opening-balance edit rewrites what a person owes, so the backend wants a
+ * reason (it goes in the activity log with the old and new figures). Asks for
+ * it only when the figure really changes; null = the user cancelled.
+ */
+async function balanceReasonFor(
+  kind: 'customer' | 'supplier',
+  id: string,
+  patch: { openingBalance?: number },
+): Promise<string | undefined | null> {
+  if (!('openingBalance' in patch)) return undefined;
+  try {
+    const cur = await api<{ opening_balance: number } | undefined>(
+      kind === 'customer' ? 'customers.get' : 'suppliers.get',
+      { id },
+    );
+    const before = cur?.opening_balance ?? 0;
+    if (Math.abs((Number(patch.openingBalance) || 0) - before) <= 0.004) return undefined;
+  } catch {
+    return undefined; // the backend still refuses a change with no reason
+  }
+  return promptText({
+    title: 'Why is the opening balance changing?',
+    message:
+      kind === 'customer'
+        ? 'This changes what the customer owes. The old and new figures and your reason go in the activity log.'
+        : 'This changes what the shop owes this supplier. The old and new figures and your reason go in the activity log.',
+    label: 'Reason',
+    placeholder: 'e.g. old khata figure was entered wrong',
+    confirmLabel: 'Save',
+    required: true,
+  });
+}
 import type { Customer, Supplier } from '@/types/domain';
 
 /**
@@ -196,8 +231,15 @@ export const useCustomers = create<CustomersState>((set, get) => ({
     return res?.id ?? null;
   },
 
-  update: async (id, patch) =>
-    !!(await settleContact(get, api('customers.update', { id, patch }), 'Failed to update customer')),
+  update: async (id, patch) => {
+    const balanceReason = await balanceReasonFor('customer', id, patch);
+    if (balanceReason === null) return false;
+    return !!(await settleContact(
+      get,
+      api('customers.update', { id, patch: { ...patch, balanceReason } }),
+      'Failed to update customer',
+    ));
+  },
 
   remove: async (id) =>
     !!(await settleContact(get, api('customers.delete', { id }), 'Failed to delete customer')),
@@ -345,8 +387,15 @@ export const useSuppliers = create<SuppliersState>((set, get) => ({
     return res?.id ?? null;
   },
 
-  update: async (id, patch) =>
-    !!(await settleContact(get, api('suppliers.update', { id, patch }), 'Failed to update supplier')),
+  update: async (id, patch) => {
+    const balanceReason = await balanceReasonFor('supplier', id, patch);
+    if (balanceReason === null) return false;
+    return !!(await settleContact(
+      get,
+      api('suppliers.update', { id, patch: { ...patch, balanceReason } }),
+      'Failed to update supplier',
+    ));
+  },
 
   remove: async (id) =>
     !!(await settleContact(get, api('suppliers.delete', { id }), 'Failed to delete supplier')),

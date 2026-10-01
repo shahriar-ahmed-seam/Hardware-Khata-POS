@@ -160,13 +160,18 @@ function wire(): void {
 
   // We drive the download ourselves — see the note at the top.
   autoUpdater.autoDownload = false;
-  // If an update was downloaded and the owner just closes the app instead of
-  // pressing Restart, install it on quit rather than throwing the work away.
-  autoUpdater.autoInstallOnAppQuit = true;
-  // electron-updater's own logging is noisy; route it to the console we already
-  // read in packaged runs and nothing else.
+  /**
+   * A downloaded update installs ONLY from the "Restart and install" button
+   * (R73). It used to install on any quit — including Windows shutting down at
+   * closing time, or someone closing the app mid-day with a shift open — so the
+   * shop could find a different version in the morning without anyone having
+   * chosen it. The download is kept; the button installs it next time.
+   */
+  autoUpdater.autoInstallOnAppQuit = false;
+  // electron-updater's own logging is noisy: warnings and errors go to the log
+  // file (electron/log.ts, through console), progress chatter does not.
   autoUpdater.logger = {
-    info: (m: unknown) => console.log('[update]', m),
+    info: () => {},
     warn: (m: unknown) => console.warn('[update]', m),
     error: (m: unknown) => console.error('[update]', m),
     debug: () => {},
@@ -234,9 +239,11 @@ export async function checkForUpdates(opts: { silent?: boolean } = {}): Promise<
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     if (opts.silent) {
-      // Leave the phase alone; just record that the check did not get through.
+      // Record that the check did not get through, and clear any error left by
+      // an earlier one: a background check never puts red on the screen (R74).
       console.warn('[update] background check failed:', message);
-      publish({ phase: 'idle' });
+      // A download already waiting stays ready to install.
+      if (state.phase !== 'downloaded') publish({ phase: 'idle', error: undefined, errorKind: undefined });
     } else {
       publish({ phase: 'error', error: message, errorKind: classify(message) });
     }
@@ -273,14 +280,20 @@ export function quitAndInstall(): { ok: boolean; error?: string } {
   if (state.phase !== 'downloaded') {
     return { ok: false, error: 'No update has been downloaded yet.' };
   }
-  try {
-    // Give the DB a chance to close cleanly; the quit handlers in main.ts do the
-    // rest (stopAutoBackup + closeDb).
-    setImmediate(() => autoUpdater.quitAndInstall(false, true));
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
-  }
+  // Give the DB a chance to close cleanly; the quit handlers in main.ts do the
+  // rest (stopAutoBackup + closeDb). The call runs after this returns, so its
+  // failure has to be caught THERE (R74) — the try around setImmediate caught
+  // nothing, and a failed install went unseen.
+  setImmediate(() => {
+    try {
+      autoUpdater.quitAndInstall(false, true);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error('[update] could not start the installer:', message);
+      publish({ phase: 'error', error: message, errorKind: classify(message) });
+    }
+  });
+  return { ok: true };
 }
 
 /** Open the Releases page — the manual escape hatch when updating fails. */
@@ -303,6 +316,13 @@ export function initUpdater(): void {
     // Delayed: the first seconds after launch belong to painting the UI and
     // opening the database, not to a network round-trip.
     setTimeout(() => void checkForUpdates({ silent: true }), 12_000);
+    // The shop PC can stay on for days: check again every 6 hours (R74), while
+    // the owner still wants automatic checks and nothing is under way.
+    setInterval(() => {
+      if (!getUpdatePrefs().autoCheck) return;
+      if (state.phase === 'downloading' || state.phase === 'downloaded' || state.phase === 'checking') return;
+      void checkForUpdates({ silent: true });
+    }, 6 * 60 * 60 * 1000).unref?.();
   } catch (e) {
     console.error('[update] init failed:', e);
   }

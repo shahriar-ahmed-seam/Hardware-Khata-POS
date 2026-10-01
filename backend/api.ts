@@ -116,7 +116,7 @@ export function buildApi(): Record<string, ApiHandler> {
     'expenses.create': (db, p) => expenses.createExpense(db, p),
     'expenses.update': (db, p) => expenses.updateExpense(db, p.id, p.patch),
     'expenses.void': (db, p) => expenses.voidExpense(db, p.id, p.reason, p.userId),
-    'expenses.delete': (db, p) => expenses.deleteExpense(db, p.id),
+    'expenses.delete': (db, p) => expenses.deleteExpense(db, p.id, p.userId, p.reason),
     'expenseCategories.create': (db, p) => expenses.createExpenseCategory(db, p),
     'expenseCategories.update': (db, p) => expenses.updateExpenseCategory(db, p.id, p.patch),
     'expenseCategories.delete': (db, p) => expenses.deleteExpenseCategory(db, p.id),
@@ -168,13 +168,13 @@ export function buildApi(): Record<string, ApiHandler> {
     // ----- contacts CRUD (customers + suppliers) -----
     'customers.create': (db, p) => contacts.createCustomer(db, p),
     'customers.update': (db, p) => contacts.updateCustomer(db, p.id, p.patch),
-    'customers.delete': (db, p) => contacts.deleteCustomer(db, p.id),
+    'customers.delete': (db, p) => contacts.deleteCustomer(db, p.id, p.userId),
     // One transaction: opening balance, then oldest invoices, the rest as an
     // advance (services/accounts.ts). Replaces the screen's per-invoice loop.
     'customers.pay': (db, p) => accounts.receiveCustomerPayment(db, p),
     'suppliers.create': (db, p) => contacts.createSupplier(db, p),
     'suppliers.update': (db, p) => contacts.updateSupplier(db, p.id, p.patch),
-    'suppliers.delete': (db, p) => contacts.deleteSupplier(db, p.id),
+    'suppliers.delete': (db, p) => contacts.deleteSupplier(db, p.id, p.userId),
     'suppliers.pay': (db, p) => contacts.paySupplier(db, p),
 
     // ----- settings: business entities (business/branches/tax/agents/users/roles) -----
@@ -190,11 +190,11 @@ export function buildApi(): Record<string, ApiHandler> {
     'agents.update': (db, p) => settings.updateAgent(db, p.id, p.patch),
     'agents.delete': (db, p) => settings.deleteAgent(db, p.id),
     'users.create': (db, p) => settings.createUser(db, p),
-    'users.update': (db, p) => settings.updateUser(db, p.id, p.patch),
-    'users.delete': (db, p) => settings.deleteUser(db, p.id),
+    'users.update': (db, p) => settings.updateUser(db, p.id, { ...(p.patch ?? {}), actorId: p.actorId }),
+    'users.delete': (db, p) => settings.deleteUser(db, p.id, p.actorId),
     'roles.create': (db, p) => settings.createRole(db, p),
-    'roles.update': (db, p) => settings.updateRole(db, p.id, p.patch),
-    'roles.delete': (db, p) => settings.deleteRole(db, p.id),
+    'roles.update': (db, p) => settings.updateRole(db, p.id, { ...(p.patch ?? {}), actorId: p.actorId }),
+    'roles.delete': (db, p) => settings.deleteRole(db, p.id, p.actorId),
 
     // ----- settings: generic device/UI prefs via settings_kv -----
     'settings.get': (db, p) => settings.getSetting(db, p.key),
@@ -226,6 +226,8 @@ export function buildApi(): Record<string, ApiHandler> {
     // relaunch (folder picker, RESTORE) lives in electron/backup.ts instead,
     // because those cannot run in the Node verify harness.
     'backup.status': (db) => backup.backupStatus(db),
+    // Tiny, for the app-wide banner: is the data actually being copied?
+    'backup.health': (db) => backup.backupHealth(db),
     // Only the schedule and the keep count — see userBackupPatch.
     'backup.configure': (db, p) => backup.setBackupConfig(db, backup.userBackupPatch(p)),
     'backup.run': (db, p) => backup.runBackup(db, p ?? {}),

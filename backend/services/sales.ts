@@ -67,6 +67,13 @@ export interface CreateSaleInput {
   notes?: string;
   /** Set by `convertSale`: the quotation this sale was made from. */
   sourceQuotationId?: string;
+  /**
+   * Internal, written by the main process only (electron/ipc.ts via
+   * services/saleRules.ts): what this sale did that the owner should see — a
+   * price below the list, a credit limit passed with a manager's right. Kept
+   * in the sale's audit and activity. Whatever the screen sends is replaced.
+   */
+  ruleNotes?: string[];
 }
 
 /**
@@ -198,6 +205,26 @@ function computeSaleBody(
 }
 
 type ComputedSaleBody = ReturnType<typeof computeSaleBody>;
+
+/**
+ * What a sale input comes to, worked out exactly as the save will and without
+ * writing anything. The IPC rules (services/saleRules.ts) use it to see what a
+ * sale does to a customer's khata before letting it through.
+ */
+export function previewSaleTotals(
+  db: DB,
+  input: Parameters<typeof computeSaleBody>[1],
+  opts: { priorProducts?: ReadonlySet<string> } = {},
+): { total: number; paid: number } {
+  const body = computeSaleBody(db, input, 'final', opts);
+  return { total: body.totals.total, paid: body.paid };
+}
+
+/** Rule notes (price below list, credit limit passed) as one audit sentence. */
+function ruleNoteText(notes: readonly string[] | undefined): string {
+  const clean = (notes ?? []).filter((n) => typeof n === 'string' && n.trim());
+  return clean.length ? clean.join('; ') : '';
+}
 
 /**
  * The customer and branch a sale names must exist. With foreign keys on, a bad
@@ -390,9 +417,10 @@ export function createSale(db: DB, input: CreateSaleInput) {
     });
 
     // ----- audit + activity + FTS -----
+    const rules = ruleNoteText(input.ruleNotes);
     db.prepare(
       `INSERT INTO sale_audit (id, sale_id, at, by_user, action, note) VALUES (?,?,?,?,?,?)`,
-    ).run(newId('au'), saleId, date, input.userId, 'created', null);
+    ).run(newId('au'), saleId, date, input.userId, 'created', rules || null);
 
     const customerName =
       (db.prepare('SELECT name FROM customers WHERE id = ?').get(input.customerId ?? '') as
@@ -411,7 +439,7 @@ export function createSale(db: DB, input: CreateSaleInput) {
         entity: 'sale',
         entityId: saleId,
         entityRef: invoiceNo,
-        message: `New sale to ${customerName}`,
+        message: rules ? `New sale to ${customerName} — ${rules}` : `New sale to ${customerName}`,
         amount: totals.total,
         at: date,
       });
@@ -778,7 +806,8 @@ export function updateSale(
     );
 
     const statusNote = newStatus === oldStatus ? '' : ` · ${oldStatus} → ${newStatus}`;
-    const note = `${input.reason.trim()} · total ${oldTotal} → ${totals.total}${statusNote}`;
+    const rules = ruleNoteText(input.ruleNotes);
+    const note = `${input.reason.trim()} · total ${oldTotal} → ${totals.total}${statusNote}${rules ? ` · ${rules}` : ''}`;
     db.prepare(
       `INSERT INTO sale_audit (id, sale_id, at, by_user, action, note) VALUES (?,?,?,?,?,?)`,
     ).run(newId('au'), saleId, at, input.userId, 'edited', note);
@@ -790,7 +819,7 @@ export function updateSale(
       entity: 'sale',
       entityId: saleId,
       entityRef: invoiceNo,
-      message: `Edited ${invoiceNo} — ${input.reason.trim()}`,
+      message: `Edited ${invoiceNo} — ${input.reason.trim()}${rules ? ` · ${rules}` : ''}`,
       amount: totals.total,
       at,
     });

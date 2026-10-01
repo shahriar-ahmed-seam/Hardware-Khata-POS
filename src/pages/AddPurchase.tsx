@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useCan } from '@/hooks/useCan';
 import { promptText } from '@/stores/prompt';
@@ -148,6 +148,8 @@ function AddPurchaseForm({ editing }: { editing?: PurchaseRecord }) {
   const addPurchase = usePurchases((s) => s.addPurchase);
   const updatePurchase = usePurchases((s) => s.updatePurchase);
   const [saving, setSaving] = useState(false);
+  // Synchronous: state lags a render, so two quick clicks both saw saving=false.
+  const savingRef = useRef(false);
   // The supplier SELECT reads the contacts store's UNPAGED `options` (id+name).
   // `items` is one page of suppliers, so building the select from it would hide
   // every supplier past the first page. The chosen supplier's address / pay
@@ -421,8 +423,28 @@ function AddPurchaseForm({ editing }: { editing?: PurchaseRecord }) {
     nav('/purchases');
   };
 
+  /**
+   * ONE SAVE AT A TIME. Neither button had a guard, so a double click (or a
+   * click while the first save was still in flight) created the bill twice —
+   * twice the stock and twice the money owed to the supplier.
+   */
+  const createOnce = async (): Promise<string | null> => {
+    if (savingRef.current) return null;
+    savingRef.current = true;
+    setSaving(true);
+    try {
+      return await addPurchase(buildRecord(0));
+    } catch {
+      // addPurchase already showed the backend's message and re-read the list.
+      return null;
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  };
+
   const saveUnpaid = async () => {
-    if (!isValid) return;
+    if (!isValid || savingRef.current) return;
     if (editing) return saveCorrection();
     if (lowMarginLines.length > 0) {
       const ok = await confirm({
@@ -432,13 +454,13 @@ function AddPurchaseForm({ editing }: { editing?: PurchaseRecord }) {
       });
       if (!ok) return;
     }
-    const rec = buildRecord(0);
-    await addPurchase(rec);
+    const newId = await createOnce();
+    if (!newId) return; // refused: the form keeps everything typed
     nav('/purchases');
   };
 
   const saveAndPay = async () => {
-    if (!isValid) return;
+    if (!isValid || savingRef.current) return;
     // A correction never re-creates the bill: it goes through purchases.update.
     if (editing) return saveCorrection();
     // Save & Pay is always wired to the persisted purchase: addPurchase() awaits
@@ -454,14 +476,8 @@ function AddPurchaseForm({ editing }: { editing?: PurchaseRecord }) {
       });
       if (!ok) return;
     }
-    const rec = buildRecord(0);
-    let newId: string;
-    try {
-      newId = await addPurchase(rec);
-    } catch {
-      // addPurchase already surfaced the error toast + rehydrated.
-      return;
-    }
+    const newId = await createOnce();
+    if (!newId) return;
     const persisted = usePurchases.getState().purchases.find((p) => p.id === newId);
     if (persisted) {
       setPendingPayment(persisted);
@@ -494,10 +510,10 @@ function AddPurchaseForm({ editing }: { editing?: PurchaseRecord }) {
               </Button>
             ) : (
               <>
-            <Button variant="outline" onClick={saveUnpaid} disabled={!isValid}>
+            <Button variant="outline" onClick={saveUnpaid} disabled={!isValid || saving}>
               <Save className="size-4" /> Save Unpaid
             </Button>
-            <Button onClick={saveAndPay} disabled={!isValid}>
+            <Button onClick={saveAndPay} disabled={!isValid || saving}>
               <Banknote className="size-4" /> Save & Pay
             </Button>
               </>

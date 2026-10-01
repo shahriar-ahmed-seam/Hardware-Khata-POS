@@ -53,7 +53,8 @@ function applyCashOut(db: DB, branchId: string, amount: number, expenseId: strin
 function reverseCashOut(db: DB, branchId: string, amount: number, expenseId: string, userId: string, at: string) {
   postCashToOpenShift(db, branchId, {
     direction: 'in',
-    reason: 'refund',
+    // Its own reason: filed as 'refund' it inflated the day's customer refunds.
+    reason: 'expense_reversal',
     amount,
     refType: 'expense',
     refId: expenseId,
@@ -125,6 +126,8 @@ export interface UpdateExpenseInput {
   recurring?: boolean;
   frequency?: string;
   recurringEnd?: string;
+  /** Who is making the change. Stamped from the session at the IPC boundary. */
+  userId?: string;
 }
 
 /**
@@ -147,6 +150,11 @@ export function updateExpense(db: DB, id: string, patch: UpdateExpenseInput) {
       | Record<string, unknown>
       | undefined;
     if (!cur) throw new Error('Expense not found');
+    // A voided expense is a closed record: editing it changed the books' history
+    // (and its amount) while the drawer effect stayed reversed.
+    if ((cur.voided as number) === 1) {
+      throw new Error(`${cur.ref_no as string} was voided and cannot be changed.`);
+    }
     const now = new Date().toISOString();
 
     const colMap: Record<string, string> = {
@@ -177,7 +185,8 @@ export function updateExpense(db: DB, id: string, patch: UpdateExpenseInput) {
 
     // Decide whether the cash effect must be reversed-and-reapplied.
     const branchId = cur.branch_id as string;
-    const userId = cur.user_id as string;
+    // Who made the change (stamped from the session), not who first entered it.
+    const userId = patch.userId || (cur.user_id as string);
     const wasVoided = (cur.voided as number) === 1;
     const oldMethod = cur.payment_method as string;
     const oldAmount = cur.amount as number;
@@ -250,40 +259,17 @@ export function voidExpense(db: DB, id: string, reason?: string, userId?: string
 }
 
 /**
- * Hard delete. If the expense is Cash and not voided, reverse the drawer hit
- * first (compensating cash-in), then remove the row. Behaviour matches the mock
- * store, which deletes freely.
+ * "Delete" an expense: it is VOIDED, never removed. A hard delete erased the
+ * record — including expenses from a shift already closed on its Z-report — so
+ * money that left the drawer could vanish from the books with only a log line.
+ * Voiding reverses the drawer (for cash), keeps the row with its reason, and is
+ * idempotent. Kept as its own channel so older screens keep working.
  */
-export function deleteExpense(db: DB, id: string) {
-  return tx(db, () => {
-    const cur = db.prepare('SELECT * FROM expenses WHERE id = ?').get(id) as
-      | Record<string, unknown>
-      | undefined;
-    if (!cur) return { id, missing: true };
-
-    const now = new Date().toISOString();
-    const branchId = cur.branch_id as string;
-    const userId = cur.user_id as string;
-
-    if ((cur.payment_method as string) === 'Cash' && (cur.voided as number) === 0) {
-      reverseCashOut(db, branchId, cur.amount as number, id, userId, now);
-    }
-
-    db.prepare('DELETE FROM expenses WHERE id = ?').run(id);
-
-    logActivity(db, {
-      by: userId,
-      branchId,
-      action: 'deleted',
-      entity: 'expense',
-      entityId: id,
-      entityRef: cur.ref_no as string,
-      message: 'Deleted expense',
-      amount: cur.amount as number,
-      at: now,
-    });
-    return { id };
-  });
+export function deleteExpense(db: DB, id: string, userId?: string, reason?: string) {
+  const cur = db.prepare('SELECT voided FROM expenses WHERE id = ?').get(id) as { voided: number } | undefined;
+  if (!cur) return { id, missing: true };
+  voidExpense(db, id, reason?.trim() ? reason.trim() : 'Removed', userId);
+  return { id, voided: true };
 }
 
 // ---------- Expense Categories ----------

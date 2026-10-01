@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import {
   Banknote,
   Smartphone,
@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/Button';
 import { cn, formatBDT } from '@/lib/utils';
 import { NumberField } from '@/components/ui/NumberField';
 import { round2, sum2 } from '@/lib/money';
+import { useCan } from '@/hooks/useCan';
 
 /**
  * ============================================================================
@@ -142,22 +143,32 @@ export function PaymentModal({
   customerName,
   hasNamedCustomer = false,
   onPickCustomer,
+  startMode = 'single',
   onConfirm,
 }: Props) {
   /**
    * The FIRST payment is the one everybody makes; extra rows only appear if the
    * customer genuinely splits (part cash, part bKash). No mode switch.
    */
-  const [payments, setPayments] = useState<PaymentLine[]>([
-    { id: 'p1', method: 'Cash', amount: total },
-  ]);
+  /**
+   * Multi-Pay (B3) opens with the bill split over two rows — all of it in cash
+   * and a bKash row at 0 — so the cashier just moves part of it across. It used
+   * to open exactly the same screen as Pay: `startMode` was never read.
+   */
+  const initialPayments = (): PaymentLine[] =>
+    startMode === 'split'
+      ? [
+          { id: 'p1', method: 'Cash', amount: total },
+          { id: 'p2', method: 'bKash', amount: 0 },
+        ]
+      : [{ id: 'p1', method: 'Cash', amount: total }];
+  const [payments, setPayments] = useState<PaymentLine[]>(initialPayments);
   const amountRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (open) {
-      setPayments([{ id: 'p1', method: 'Cash', amount: total }]);
-    }
-  }, [open, total]);
+    if (open) setPayments(initialPayments());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, total, startMode]);
 
   const totalPaid = useMemo(() => sum2(payments.map((p) => p.amount || 0)), [payments]);
   const owing = round2(Math.max(0, total - totalPaid));
@@ -165,8 +176,13 @@ export function PaymentModal({
 
   /** What the customer's khata becomes if this sale is saved as it stands. */
   const newDue = round2(customerCurrentDue + owing);
-  const overCreditLimit =
-    owing > 0 && customerCreditLimit !== undefined && newDue > customerCreditLimit;
+  // An empty or zero limit means none (the customer form saves it that way),
+  // the same rule the main process enforces (backend/services/saleRules.ts).
+  const overLimitBy =
+    owing > 0 && (customerCreditLimit ?? 0) > 0 && newDue > (customerCreditLimit ?? 0);
+  // The owner or a manager may pass the limit; the sale's record says so.
+  const canPassLimit = useCan('sales.void');
+  const overCreditLimit = overLimitBy && !canPassLimit;
 
   /** Unpaid money must belong to somebody. This is the only hard block. */
   const needsCustomer = owing > 0 && !hasNamedCustomer;
@@ -202,6 +218,20 @@ export function PaymentModal({
 
   const canConfirm = !needsCustomer && !overCreditLimit;
 
+  /**
+   * Enter in an amount box takes the payment, as the button says. In a split
+   * it only does so once nothing is left owing, so an Enter after the first
+   * row cannot put the rest on the khata by accident.
+   */
+  const onAmountKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Enter' || e.shiftKey || e.altKey || e.ctrlKey) return;
+    if ((e.target as HTMLElement).tagName !== 'INPUT') return;
+    e.preventDefault();
+    if (!canConfirm) return;
+    if (isSplit && owing > 0) return;
+    confirm();
+  };
+
   /** The button says what is about to happen. No hidden modes. */
   const confirmLabel = needsCustomer
     ? 'Choose a customer first'
@@ -221,8 +251,13 @@ export function PaymentModal({
       title="Take payment"
       footer={
         <div className="flex items-center justify-between gap-3">
-          <div className="text-xs text-muted-foreground hidden sm:block">
-            <kbd className="font-mono">Esc</kbd> cancel
+          <div className="text-xs text-muted-foreground hidden sm:flex items-center gap-3">
+            <span>
+              <kbd className="font-mono">Enter</kbd> <span>take payment</span>
+            </span>
+            <span>
+              <kbd className="font-mono">Esc</kbd> <span>cancel</span>
+            </span>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" onClick={onClose}>
@@ -235,7 +270,7 @@ export function PaymentModal({
         </div>
       }
     >
-      <div className="p-5 space-y-5">
+      <div className="p-5 space-y-5" onKeyDown={onAmountKeyDown}>
         {/* ---------- THE BILL ---------- */}
         <div className="flex items-baseline justify-between border-b border-border pb-3">
           <span className="text-sm text-muted-foreground">Bill total</span>
@@ -291,7 +326,7 @@ export function PaymentModal({
         </div>
 
         {/* ---------- HOW IT ARRIVED ---------- */}
-        {totalPaid > 0 && (
+        {(totalPaid > 0 || isSplit) && (
           <div className="space-y-2">
             <div className="text-sm font-semibold">Paid by</div>
             {!isSplit ? (
@@ -418,13 +453,17 @@ export function PaymentModal({
                   becomes ৳{formatBDT(newDue, { withSymbol: false })}
                 </div>
               )}
-              {overCreditLimit && (
+              {overLimitBy && (
                 <div className="flex items-start gap-2 text-destructive text-sm border-t border-destructive/20 pt-2">
                   <AlertTriangle className="size-4 mt-0.5 shrink-0" />
                   <span>
-                    That is over the ৳
-                    {formatBDT(customerCreditLimit ?? 0, { withSymbol: false })} limit set for
-                    them. Take more now, or raise their limit in Customers.
+                    <span>That is over their credit limit of</span> ৳
+                    {formatBDT(customerCreditLimit ?? 0, { withSymbol: false })}.{' '}
+                    {canPassLimit ? (
+                      <span>You can still save it. The sale will record that the limit was passed.</span>
+                    ) : (
+                      <span>Take more now, or ask the owner or a manager.</span>
+                    )}
                   </span>
                 </div>
               )}

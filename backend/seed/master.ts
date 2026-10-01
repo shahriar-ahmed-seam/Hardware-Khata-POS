@@ -109,7 +109,7 @@ export function seedMaster(db: DB, opts: SeedMasterOptions = {}): SeededMaster {
     {
       id: 'role_cashier',
       name: 'Cashier',
-      perms: ['pos.use','pos.holdCart','pos.reprint','sales.view','sales.create','sales.return','sales.payment','products.view','stock.view','contacts.viewCustomers','contacts.editCustomers','cash.openShift','cash.closeShift','cash.move','cash.zReport'],
+      perms: ['pos.use','pos.discount','pos.priceOverride','pos.holdCart','pos.reprint','sales.view','sales.create','sales.return','sales.payment','products.view','stock.view','contacts.viewCustomers','contacts.editCustomers','cash.openShift','cash.closeShift','cash.move','cash.zReport'],
     },
     {
       id: 'role_stock',

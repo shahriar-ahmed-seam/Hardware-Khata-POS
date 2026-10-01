@@ -439,10 +439,12 @@ export function simulate(db: DB, opts: SimulateOptions = {}): SimulateResult {
     })();
     // counted cash = expected +/- small variance occasionally
     const variance = rng.chance(0.3) ? rng.int(-50, 50) : 0;
+    const counted = round2(Math.max(0, totals + variance));
     closeShift(db, {
       shiftId,
-      countedCash: round2(totals + variance),
-      carriedFloat: 5000,
+      countedCash: counted,
+      // A float can only be cash that was actually counted.
+      carriedFloat: Math.min(5000, counted),
       at: new Date(dayStart.getTime() + 21 * 3600000).toISOString(),
     });
   }

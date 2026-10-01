@@ -99,7 +99,7 @@ function sanitize(u: UserRow): SanitizedUser {
 }
 
 /** Resolve a role's permission id array from its JSON column. */
-function rolePermissions(db: DB, roleId: string): string[] {
+export function rolePermissions(db: DB, roleId: string): string[] {
   const row = db.prepare('SELECT permissions FROM roles WHERE id = ?').get(roleId) as
     | { permissions: string }
     | undefined;

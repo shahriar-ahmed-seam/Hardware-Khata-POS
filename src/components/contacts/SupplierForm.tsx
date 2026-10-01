@@ -6,6 +6,7 @@ import { NumberField } from '@/components/ui/NumberField';
 import { Avatar } from './Avatar';
 import type { Supplier } from '@/types/domain';
 import { cn } from '@/lib/utils';
+import { useCan } from '@/hooks/useCan';
 
 interface Props {
   initial?: Supplier;
@@ -27,6 +28,8 @@ const EMPTY: Supplier = {
 
 export function SupplierForm({ initial, asDrawer, onSave, onDelete, onCancel }: Props) {
   const [s, setS] = useState<Supplier>(initial ?? EMPTY);
+  // The opening balance changes what the shop owes: owner or manager only.
+  const canEditMoney = useCan('sales.void');
 
   const set = <K extends keyof Supplier>(k: K, v: Supplier[K]) => setS((x) => ({ ...x, [k]: v }));
 
@@ -122,10 +125,14 @@ export function SupplierForm({ initial, asDrawer, onSave, onDelete, onCancel }: 
                   ))}
                 </select>
               </Field>
-              <Field label="Opening balance (৳)" hint="Migration balance owed to this supplier">
+              <Field
+                label="Opening balance (৳)"
+                hint={canEditMoney ? 'Migration balance owed to this supplier' : 'Only the owner or a manager can change this'}
+              >
                 <NumberField
                   value={s.openingBalance ?? 0}
                   onChangeNumber={(v) => set('openingBalance', v || undefined)}
+                  disabled={!canEditMoney}
                 />
               </Field>
             </div>
