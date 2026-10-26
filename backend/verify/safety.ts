@@ -14,6 +14,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { openDatabase, migrate, type DB } from '../db/connection.ts';
 import { openShift, closeShift, carriedForwardCash, manualCashMove, getOpenShift } from '../services/cash.ts';
 import { seedMaster } from '../seed/master.ts';
@@ -782,7 +783,7 @@ export function runSafety(s: Suite) {
   // the source — enough to catch a handler or a setting being dropped.
   s.section('safety-reliability');
   {
-    const repo = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..');
+    const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
     const src = (f: string) => fs.readFileSync(path.join(repo, f), 'utf8');
     const main = src('electron/main.ts');
     const updater = src('electron/updater.ts');
