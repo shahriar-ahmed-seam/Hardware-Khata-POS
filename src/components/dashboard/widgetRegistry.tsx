@@ -1,5 +1,6 @@
 import type { WidgetId } from '@/stores/dashboard';
 import { Widget } from './Widget';
+import { useRange } from './range';
 // Loaded after first paint — see lazyWidgets.ts. Same names, same props as
 // ./widgets; <Widget> holds the Suspense boundary they resolve against.
 import * as W from './lazyWidgets';
@@ -13,12 +14,12 @@ export interface WidgetMeta {
 }
 
 export const WIDGET_META: Record<WidgetId, WidgetMeta> = {
-  hourlySales:              { id: 'hourlySales',              label: 'Hourly Sales',                description: "Today's sales by hour",       span: 8 },
+  hourlySales:              { id: 'hourlySales',              label: 'Hourly Sales',                description: 'Sales by hour',               span: 8 },
   salesTrend:               { id: 'salesTrend',               label: 'Sales Trend (7 days)',        description: 'Last 7 days revenue line',    span: 6 },
   salesVsPurchaseVsExpense: { id: 'salesVsPurchaseVsExpense', label: 'Sales vs Purchases vs Expenses', description: 'Monthly comparison',       span: 8 },
-  profitLossSummary:        { id: 'profitLossSummary',        label: 'Profit / Loss Summary',       description: 'Today P/L breakdown',         span: 4 },
-  topSellingProducts:       { id: 'topSellingProducts',       label: 'Top Selling Products',        description: 'Best sellers today',          span: 4 },
-  topCustomers:             { id: 'topCustomers',             label: 'Top Customers',               description: 'By total revenue',            span: 4 },
+  profitLossSummary:        { id: 'profitLossSummary',        label: 'Profit / Loss Summary',       description: 'Profit and loss',             span: 4 },
+  topSellingProducts:       { id: 'topSellingProducts',       label: 'Top Selling Products',        description: 'Best sellers',                span: 4 },
+  topCustomers:             { id: 'topCustomers',             label: 'Top Customers',               description: 'By money spent',              span: 4 },
   recentSales:              { id: 'recentSales',              label: 'Recent Sales',                description: 'Last invoices',               span: 8 },
   recentPurchases:          { id: 'recentPurchases',          label: 'Recent Purchases',            description: 'Last GRNs',                   span: 6 },
   lowStockList:             { id: 'lowStockList',             label: 'Low Stock',                   description: 'Items at or below reorder',   span: 4 },
@@ -31,21 +32,30 @@ export const WIDGET_META: Record<WidgetId, WidgetMeta> = {
   birthdayList:             { id: 'birthdayList',             label: 'Birthday List',               description: 'Customers to wish',           span: 4 },
 };
 
-interface RenderArgs {
-  removable: boolean;
-  onRemove: () => void;
-  canMoveUp: boolean;
-  canMoveDown: boolean;
-  onMoveUp: () => void;
-  onMoveDown: () => void;
+/** Range-driven widgets show the range beside their title. */
+const RANGED = new Set<WidgetId>([
+  'hourlySales',
+  'profitLossSummary',
+  'topSellingProducts',
+  'topCustomers',
+  'expenseBreakdown',
+  'paymentMethodBreakdown',
+]);
+
+export function renderWidget(id: WidgetId) {
+  return <WidgetRenderer id={id} />;
 }
 
-export function renderWidget(id: WidgetId, args: RenderArgs) {
+function WidgetRenderer({ id }: { id: WidgetId }) {
+  const { label: period } = useRange();
   const m = WIDGET_META[id];
   const common = {
     title: m.label,
     description: m.description,
-    ...args,
+    // Own text node beside the title, so it translates.
+    badge: RANGED.has(id) ? (
+      <span className="text-xs font-normal rounded bg-secondary px-1.5 py-0.5 text-muted-foreground">{period}</span>
+    ) : undefined,
   };
 
   switch (id) {
@@ -62,9 +72,9 @@ export function renderWidget(id: WidgetId, args: RenderArgs) {
     case 'salesVsPurchaseVsExpense':
       return <Widget {...common} to="/reports"><W.SalesVsPurchaseVsExpense /></Widget>;
     case 'profitLossSummary':
-      return <Widget {...common} to="/reports" toLabel="P/L Report"><W.ProfitLossSummary /></Widget>;
+      return <Widget {...common} to="/reports/profit-loss" toLabel="Profit / Loss Report"><W.ProfitLossSummary /></Widget>;
     case 'topSellingProducts':
-      return <Widget {...common} to="/products"><W.TopSellingProducts /></Widget>;
+      return <Widget {...common}><W.TopSellingProducts /></Widget>;
     case 'topCustomers':
       return <Widget {...common} to="/contacts/customers"><W.TopCustomers /></Widget>;
     case 'recentSales':

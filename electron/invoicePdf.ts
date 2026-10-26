@@ -11,6 +11,7 @@ import {
 import { getBackupConfig, setBackupConfig } from '../backend/services/backup.ts';
 import { getDb, dbFilePath } from './db.ts';
 import { pdfOpenError } from './guard.ts';
+import { htmlToPdf, isPrintWindow } from './printing.ts';
 
 /**
  * INVOICE → PDF (the Electron half)
@@ -27,6 +28,12 @@ import { pdfOpenError } from './guard.ts';
  * same black-on-white receipt that the Print button sends to the printer. No
  * app chrome, no dark theme, no second layout to maintain.
  *
+ * Screens that send the sheet's HTML (`payload.html`) are rendered in a hidden
+ * window instead (electron/printing.ts `htmlToPdf`), so the PDF is that sheet
+ * whatever the app window shows. Both paths time out after 30 s (R75). Writing
+ * `.tmp` then renaming belongs to `saveInvoicePdfCopies` in the backend and is
+ * not done here.
+ *
  * WHY A4
  * The PDF is an archive/emailing artefact, not the thermal slip. `.print-frame-sheet`
  * is `width: auto` under print, and the receipt body is fluid, so on A4 it simply
@@ -36,7 +43,28 @@ import { pdfOpenError } from './guard.ts';
 const PDF_PAGE_SIZE = 'A4' as const;
 
 function targetWindow(): BrowserWindow | null {
-  return BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null;
+  const focused = BrowserWindow.getFocusedWindow();
+  if (focused && !isPrintWindow(focused)) return focused;
+  return BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && !isPrintWindow(w)) ?? null;
+}
+
+/** printToPDF used to have no limit at all; a stuck render hung the button. */
+const PDF_TIMEOUT_MS = 30_000;
+
+function pdfWithTimeout(p: Promise<Buffer>): Promise<Buffer> {
+  return new Promise<Buffer>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('it took too long (over 30 s)')), PDF_TIMEOUT_MS);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
 }
 
 /** Folder holding the live database — invoice PDFs are archived alongside it. */
@@ -74,22 +102,34 @@ export interface SavePdfResponse extends SaveResult {
  */
 export async function saveInvoicePdf(payload: {
   invoiceNo?: string;
+  /**
+   * The invoice's print sheet as one self-contained page (src/lib/printing.ts
+   * `buildPrintHtml`). When given, it is rendered in a hidden window, so the
+   * PDF no longer depends on what the app window happens to show (R75). Without
+   * it (an older screen) the app window is captured as before.
+   */
+  html?: string;
 }): Promise<SavePdfResponse | { ok: false; error: string }> {
-  const win = targetWindow();
-  if (!win) return { ok: false, error: 'No window is open to render the invoice.' };
-
   const invoiceNo = (payload?.invoiceNo ?? '').trim();
   const fileName = invoicePdfFileName(invoiceNo);
+  const html = typeof payload?.html === 'string' && payload.html.trim() ? payload.html : null;
+
+  const win = html ? null : targetWindow();
+  if (!html && !win) return { ok: false, error: 'No window is open to render the invoice.' };
 
   let pdf: Buffer;
   try {
-    pdf = await win.webContents.printToPDF({
-      pageSize: PDF_PAGE_SIZE,
-      // The receipt draws its own rules and the barcode as a background, so
-      // backgrounds must be kept or the barcode would come out blank.
-      printBackground: true,
-      landscape: false,
-    });
+    pdf = html
+      ? await htmlToPdf(html)
+      : await pdfWithTimeout(
+          win!.webContents.printToPDF({
+            pageSize: PDF_PAGE_SIZE,
+            // The receipt draws its own rules and the barcode as a background, so
+            // backgrounds must be kept or the barcode would come out blank.
+            printBackground: true,
+            landscape: false,
+          }),
+        );
   } catch (e) {
     return {
       ok: false,

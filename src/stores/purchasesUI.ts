@@ -26,7 +26,7 @@ export const PURCHASE_COLUMN_META: Record<PurchaseColumn, { label: string; align
   ref:           { label: 'Reference' },
   supplier:      { label: 'Supplier' },
   branch:        { label: 'Branch' },
-  items:         { label: 'Items', align: 'right' },
+  items:         { label: 'Lines', align: 'right' },
   subtotal:      { label: 'Subtotal', align: 'right' },
   discount:      { label: 'Discount', align: 'right' },
   tax:           { label: 'Tax', align: 'right' },
@@ -39,7 +39,8 @@ export const PURCHASE_COLUMN_META: Record<PurchaseColumn, { label: string; align
   user:          { label: 'By' },
 };
 
-const DEFAULT: PurchaseColumn[] = ['date', 'ref', 'supplier', 'items', 'total', 'paid', 'due', 'paymentStatus', 'status', 'user'];
+// 7 columns fit 1366px; status rides in the Payment cell when not "received".
+const DEFAULT: PurchaseColumn[] = ['date', 'ref', 'supplier', 'total', 'paid', 'due', 'paymentStatus'];
 
 interface State {
   columns: PurchaseColumn[];
@@ -69,6 +70,11 @@ export const usePurchasesUI = create<State>()(
       move: (c, dir) => set((s) => ({ columns: move(s.columns, c, dir) })),
       reset: () => set({ columns: DEFAULT }),
     }),
-    { name: 'pos-purchases-ui' },
+    {
+      name: 'pos-purchases-ui',
+      // v2: new 7-column default (redesign) — older saved layouts reset once.
+      version: 2,
+      migrate: () => ({ columns: DEFAULT }) as Partial<State> as State,
+    },
   ),
 );

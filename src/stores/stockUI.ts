@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+// "Last sold" / "Last received" were dropped: one showed the product's edit
+// time and the other was always "—".
 export const ALL_STOCK_COLUMNS = [
   'image',
   'sku',
@@ -13,15 +15,14 @@ export const ALL_STOCK_COLUMNS = [
   'reorder',
   'valueCost',
   'valueRetail',
-  'lastSold',
-  'lastReceived',
   'status',
 ] as const;
 
 export type StockColumn = (typeof ALL_STOCK_COLUMNS)[number];
 
 export const STOCK_COLUMN_META: Record<StockColumn, { label: string; align?: 'right' | 'left' }> = {
-  image:        { label: '' },
+  // Header cell stays empty for the picture; the column picker shows this label.
+  image:        { label: 'Picture' },
   sku:          { label: 'SKU' },
   barcode:      { label: 'Barcode' },
   name:         { label: 'Product' },
@@ -29,15 +30,14 @@ export const STOCK_COLUMN_META: Record<StockColumn, { label: string; align?: 'ri
   brand:        { label: 'Brand' },
   unit:         { label: 'Unit' },
   stock:        { label: 'Stock', align: 'right' },
-  reorder:      { label: 'Reorder', align: 'right' },
-  valueCost:    { label: 'Value @ Cost', align: 'right' },
-  valueRetail:  { label: 'Value @ Retail', align: 'right' },
-  lastSold:     { label: 'Last Sold' },
-  lastReceived: { label: 'Last Received' },
+  reorder:      { label: 'Reorder at', align: 'right' },
+  valueCost:    { label: 'Value at cost', align: 'right' },
+  valueRetail:  { label: 'Value at sell price', align: 'right' },
   status:       { label: 'Status' },
 };
 
-const DEFAULT: StockColumn[] = ['image', 'name', 'sku', 'category', 'stock', 'reorder', 'valueCost', 'status'];
+// 6 data columns + Update = 7 at 1366px. SKU stays as a line under the name.
+const DEFAULT: StockColumn[] = ['name', 'category', 'stock', 'reorder', 'valueCost', 'status'];
 
 interface State {
   columns: StockColumn[];
@@ -67,6 +67,11 @@ export const useStockUI = create<State>()(
       move: (c, dir) => set((s) => ({ columns: move(s.columns, c, dir) })),
       reset: () => set({ columns: DEFAULT }),
     }),
-    { name: 'pos-stock-ui' },
+    {
+      name: 'pos-stock-ui',
+      // v2: new default set (redesign) — older saved layouts reset once.
+      version: 2,
+      migrate: () => ({ columns: DEFAULT }) as Partial<State> as State,
+    },
   ),
 );

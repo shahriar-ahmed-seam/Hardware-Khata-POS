@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { printSheet } from '@/lib/printing';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { PrintSheet } from '@/components/ui/PrintSheet';
@@ -27,6 +28,19 @@ export function ShiftReport({ open, onClose, shift, variant = 'X' }: Props) {
   // Printed copy follows the printer configured in Settings → Printers.
   const paper = usePaperWidth();
   const shopName = useSettings((s) => s.business.name?.trim() ?? '');
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const [printing, setPrinting] = useState(false);
+
+  /** Default printer, silently (src/lib/printing.ts); the dialog if none. */
+  const print = async () => {
+    if (printing) return;
+    setPrinting(true);
+    try {
+      await printSheet(sheetRef.current, { kind: 'receipt' });
+    } finally {
+      setPrinting(false);
+    }
+  };
 
   // Mirror Purchases.tsx: load this (often closed) shift's movements on demand
   // so the X/Z report shows real cash-in/out. No-op without a backend.
@@ -57,8 +71,8 @@ export function ShiftReport({ open, onClose, shift, variant = 'X' }: Props) {
         subtitle={shift.status === 'open' ? 'Interim snapshot · shift remains open' : 'Final report · locked'}
         footer={
           <div className="flex items-center justify-end gap-2">
-            <Button variant="outline" onClick={() => window.print()}>
-              <Printer className="size-4" /> Print
+            <Button variant="outline" onClick={() => void print()} disabled={printing}>
+              <Printer className="size-4" /> {printing ? 'Printing…' : 'Print'}
             </Button>
             <Button onClick={onClose}>Close</Button>
           </div>
@@ -167,7 +181,7 @@ export function ShiftReport({ open, onClose, shift, variant = 'X' }: Props) {
           print as light-on-dark), so the sheet re-renders the same numbers in
           plain black on white. */}
       {open && (
-        <PrintSheet paper={paper}>
+        <PrintSheet paper={paper} sheetRef={sheetRef}>
           <ShiftReportSheet
             shift={shift}
             variant={variant}

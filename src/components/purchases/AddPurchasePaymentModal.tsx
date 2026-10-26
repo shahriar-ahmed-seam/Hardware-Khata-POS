@@ -4,6 +4,7 @@ import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { NumberField } from '@/components/ui/NumberField';
+import { FormField } from '@/components/ui/FormField';
 import { DateTimeField } from '@/components/ui/DateTimeField';
 import { nowLocalInput, fromLocalInput } from '@/lib/datetime';
 import { Banknote, Smartphone, CreditCard, Building2, FileText, Save } from 'lucide-react';
@@ -23,9 +24,11 @@ interface Props {
   open: boolean;
   onClose: () => void;
   purchase: PurchaseRecord;
+  /** "Pay later" when opened right after saving a bill. */
+  cancelLabel?: string;
 }
 
-export function AddPurchasePaymentModal({ open, onClose, purchase }: Props) {
+export function AddPurchasePaymentModal({ open, onClose, purchase, cancelLabel }: Props) {
   const addPayment = usePurchases((s) => s.addPayment);
   const [method, setMethod] = useState<PaymentMethod>('Cash');
   const [amount, setAmount] = useState(purchase.due);
@@ -68,18 +71,22 @@ export function AddPurchasePaymentModal({ open, onClose, purchase }: Props) {
   };
 
   const m = METHODS.find((x) => x.id === method)!;
+  const [whenOpen, setWhenOpen] = useState(false);
+  useEffect(() => {
+    if (open) setWhenOpen(false);
+  }, [open]);
 
   return (
     <Modal
       open={open}
       onClose={onClose}
-      width="max-w-2xl"
-      title="Supply Payment"
-      subtitle={`${purchase.refNo} · ${purchase.supplierName}`}
+      width="max-w-xl"
+      title="Pay the supplier"
+      subtitle={`${purchase.supplierName} · ${purchase.refNo}`}
       footer={
         <div className="flex items-center justify-end gap-2">
           <Button variant="outline" onClick={onClose}>
-            Cancel
+            {cancelLabel ?? 'Cancel'}
           </Button>
           <Button onClick={() => void submit()} disabled={amount <= 0 || saving}>
             <Save className="size-4" /> Save Payment
@@ -87,66 +94,58 @@ export function AddPurchasePaymentModal({ open, onClose, purchase }: Props) {
         </div>
       }
     >
-      <div className="p-4 space-y-3">
-        {/*
-          An "Advance Balance ৳ 0.00" tile used to sit here. It was a hard-coded
-          zero — there is no advance-balance concept in the backend at all, so it
-          was a number the shop could have believed. Removed rather than faked.
-        */}
-        <div>
-          <label className="text-xs font-semibold text-muted-foreground">
-            Paid on *
-          </label>
-          <DateTimeField value={paidAt} onChange={setPaidAt} />
-        </div>
+      <form
+        className="p-4 space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+      >
+        <FormField label="Amount" required>
+          {(f) => (
+            <div className="space-y-2">
+              <NumberField
+                {...f}
+                autoFocus
+                value={amount}
+                onChangeNumber={setAmount}
+                className="h-11 text-right text-lg font-semibold"
+              />
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setAmount(purchase.due)}
+                  className="h-8 px-3 text-xs rounded-md border border-border hover:bg-secondary"
+                >
+                  Full due
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAmount(Math.round(purchase.due / 2))}
+                  className="h-8 px-3 text-xs rounded-md border border-border hover:bg-secondary"
+                >
+                  Half
+                </button>
+              </div>
+            </div>
+          )}
+        </FormField>
 
-        {/* Outstanding indicator */}
-        <div className="rounded-lg border border-border p-3 flex items-center justify-between">
-          <span className="text-sm text-muted-foreground">Outstanding due</span>
-          <span className="tabular text-base font-semibold text-destructive">
-            {formatBDT(purchase.due)}
-          </span>
-        </div>
-
-        <div>
-          <label className="text-xs font-semibold text-muted-foreground">Amount *</label>
-          <NumberField
-            autoFocus
-            value={amount}
-            onChangeNumber={setAmount}
-            className="text-right text-lg"
-          />
-          <div className="flex items-center gap-1 mt-1">
-            <button
-              onClick={() => setAmount(purchase.due)}
-              className="text-xs px-2 h-6 rounded border border-border hover:bg-secondary"
-            >
-              Full due
-            </button>
-            <button
-              onClick={() => setAmount(Math.round(purchase.due / 2))}
-              className="text-xs px-2 h-6 rounded border border-border hover:bg-secondary"
-            >
-              Half
-            </button>
-          </div>
-        </div>
-
-        <div>
-          <label className="text-xs font-semibold text-muted-foreground">
-            Payment Method *
-          </label>
-          <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 mt-1">
+        <div className="space-y-2">
+          <div className="text-sm font-medium">Paid by</div>
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
             {METHODS.map((opt) => {
               const Icon = opt.icon;
               return (
                 <button
                   key={opt.id}
+                  type="button"
+                  aria-pressed={method === opt.id}
                   onClick={() => setMethod(opt.id)}
                   className={cn(
-                    'h-12 rounded-md border text-xs font-medium transition inline-flex flex-col items-center justify-center gap-1',
+                    'h-12 rounded-md border text-sm font-medium transition inline-flex flex-col items-center justify-center gap-0.5',
                     method === opt.id
-                      ? 'border-primary bg-primary/10 text-primary'
+                      ? 'border-primary bg-primary/10 text-foreground'
                       : 'border-border hover:bg-secondary',
                   )}
                 >
@@ -159,24 +158,25 @@ export function AddPurchasePaymentModal({ open, onClose, purchase }: Props) {
         </div>
 
         {m.needsRef && (
-          <div>
-            <label className="text-xs font-semibold text-muted-foreground">
-              {m.label} reference / TxID
-            </label>
-            <Input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="TX1234567" />
-          </div>
+          <FormField label="Reference / TxID">
+            {(f) => (
+              <Input {...f} value={reference} onChange={(e) => setReference(e.target.value)} placeholder="TX1234567" />
+            )}
+          </FormField>
         )}
 
         {overpaying && (
-          <div className="rounded-md bg-warning/10 text-warning px-3 py-2 text-xs">
-            That is more than the {formatBDT(purchase.due)} still owed on this bill. The extra
-            will reduce your overall balance with this supplier.
+          <div className="rounded-md bg-warning/10 text-warning px-3 py-2 text-sm">
+            <div>That is more than is still owed on this bill. The extra lowers your overall balance with this supplier.</div>
           </div>
         )}
 
-        {/* What the bill looks like once this is saved — visible before
-            committing, not after. */}
+        {/* One summary: what the bill looks like once this is saved. */}
         <div className="rounded-lg border border-border p-3 space-y-1 text-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">Bill total</span>
+            <span className="tabular">{formatBDT(purchase.total)}</span>
+          </div>
           <div className="flex items-center justify-between">
             <span className="text-muted-foreground">Already paid</span>
             <span className="tabular">{formatBDT(purchase.paid)}</span>
@@ -197,7 +197,26 @@ export function AddPurchasePaymentModal({ open, onClose, purchase }: Props) {
             </span>
           </div>
         </div>
-      </div>
+
+        {/* Rarely changed, so it comes last and folded. */}
+        {whenOpen ? (
+          <FormField label="Paid on" required>
+            <DateTimeField value={paidAt} onChange={setPaidAt} />
+          </FormField>
+        ) : (
+          <div className="text-sm text-muted-foreground">
+            <span>Paid on: now</span> ·{' '}
+            <button
+              type="button"
+              onClick={() => setWhenOpen(true)}
+              className="text-primary hover:underline focus-ring rounded"
+            >
+              change
+            </button>
+          </div>
+        )}
+        <button type="submit" className="hidden" aria-hidden tabIndex={-1} />
+      </form>
     </Modal>
   );
 }

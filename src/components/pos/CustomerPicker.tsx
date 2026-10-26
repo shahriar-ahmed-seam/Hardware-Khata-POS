@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Search, Plus, User, Phone, Wallet, AlertTriangle, Check } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { Search, Plus, User, AlertTriangle, Check } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
+import { FormField } from '@/components/ui/FormField';
+import { Segmented } from '@/components/ui/Segmented';
+import { labelFor } from '@/lib/labels';
 import type { Customer } from '@/types/domain';
 import { cn, formatBDT } from '@/lib/utils';
 import { api } from '@/lib/api';
@@ -24,11 +27,17 @@ interface Props {
    * first is one click of friction for nothing.
    */
   startInAdd?: boolean;
+  /** POS: pin "Walk-in customer" (id 'cu1') as the first row, to undo a pick. */
+  showWalkIn?: boolean;
 }
 
-export function CustomerPicker({ open, onClose, selectedId, onSelect, startInAdd }: Props) {
+const WALK_IN = 'cu1';
+
+export function CustomerPicker({ open, onClose, selectedId, onSelect, startInAdd, showWalkIn }: Props) {
   const [q, setQ] = useState('');
   const [adding, setAdding] = useState(!!startInAdd);
+  const [hi, setHi] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
   const qc = useQueryClient();
   const customersQuery = useCustomersQuery();
 
@@ -40,6 +49,7 @@ export function CustomerPicker({ open, onClose, selectedId, onSelect, startInAdd
     // Reset on every open/close so a previous visit's search text or half-typed
     // new customer never carries over.
     setQ('');
+    setHi(0);
     setAdding(open ? !!startInAdd : false);
   }, [open, startInAdd]);
 
@@ -54,6 +64,31 @@ export function CustomerPicker({ open, onClose, selectedId, onSelect, startInAdd
     onClose();
   };
 
+  // Rows in keyboard order: Walk-in first (POS, no search), then matches.
+  const walkInRow = showWalkIn && !q.trim();
+  const ids = useMemo(
+    () => [...(walkInRow ? [WALK_IN] : []), ...filtered.map((c) => c.id)],
+    [walkInRow, filtered],
+  );
+  useEffect(() => setHi(0), [q]);
+  useEffect(() => {
+    listRef.current?.querySelector(`[data-row="${hi}"]`)?.scrollIntoView({ block: 'nearest' });
+  }, [hi]);
+
+  /** ↑ / ↓ move, Enter picks; with no match Enter opens "New" with the text. */
+  const onSearchKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown') setHi((h) => Math.min(ids.length - 1, h + 1));
+    else if (e.key === 'ArrowUp') setHi((h) => Math.max(0, h - 1));
+    else if (e.key === 'Enter') {
+      if (ids[hi]) pick(ids[hi]);
+      else if (!loading) setAdding(true);
+    } else return;
+    e.preventDefault();
+  };
+  // Typed text prefills the new-customer form: digits → phone, else name.
+  const typed = q.trim();
+  const typedIsPhone = /^[\d\s+-]+$/.test(typed);
+
   const addCustomerInline = async (data: {
     name: string;
     phone: string;
@@ -63,7 +98,7 @@ export function CustomerPicker({ open, onClose, selectedId, onSelect, startInAdd
       // Persist, then refetch and select the returned backend id.
       const res = await api<{ id: string }>('customers.create', {
         name: data.name,
-        phone: data.phone,
+        phone: data.phone || undefined,
         group: data.group,
       });
       await qc.invalidateQueries({ queryKey: [CUSTOMERS_KEY] });
@@ -74,7 +109,7 @@ export function CustomerPicker({ open, onClose, selectedId, onSelect, startInAdd
   };
 
   return (
-    <Modal open={open} onClose={onClose} width="max-w-2xl" title="Select Customer" subtitle="F3 from POS">
+    <Modal open={open} onClose={onClose} width="max-w-xl" title="Choose customer">
       <div className="p-4">
         {!adding && (
           <>
@@ -85,8 +120,10 @@ export function CustomerPicker({ open, onClose, selectedId, onSelect, startInAdd
                   autoFocus
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
+                  onKeyDown={onSearchKey}
                   placeholder="Search name or phone…"
-                  className="pl-9 h-10"
+                  aria-label="Search customers"
+                  className="pl-9"
                 />
               </div>
               <Button onClick={() => setAdding(true)}>
@@ -94,42 +131,62 @@ export function CustomerPicker({ open, onClose, selectedId, onSelect, startInAdd
               </Button>
             </div>
 
-            <div className="max-h-[55vh] overflow-auto scroll-hide rounded-lg border border-border divide-y divide-border">
+            <div
+              ref={listRef}
+              className="max-h-[55vh] overflow-auto rounded-lg border border-border divide-y divide-border"
+            >
+              {walkInRow && (
+                <button
+                  data-row={0}
+                  onClick={() => pick(WALK_IN)}
+                  onMouseEnter={() => setHi(0)}
+                  className={cn(
+                    'w-full flex items-center gap-3 px-3 py-3 text-left transition',
+                    hi === 0 ? 'bg-primary/10' : 'hover:bg-secondary/50',
+                  )}
+                >
+                  <User className="size-4 text-muted-foreground shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold">Walk-in customer</div>
+                    <div className="text-xs text-muted-foreground">No name, pays now</div>
+                  </div>
+                  {selectedId === WALK_IN && <Check className="size-4 text-primary" />}
+                </button>
+              )}
               {loading && (
                 <div className="p-8 text-center text-sm text-muted-foreground">
                   Loading customers…
                 </div>
               )}
               {!loading && filtered.length === 0 && (
-                <div className="p-8 text-center text-sm text-muted-foreground">
-                  No customers match "{q}". <button onClick={() => setAdding(true)} className="text-primary underline">Add new</button>
+                <div className="p-8 text-center text-sm text-muted-foreground space-y-3">
+                  <div>No customer matches this search.</div>
+                  <Button variant="outline" size="md" onClick={() => setAdding(true)}>
+                    <Plus className="size-4" /> Add new customer
+                  </Button>
                 </div>
               )}
-              {filtered.map((c) => {
+              {filtered.map((c, i) => {
                 const overLimit = !!c.creditLimit && c.due >= c.creditLimit;
+                const row = i + (walkInRow ? 1 : 0);
                 return (
                   <button
                     key={c.id}
+                    data-row={row}
                     onClick={() => pick(c.id)}
+                    onMouseEnter={() => setHi(row)}
                     className={cn(
-                      'w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-secondary/50 transition',
-                      selectedId === c.id && 'bg-primary/5',
+                      'w-full flex items-center gap-3 px-3 py-3 text-left transition',
+                      hi === row ? 'bg-primary/10' : 'hover:bg-secondary/50',
                     )}
                   >
-                    <div className="size-9 rounded-full bg-gradient-to-br from-primary to-accent grid place-items-center text-white text-xs font-bold">
-                      {c.name
-                        .split(' ')
-                        .map((n) => n[0])
-                        .slice(0, 2)
-                        .join('')}
-                    </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <div className="text-sm font-semibold truncate">{c.name}</div>
                         <Badge
                           variant={c.group === 'Wholesale' ? 'info' : c.group === 'Contractor' ? 'warning' : 'default'}
                         >
-                          {c.group}
+                          {labelFor('priceGroup', c.group)}
                         </Badge>
                         {overLimit && (
                           <Badge variant="destructive">
@@ -137,19 +194,21 @@ export function CustomerPicker({ open, onClose, selectedId, onSelect, startInAdd
                           </Badge>
                         )}
                       </div>
-                      <div className="text-xs text-muted-foreground font-mono">{c.phone}</div>
+                      {c.phone && c.phone !== '-' && (
+                        <div className="text-sm text-muted-foreground tabular">{c.phone}</div>
+                      )}
                     </div>
-                    <div className="text-right">
+                    <div className="text-right shrink-0">
                       {c.due > 0 ? (
-                        <div className="text-xs tabular text-destructive">
-                          Due {formatBDT(c.due, { withSymbol: false })}
+                        <div className="text-sm font-semibold tabular text-destructive">
+                          <span>Due</span> <span>{formatBDT(c.due, { withSymbol: false })}</span>
                         </div>
                       ) : (
                         <div className="text-xs text-muted-foreground">No dues</div>
                       )}
                       {c.creditLimit ? (
                         <div className="text-xs text-muted-foreground">
-                          Limit ৳{c.creditLimit.toLocaleString()}
+                          <span>Limit</span> <span className="tabular">{formatBDT(c.creditLimit)}</span>
                         </div>
                       ) : null}
                     </div>
@@ -161,63 +220,75 @@ export function CustomerPicker({ open, onClose, selectedId, onSelect, startInAdd
           </>
         )}
 
-        {adding && <NewCustomerForm onAdd={addCustomerInline} onCancel={() => setAdding(false)} />}
+        {adding && (
+          <NewCustomerForm
+            initialName={typed && !typedIsPhone ? typed : ''}
+            initialPhone={typed && typedIsPhone ? typed : ''}
+            onAdd={addCustomerInline}
+            onCancel={() => setAdding(false)}
+          />
+        )}
       </div>
     </Modal>
   );
 }
 
 function NewCustomerForm({
+  initialName = '',
+  initialPhone = '',
   onAdd,
   onCancel,
 }: {
+  initialName?: string;
+  initialPhone?: string;
   onAdd: (d: { name: string; phone: string; group: Customer['group'] }) => void;
   onCancel: () => void;
 }) {
-  const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
+  const [name, setName] = useState(initialName);
+  const [phone, setPhone] = useState(initialPhone);
   const [group, setGroup] = useState<Customer['group']>('Retail');
-
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        if (name.trim()) onAdd({ name: name.trim(), phone: phone.trim() || '-', group });
+        // An empty phone stays empty (it used to be saved as "-").
+        if (name.trim()) onAdd({ name: name.trim(), phone: phone.trim(), group });
       }}
       className="space-y-3"
     >
-      <div className="text-sm font-semibold flex items-center gap-2">
+      <div className="text-base font-semibold flex items-center gap-2">
         <User className="size-4" /> Add new customer
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div>
-          <label className="text-xs font-semibold text-muted-foreground">Name *</label>
-          <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} />
-        </div>
-        <div>
-          <label className="text-xs font-semibold text-muted-foreground">Phone</label>
-          <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="01XXX-XXXXXX" />
-        </div>
-        <div className="md:col-span-2">
-          <label className="text-xs font-semibold text-muted-foreground">Group</label>
-          <div className="flex items-center gap-1 p-0.5 bg-secondary rounded-md text-xs mt-1">
-            {(['Retail', 'Wholesale', 'Contractor'] as Customer['group'][]).map((g) => (
-              <button
-                key={g}
-                type="button"
-                onClick={() => setGroup(g)}
-                className={cn(
-                  'flex-1 h-9 rounded font-medium transition',
-                  group === g
-                    ? 'bg-card text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground',
-                )}
-              >
-                {g}
-              </button>
-            ))}
-          </div>
-        </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <FormField label="Name" required>
+          {(f) => <Input {...f} autoFocus={!initialPhone} value={name} onChange={(e) => setName(e.target.value)} />}
+        </FormField>
+        <FormField label="Phone">
+          {(f) => (
+            <Input
+              {...f}
+              autoFocus={!!initialPhone}
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="01XXX-XXXXXX"
+              inputMode="tel"
+            />
+          )}
+        </FormField>
+        <FormField label="Price group" className="sm:col-span-2">
+          {() => (
+            <Segmented
+              ariaLabel="Price group"
+              fullWidth
+              value={group}
+              onChange={setGroup}
+              options={(['Retail', 'Wholesale', 'Contractor'] as Customer['group'][]).map((g) => ({
+                value: g,
+                label: labelFor('priceGroup', g),
+              }))}
+            />
+          )}
+        </FormField>
       </div>
       <div className="flex items-center justify-end gap-2 pt-2">
         <Button type="button" variant="outline" onClick={onCancel}>

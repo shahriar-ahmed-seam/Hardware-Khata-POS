@@ -4,20 +4,22 @@ import { Popover } from '@/components/ui/Popover';
 import { Button } from '@/components/ui/Button';
 import { useDashboard, type TimeRange as TR } from '@/stores/dashboard';
 import { todayLocalDateInput } from '@/lib/datetime';
+import { formatDayMonth } from '@/lib/formatDate';
+import { useLang } from '@/lib/i18n';
+import { RANGE_LABEL } from './range';
 
-const LABELS: Record<TR, string> = {
-  today: 'Today',
-  yesterday: 'Yesterday',
-  week: 'This Week',
-  month: 'This Month',
-  lastMonth: 'Last Month',
-  custom: 'Custom',
-};
+const LABELS: Record<TR, string> = { ...RANGE_LABEL, custom: 'Custom dates' };
 
 const OPTIONS: TR[] = ['today', 'yesterday', 'week', 'month', 'lastMonth', 'custom'];
 
 export function TimeRange() {
   const { range, setRange, customRange, setCustomRange } = useDashboard();
+  const lang = useLang((s) => s.lang);
+  // Custom: the trigger shows the dates themselves ("1 Jan – 31 Jan").
+  const customText =
+    range === 'custom' && customRange
+      ? `${formatDayMonth(customRange.from + 'T00:00', { lang })} – ${formatDayMonth(customRange.to + 'T00:00', { lang })}`
+      : null;
 
   /**
    * CUSTOM RANGE — held locally until Apply.
@@ -58,13 +60,18 @@ export function TimeRange() {
       trigger={(_o, set) => (
         <button
           onClick={() => set(true)}
-          title={`Range: ${LABELS[range]}`}
           aria-label="Time range"
-          className="h-10 px-2.5 inline-flex items-center gap-1 rounded-md border border-border hover:bg-secondary text-muted-foreground hover:text-foreground transition"
+          className="h-10 px-3 inline-flex items-center gap-1.5 rounded-md border border-border hover:bg-secondary text-foreground transition"
         >
-          <Calendar className="size-4" />
-          <span className="text-xs font-medium hidden xl:inline">{LABELS[range]}</span>
-          <ChevronDown className="size-3" />
+          <Calendar className="size-4 text-muted-foreground" />
+          {customText ? (
+            <span className="text-sm font-medium tabular whitespace-nowrap" data-no-i18n>
+              {customText}
+            </span>
+          ) : (
+            <span className="text-sm font-medium whitespace-nowrap">{LABELS[range]}</span>
+          )}
+          <ChevronDown className="size-4 text-muted-foreground" />
         </button>
       )}
     >
@@ -81,7 +88,7 @@ export function TimeRange() {
                   setRange('custom');
                 }
               }}
-              className={`w-full text-left px-3 py-1.5 text-sm hover:bg-secondary ${
+              className={`w-full text-left px-3 py-2.5 text-sm hover:bg-secondary ${
                 range === opt ? 'text-primary font-medium' : ''
               }`}
             >
@@ -90,7 +97,6 @@ export function TimeRange() {
           ))}
           {range === 'custom' && (
             <div className="border-t border-border mt-2 pt-3 px-3 pb-3 space-y-2">
-              <div className="text-xs text-muted-foreground">Custom range</div>
               <div className="grid grid-cols-2 gap-2">
                 <label className="block">
                   <span className="text-xs text-muted-foreground">From</span>
@@ -99,7 +105,7 @@ export function TimeRange() {
                     value={from}
                     max={to || undefined}
                     onChange={(e) => setFrom(e.target.value)}
-                    className="h-8 w-full rounded border border-input bg-background px-2 text-xs"
+                    className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm"
                   />
                 </label>
                 <label className="block">
@@ -109,7 +115,7 @@ export function TimeRange() {
                     value={to}
                     min={from || undefined}
                     onChange={(e) => setTo(e.target.value)}
-                    className="h-8 w-full rounded border border-input bg-background px-2 text-xs"
+                    className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm"
                   />
                 </label>
               </div>
@@ -119,7 +125,6 @@ export function TimeRange() {
                 </div>
               )}
               <Button
-                size="sm"
                 className="w-full"
                 disabled={!canApply}
                 onClick={() => {
@@ -130,11 +135,6 @@ export function TimeRange() {
               >
                 Apply
               </Button>
-              {customRange && (
-                <div className="text-xs text-muted-foreground text-center">
-                  Showing {customRange.from} to {customRange.to}
-                </div>
-              )}
             </div>
           )}
         </div>

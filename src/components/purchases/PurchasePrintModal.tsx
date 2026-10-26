@@ -1,4 +1,6 @@
+import { useRef, useState } from 'react';
 import { Printer } from 'lucide-react';
+import { printSheet } from '@/lib/printing';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { PrintSheet } from '@/components/ui/PrintSheet';
@@ -31,8 +33,21 @@ interface Props {
 
 export function PurchasePrintModal({ open, onClose, purchase }: Props) {
   const paper = usePaperWidth();
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const [printing, setPrinting] = useState(false);
 
   if (!open || !purchase) return null;
+
+  /** An A4 printer if the shop has one, else the default; the dialog if none. */
+  const print = async () => {
+    if (printing) return;
+    setPrinting(true);
+    try {
+      await printSheet(sheetRef.current, { kind: 'document' });
+    } finally {
+      setPrinting(false);
+    }
+  };
 
   return (
     <>
@@ -47,8 +62,8 @@ export function PurchasePrintModal({ open, onClose, purchase }: Props) {
             <div className="text-xs text-muted-foreground">
               File this against the supplier's own invoice.
             </div>
-            <Button onClick={() => window.print()}>
-              <Printer className="size-4" /> Print
+            <Button onClick={() => void print()} disabled={printing}>
+              <Printer className="size-4" /> {printing ? 'Printing…' : 'Print'}
             </Button>
           </div>
         }
@@ -58,7 +73,7 @@ export function PurchasePrintModal({ open, onClose, purchase }: Props) {
         </div>
       </Modal>
 
-      <PrintSheet paper={paper}>
+      <PrintSheet paper={paper} sheetRef={sheetRef}>
         <PurchaseSheet purchase={purchase} />
       </PrintSheet>
     </>

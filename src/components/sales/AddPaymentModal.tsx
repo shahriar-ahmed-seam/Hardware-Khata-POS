@@ -8,6 +8,9 @@ import { nowLocalInput, fromLocalInput } from '@/lib/datetime';
 import { useSales, type SaleRecord, type SalePayment } from '@/stores/sales';
 import { formatBDT, cn } from '@/lib/utils';
 import { toast } from '@/stores/toast';
+import { FormField } from '@/components/ui/FormField';
+import { Segmented } from '@/components/ui/Segmented';
+import { labelFor } from '@/lib/labels';
 
 const METHODS: SalePayment['method'][] = ['Cash', 'bKash', 'Nagad', 'Card', 'Bank'];
 
@@ -25,6 +28,7 @@ export function AddPaymentModal({
   const [amount, setAmount] = useState<number>(sale.due);
   const [reference, setReference] = useState('');
   const [paidAt, setPaidAt] = useState(nowLocalInput());
+  const [dateOpen, setDateOpen] = useState(false);
 
   /**
    * RE-SEED EVERY TIME IT OPENS.
@@ -44,6 +48,7 @@ export function AddPaymentModal({
     setAmount(sale.due);
     setReference('');
     setPaidAt(nowLocalInput());
+    setDateOpen(false);
   }, [open, sale.id, sale.due]);
 
   // Paying more than is owed is almost always a typo. It is not blocked (a
@@ -71,93 +76,106 @@ export function AddPaymentModal({
     onClose();
   };
 
+  const formId = `pay-${sale.id}`;
+  const after = Math.max(0, sale.due - amount);
+
   return (
     <Modal
       open={open}
       onClose={onClose}
       width="max-w-lg"
-      title={`Add Payment · ${sale.invoiceNo}`}
-      subtitle={`Outstanding due: ৳ ${formatBDT(sale.due, { withSymbol: false })}`}
+      title="Receive payment"
+      subtitle={`${sale.customerName} · ${sale.invoiceNo}`}
       footer={
         <div className="flex items-center justify-end gap-2">
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={() => void submit()} disabled={amount <= 0 || saving}>
+          {/* Submits the form below, so Enter in the amount saves too. */}
+          <Button type="submit" form={formId} size="lg" disabled={amount <= 0 || saving}>
             Save Payment
           </Button>
         </div>
       }
     >
-      <div className="p-4 space-y-3">
-        <div>
-          <label className="text-xs font-semibold text-muted-foreground">Method</label>
-          <div className="grid grid-cols-5 gap-1.5 mt-1">
-            {METHODS.map((m) => (
-              <button
-                key={m}
-                onClick={() => setMethod(m)}
-                className={cn(
-                  'h-9 rounded-md border text-xs font-medium transition',
-                  method === m ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-secondary',
-                )}
-              >
-                {m}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="text-xs font-semibold text-muted-foreground">Amount</label>
+      <form
+        id={formId}
+        className="p-5 space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+      >
+        {/* Amount first and biggest: it is the one thing that must be right. */}
+        <FormField
+          label="Amount received"
+          action={
+            <span className="text-sm text-muted-foreground">
+              <span>Due</span>{' '}
+              <span className="tabular font-semibold text-foreground">{formatBDT(sale.due)}</span>
+            </span>
+          }
+        >
+          {(f) => (
             <NumberField
+              {...f}
               autoFocus
               value={amount}
               onChangeNumber={setAmount}
-              className="text-right"
+              className="h-12 text-2xl text-right font-semibold"
             />
-            <div className="flex items-center gap-1 mt-1">
-              <button
-                onClick={() => setAmount(sale.due)}
-                className="text-xs px-2 h-6 rounded border border-border hover:bg-secondary"
-              >
-                Full due
-              </button>
-              <button
-                onClick={() => setAmount(Math.round(sale.due / 2))}
-                className="text-xs px-2 h-6 rounded border border-border hover:bg-secondary"
-              >
-                Half
-              </button>
-            </div>
-          </div>
-          {method !== 'Cash' && (
-            <div>
-              <label className="text-xs font-semibold text-muted-foreground">
-                Reference / TxID
-              </label>
-              <Input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="TX1234567" />
-            </div>
           )}
+        </FormField>
+        <div className="flex items-center gap-2 -mt-2">
+          <Button type="button" variant="outline" size="sm" onClick={() => setAmount(sale.due)}>
+            <span>Full due</span> <span className="tabular">{formatBDT(sale.due)}</span>
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => setAmount(Math.round(sale.due / 2))}>
+            Half
+          </Button>
         </div>
 
-        <div>
-          <label className="text-xs font-semibold text-muted-foreground">
-            Paid on
-          </label>
-          <DateTimeField value={paidAt} onChange={setPaidAt} />
-        </div>
+        <FormField label="Method">
+          <Segmented
+            ariaLabel="Method"
+            fullWidth
+            value={method}
+            onChange={setMethod}
+            options={METHODS.map((m) => ({ value: m, label: labelFor('paymentMethod', m) }))}
+          />
+        </FormField>
+
+        {method !== 'Cash' && (
+          <FormField label="Reference / TxID">
+            {(f) => (
+              <Input {...f} value={reference} onChange={(e) => setReference(e.target.value)} placeholder="TX1234567" />
+            )}
+          </FormField>
+        )}
+
+        {/* Nearly always "now"; opens only to record a late entry. */}
+        {dateOpen ? (
+          <FormField label="Paid on">
+            {(f) => <DateTimeField {...f} value={paidAt} onChange={setPaidAt} />}
+          </FormField>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setDateOpen(true)}
+            className="text-sm text-primary hover:underline"
+          >
+            Change date
+          </button>
+        )}
 
         {overpaying && (
-          <div className="rounded-md bg-warning/10 text-warning px-3 py-2 text-xs">
-            That is more than the {formatBDT(sale.due)} still owed on this invoice. The extra
-            will sit on the customer's account as credit.
+          <div className="rounded-md bg-warning/10 text-warning px-3 py-2 text-sm">
+            That is more than is still owed on this invoice. The extra will sit on the customer's
+            account as credit.
           </div>
         )}
 
-        {/* What the sale will look like once this is saved. An employee taking a
-            part payment needs to see the remainder before committing, not after. */}
+        {/* The remainder, seen before committing. */}
         <div className="rounded-lg border border-border p-3 space-y-1 text-sm">
           <div className="flex items-center justify-between">
             <span className="text-muted-foreground">Already paid</span>
@@ -169,17 +187,12 @@ export function AddPaymentModal({
           </div>
           <div className="flex items-center justify-between border-t border-border pt-1">
             <span className="font-semibold">Still owing after this</span>
-            <span
-              className={cn(
-                'tabular font-bold',
-                Math.max(0, sale.due - amount) <= 0.005 ? 'text-success' : 'text-destructive',
-              )}
-            >
-              {formatBDT(Math.max(0, sale.due - amount))}
+            <span className={cn('tabular font-bold', after <= 0.005 ? 'text-success' : 'text-destructive')}>
+              {formatBDT(after)}
             </span>
           </div>
         </div>
-      </div>
+      </form>
     </Modal>
   );
 }

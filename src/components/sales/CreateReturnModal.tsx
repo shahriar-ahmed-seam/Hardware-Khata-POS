@@ -15,6 +15,8 @@ import { api } from '@/lib/api';
 import { toSaleRecord, type BackendSale } from '@/hooks/saleAdapter';
 import { Undo2, Banknote, Smartphone, CreditCard, Building2, HandCoins, Wallet } from 'lucide-react';
 import { NumberField } from '@/components/ui/NumberField';
+import { FormField } from '@/components/ui/FormField';
+import { Segmented } from '@/components/ui/Segmented';
 
 const REASONS: { id: SellReturn['reason']; label: string }[] = [
   { id: 'damaged', label: 'Damaged' },
@@ -31,14 +33,24 @@ const REFUND: {
   icon: any;
   hint: string;
 }[] = [
-  { id: 'Cash', label: 'Cash', icon: Banknote, hint: 'Refund from drawer' },
-  { id: 'CreditAdjust', label: 'Credit Adjust', icon: HandCoins, hint: 'Reduce customer due' },
-  { id: 'StoreCredit', label: 'Store Credit', icon: Wallet, hint: 'Kept on their account for next time' },
+  { id: 'Cash', label: 'Cash back', icon: Banknote, hint: 'Refund from drawer' },
+  { id: 'CreditAdjust', label: 'Take off their due', icon: HandCoins, hint: 'Reduce customer due' },
+  { id: 'StoreCredit', label: 'Keep as credit', icon: Wallet, hint: 'Kept on their account for next time' },
   { id: 'bKash', label: 'bKash', icon: Smartphone, hint: 'Reverse to bKash' },
   { id: 'Nagad', label: 'Nagad', icon: Smartphone, hint: 'Reverse to Nagad' },
   { id: 'Card', label: 'Card', icon: CreditCard, hint: 'Reverse to card' },
   { id: 'Bank', label: 'Bank', icon: Building2, hint: 'Bank transfer' },
 ];
+
+/** Folded under "Other method" unless the sale was paid that way. */
+const OTHER_METHODS = new Set<string>(['bKash', 'Nagad', 'Card', 'Bank']);
+
+/** Save button verb per refund way (the amount follows in its own span). */
+const SAVE_LABEL: Partial<Record<SellReturn['refundMethod'], string>> = {
+  Cash: 'Give cash back',
+  CreditAdjust: 'Take off due',
+  StoreCredit: 'Keep as credit',
+};
 
 interface Props {
   open: boolean;
@@ -60,7 +72,9 @@ export function CreateReturnModal({ open, onClose, saleId }: Props) {
   // collapse into one row, and one row's figure was applied to both.
   const [picked, setPicked] = useState<Record<number, number>>({});
   const [returned, setReturned] = useState<Record<string, number>>({});
-  const [reason, setReason] = useState<SellReturn['reason']>('damaged');
+  // No default reason: an untouched form used to record "Damaged".
+  const [reason, setReason] = useState<SellReturn['reason']>(undefined);
+  const [showOther, setShowOther] = useState(false);
   const [refundMethod, setRefundMethod] = useState<SellReturn['refundMethod']>('Cash');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
@@ -99,7 +113,8 @@ export function CreateReturnModal({ open, onClose, saleId }: Props) {
   useEffect(() => {
     if (open) {
       setPicked({});
-      setReason('damaged');
+      setReason(undefined);
+      setShowOther(false);
       setNotes('');
       if (sale) {
         // An unpaid balance is the natural place for a credit note; otherwise
@@ -171,7 +186,7 @@ export function CreateReturnModal({ open, onClose, saleId }: Props) {
   const nothingLeft = remaining.length > 0 && remaining.every((r) => r <= 0);
 
   const submit = async () => {
-    if (!sale || lines.length === 0 || saving) return;
+    if (!sale || lines.length === 0 || !reason || saving) return;
     const ret: SellReturn = {
       id: 'ret_' + Date.now(),
       refNo: nextReturnNo(),
@@ -196,36 +211,58 @@ export function CreateReturnModal({ open, onClose, saleId }: Props) {
 
   if (!sale) return null;
 
+  // The less common refund ways stay folded unless the sale was paid that way.
+  const paidWith = new Set(sale.payments.map((p) => p.method as string));
+  const mainRefunds = refundOptions.filter(
+    (m) => !OTHER_METHODS.has(m.id) || paidWith.has(m.id) || m.id === refundMethod,
+  );
+  const otherRefunds = refundOptions.filter((m) => !mainRefunds.includes(m));
+  const firstOpen = remaining.findIndex((r) => r > 0);
+  const returnAll = () =>
+    setPicked(Object.fromEntries(remaining.map((r, i) => [i, Math.max(0, r)])));
+  const verb = SAVE_LABEL[refundMethod] ?? 'Refund';
+
   return (
     <Modal
       open={open}
       onClose={onClose}
       width="max-w-3xl"
-      title={`Create Return — ${sale.invoiceNo}`}
-      subtitle={`Customer: ${sale.customerName}`}
+      title="Return goods"
+      subtitle={`${sale.customerName} · ${sale.invoiceNo}`}
       footer={
-        <div className="flex items-center justify-between">
-          <div className="text-sm">
-            <span className="text-muted-foreground">Refund total: </span>
-            <span className="tabular font-semibold text-warning">{formatBDT(total)}</span>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-baseline gap-2">
+            <span className="text-sm text-muted-foreground">Refund total</span>
+            <span className="text-xl font-bold tabular">{formatBDT(total)}</span>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={onClose}>
+            <Button variant="ghost" onClick={onClose}>
               Cancel
             </Button>
-            <Button onClick={() => void submit()} disabled={lines.length === 0 || saving}>
-              <Undo2 className="size-4" /> Save Return
+            {/* The button says what happens to the money. */}
+            <Button
+              size="lg"
+              onClick={() => void submit()}
+              disabled={lines.length === 0 || !reason || saving}
+              title={!reason ? 'Choose a reason' : undefined}
+            >
+              <Undo2 className="size-5" /> <span>{verb}</span>{' '}
+              <span className="tabular">{formatBDT(total)}</span>
             </Button>
           </div>
         </div>
       }
     >
-      <div className="p-4 space-y-4">
+      <div className="p-5 space-y-4">
         {/* Lines picker */}
         <div className="rounded-lg border border-border overflow-hidden">
-          <div className="px-3 py-2 border-b border-border bg-secondary/40 text-xs font-semibold text-muted-foreground">
-            Pick items to return
-          </div>
+          {!nothingLeft && (
+            <div className="px-3 py-2 border-b border-border bg-secondary/40 flex justify-end">
+              <Button variant="outline" onClick={returnAll}>
+                Return everything
+              </Button>
+            </div>
+          )}
           <table className="w-full text-sm">
             <thead className="text-xs text-muted-foreground border-b border-border">
               <tr>
@@ -246,27 +283,36 @@ export function CreateReturnModal({ open, onClose, saleId }: Props) {
                       <div className="font-medium">{l.name}</div>
                       <div className="text-xs text-muted-foreground font-mono">{l.sku}</div>
                     </td>
-                    <td className="px-2 py-2 text-right tabular">
+                    <td className="px-2 py-2 text-right tabular whitespace-nowrap">
                       {l.qty} {l.unit}
                     </td>
-                    <td
-                      className={cn(
-                        'px-2 py-2 text-right tabular',
-                        left <= 0 && 'text-muted-foreground',
+                    <td className="px-2 py-2 text-right tabular">
+                      {left > 0 ? (
+                        // One click fills the line with all that is left.
+                        <button
+                          type="button"
+                          title="Return all of this line"
+                          onClick={() => setPicked((p) => ({ ...p, [idx]: left }))}
+                          className="px-2 py-1 rounded text-primary hover:bg-primary/10 tabular"
+                        >
+                          {left}
+                        </button>
+                      ) : (
+                        <span className="text-muted-foreground">{left}</span>
                       )}
-                    >
-                      {left}
                     </td>
                     <td className="px-2 py-2 text-right">
                       <NumberField
+                        aria-label="Return qty"
                         value={cur}
                         disabled={left <= 0}
+                        autoFocus={idx === firstOpen}
                         onChangeNumber={(v) => {
                           const clamped = Math.max(0, Math.min(left, v));
                           setPicked((p) => ({ ...p, [idx]: clamped }));
                         }}
                         placeholder="0"
-                        className="h-8 w-20 px-2 text-right text-xs"
+                        className="h-10 w-24 px-2 text-right text-sm"
                       />
                     </td>
                     <td className="px-3 py-2 text-right tabular font-semibold">
@@ -284,60 +330,85 @@ export function CreateReturnModal({ open, onClose, saleId }: Props) {
           )}
         </div>
 
-        {/* Reason + refund method */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="text-xs font-semibold text-muted-foreground">Reason</label>
-            <select
-              value={reason}
-              onChange={(e) => setReason(e.target.value as SellReturn['reason'])}
-              className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
-            >
-              {REASONS.map((r) => (
-                <option key={r.id} value={r.id ?? ''}>
-                  {r.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="text-xs font-semibold text-muted-foreground">
-              Refund method
-            </label>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 mt-1">
-              {refundOptions.map((m) => {
-                const Icon = m.icon;
-                return (
-                  <button
-                    key={m.id}
-                    title={m.hint}
-                    onClick={() => setRefundMethod(m.id)}
-                    className={cn(
-                      'h-9 px-2 rounded-md border text-xs font-medium transition inline-flex items-center justify-center gap-1',
-                      refundMethod === m.id
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border hover:bg-secondary',
-                    )}
-                  >
-                    <Icon className="size-3.5" /> {m.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-
-        <div>
-          <label className="text-xs font-semibold text-muted-foreground">Notes</label>
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            rows={2}
-            placeholder="Internal notes…"
-            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 resize-y"
+        {/* Reason: no default, so an untouched form cannot record a wrong one. */}
+        <FormField label="Reason" required>
+          <Segmented
+            ariaLabel="Reason"
+            value={reason ?? ''}
+            onChange={(v) => setReason(v as SellReturn['reason'])}
+            options={REASONS.map((r) => ({ value: r.id as string, label: r.label }))}
           />
-        </div>
+        </FormField>
+
+        {/* Refund method: what each one means is on the tile, not in a tooltip. */}
+        <FormField label="How does the money go back?" required>
+          <div className="space-y-2">
+            <div className="grid grid-cols-3 gap-2">
+              {mainRefunds.map((m) => (
+                <RefundTile key={m.id} m={m} on={refundMethod === m.id} onPick={setRefundMethod} />
+              ))}
+            </div>
+            {otherRefunds.length > 0 &&
+              (showOther ? (
+                <div className="grid grid-cols-4 gap-2">
+                  {otherRefunds.map((m) => (
+                    <RefundTile key={m.id} m={m} on={refundMethod === m.id} onPick={setRefundMethod} />
+                  ))}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowOther(true)}
+                  className="text-sm text-primary hover:underline"
+                >
+                  Other method
+                </button>
+              ))}
+          </div>
+        </FormField>
+
+        <FormField label="Notes">
+          {(f) => (
+            <textarea
+              {...f}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+              placeholder="Internal notes…"
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 resize-y"
+            />
+          )}
+        </FormField>
       </div>
     </Modal>
+  );
+}
+
+function RefundTile({
+  m,
+  on,
+  onPick,
+}: {
+  m: (typeof REFUND)[number];
+  on: boolean;
+  onPick: (id: SellReturn['refundMethod']) => void;
+}) {
+  const Icon = m.icon;
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={on}
+      onClick={() => onPick(m.id)}
+      className={cn(
+        'min-h-11 px-3 py-2 rounded-md border text-left transition',
+        on ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-secondary',
+      )}
+    >
+      <span className="flex items-center gap-1.5 text-sm font-medium">
+        <Icon className="size-4 shrink-0" /> {m.label}
+      </span>
+      <span className="block text-xs text-muted-foreground mt-0.5">{m.hint}</span>
+    </button>
   );
 }

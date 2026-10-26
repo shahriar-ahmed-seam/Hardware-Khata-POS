@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { ToggleRow } from '@/components/ui/ToggleRow';
-import { useSettings } from '@/stores/settings';
+import { defaultPrinter, normalizePrinter, useSettings } from '@/stores/settings';
 import { Receipt } from '@/components/pos/Receipt';
 import type { ParkedCart } from '@/components/pos/types';
 import type { PaymentResult } from '@/components/pos/PaymentModal';
@@ -52,6 +52,11 @@ const SAMPLE_CART: ParkedCart = {
   ],
 };
 
+const PREVIEW_SIZES = ['58mm', '80mm', 'A4'] as const;
+type PreviewSize = (typeof PREVIEW_SIZES)[number];
+/** Same on-screen widths as PrintSheet uses for these papers. */
+const PREVIEW_PX: Record<PreviewSize, number> = { '58mm': 280, '80mm': 360, A4: 720 };
+
 const SAMPLE_PAYMENT: PaymentResult = {
   payments: [{ id: 'p1', method: 'Cash', amount: 3020 }],
   totalPaid: 3020,
@@ -62,6 +67,15 @@ const SAMPLE_PAYMENT: PaymentResult = {
 export default function ReceiptTemplatePage() {
   const r = useSettings((s) => s.receipt);
   const set = useSettings((s) => s.setReceipt);
+  // The width that PRINTS is the default printer's (Settings → Printers). The
+  // template used to store its own paper size too — two controls competing for
+  // one thing — so this is now only a preview choice, not saved, and it starts
+  // on the printer's width.
+  const printers = useSettings((s) => s.printers);
+  const printerWidth = defaultPrinter(printers.map(normalizePrinter))?.paperWidth;
+  const [preview, setPreview] = useState<PreviewSize>(
+    printerWidth === 58 ? '58mm' : printerWidth === 210 ? 'A4' : '80mm',
+  );
 
   const [headerText, setHeaderText] = useState(r.headerLines.join('\n'));
   const [footerText, setFooterText] = useState(r.footerLines.join('\n'));
@@ -92,13 +106,13 @@ export default function ReceiptTemplatePage() {
           <Card className="p-4 space-y-3">
             <div className="text-sm font-semibold">Preview size</div>
             <div className="grid grid-cols-3 gap-2">
-              {(['50mm', '80mm', 'A4'] as const).map((p) => (
+              {PREVIEW_SIZES.map((p) => (
                 <button
                   key={p}
-                  onClick={() => set({ paperSize: p })}
+                  onClick={() => setPreview(p)}
                   className={cn(
                     'h-12 rounded-md border text-sm font-medium transition',
-                    r.paperSize === p
+                    preview === p
                       ? 'border-primary bg-primary/10 text-primary'
                       : 'border-border hover:bg-secondary',
                   )}
@@ -114,6 +128,11 @@ export default function ReceiptTemplatePage() {
               This only changes the preview here. The width used when printing comes from your
               printer in Settings → Printers.
             </div>
+            {!printerWidth && (
+              <div className="text-xs text-muted-foreground">
+                No printer is set up yet, so Print opens the print dialog.
+              </div>
+            )}
           </Card>
 
           <Card className="p-4 space-y-3">
@@ -181,7 +200,7 @@ export default function ReceiptTemplatePage() {
             Live preview
           </div>
           <div className="rounded-xl border border-border bg-muted p-6 overflow-auto">
-            <div className="mx-auto" style={{ width: r.paperSize === '80mm' ? 360 : r.paperSize === '50mm' ? 240 : 720 }}>
+            <div className="mx-auto" style={{ width: PREVIEW_PX[preview] }}>
               <Receipt invoiceNo="INV-2026-0500" cart={SAMPLE_CART} payment={SAMPLE_PAYMENT} />
             </div>
           </div>

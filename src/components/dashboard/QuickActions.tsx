@@ -1,97 +1,39 @@
 import { Link } from 'react-router-dom';
-import {
-  ScanBarcode,
-  Receipt,
-  ShoppingBag,
-  TrendingUp,
-  PackagePlus,
-  UserPlus,
-  Wallet,
-  HandCoins,
-} from 'lucide-react';
+import { ScanBarcode, Receipt, ShoppingBag, Wallet, HandCoins } from 'lucide-react';
 import { PendriveBackup } from './PendriveBackup';
+import { tileClass } from './tile';
 import { cn } from '@/lib/utils';
 
 /**
- * DASHBOARD QUICK ACTIONS - A FIXED TWO-ROW GRID.
+ * DASHBOARD QUICK ACTIONS — the daily jobs, one row.
  *
- * These used to live in the PageHeader's action row alongside the range picker,
- * refresh, edit-layout and customise buttons. That row is `flex-wrap`, so the
- * buttons re-flowed on every window resize and, at narrower widths, the leftmost
- * ones ended up underneath the sidebar. The owner's complaint was exactly that:
- * "some buttons get cut by side bar" and they never stay put.
- *
- * A grid fixes both problems at once. FOUR columns, TWO rows, always - the tiles
- * get narrower as the window does, but each one keeps its position, so muscle
- * memory works and nothing can slide under the sidebar. Eight tiles is not a
- * coincidence: it is what fills two rows of four exactly, with no ragged gap.
- *
- * Every destination is a route that exists (checked against App.tsx). Several of
- * these previously pointed at LIST pages rather than the create form - "New Sale"
- * opened the sales list, so the button did not do what it said.
+ * A fixed grid (it used to re-flow under the sidebar inside the header). The
+ * tiles are calm surfaces with a tinted icon; only POS is filled, as the one
+ * primary action. Profit, New product and New customer were dropped: the profit
+ * KPI opens the same breakdown, and the other two have Add buttons on their
+ * list pages. Auto-fill columns, so a hidden Backup tile leaves no hole.
  */
-
-interface Props {
-  onOpenProfit: () => void;
-}
-
-export function QuickActions({ onOpenProfit }: Props) {
+export function QuickActions() {
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+    <div className="grid gap-2 grid-cols-[repeat(auto-fill,minmax(11rem,1fr))]">
+      <Tile to="/pos" icon={ScanBarcode} label="POS" hint="Sell at the counter" primary />
+      <Tile to="/sales/new" icon={Receipt} label="New sale" hint="Invoice with a form" chip="bg-sky-500/15 text-sky-500" />
       <Tile
-        to="/pos"
-        icon={ScanBarcode}
-        label="POS"
-        hint="Sell at the counter"
-        tone="bg-emerald-600 hover:bg-emerald-700"
-      />
-      <Tile
-        to="/sales/new"
-        icon={Receipt}
-        label="New Sale"
-        hint="Form-based invoice"
-        tone="bg-sky-600 hover:bg-sky-700"
+        to="/contacts/dues"
+        icon={HandCoins}
+        label="Receive payment"
+        hint="A customer pays their due"
+        chip="bg-emerald-500/15 text-emerald-500"
       />
       <Tile
         to="/purchases/new"
         icon={ShoppingBag}
-        label="New Purchase"
+        label="New purchase"
         hint="Goods received"
-        tone="bg-violet-600 hover:bg-violet-700"
+        chip="bg-violet-500/15 text-violet-500"
       />
-      <Tile
-        onClick={onOpenProfit}
-        icon={TrendingUp}
-        label="Today's Profit"
-        hint="Breakdown"
-        tone="bg-orange-600 hover:bg-orange-700"
-      />
-      <Tile
-        to="/products/new"
-        icon={PackagePlus}
-        label="New Product"
-        hint="Add to catalogue"
-        tone="bg-teal-600 hover:bg-teal-700"
-      />
-      <Tile
-        to="/contacts/customers"
-        icon={UserPlus}
-        label="New Customer"
-        hint="Walk-in or contractor"
-        tone="bg-indigo-600 hover:bg-indigo-700"
-      />
-      <Tile
-        to="/expenses"
-        icon={Wallet}
-        label="New Expense"
-        hint="Rent, salary, transport"
-        tone="bg-rose-600 hover:bg-rose-700"
-      />
-      {/*
-        Pendrive backup keeps its own component: it renders NOTHING for a user
-        without `settings.backup`, and it owns the drive detection and the busy
-        state. `variant="tile"` makes it match the seven tiles above.
-      */}
+      <Tile to="/expenses" icon={Wallet} label="Expenses" hint="Rent, salary, transport" chip="bg-rose-500/15 text-rose-500" />
+      {/* Renders nothing without `settings.backup`; owns drive detection. */}
       <PendriveBackup variant="tile" />
     </div>
   );
@@ -99,45 +41,43 @@ export function QuickActions({ onOpenProfit }: Props) {
 
 function Tile({
   to,
-  onClick,
   icon: Icon,
   label,
   hint,
-  tone,
+  chip,
+  primary,
 }: {
-  to?: string;
-  onClick?: () => void;
+  to: string;
   icon: typeof ScanBarcode;
   label: string;
   hint: string;
-  tone: string;
+  chip?: string;
+  primary?: boolean;
 }) {
-  const body = (
-    <div
-      className={cn(
-        'h-full min-h-[3.25rem] w-full rounded-lg px-3 py-2 flex items-center gap-2.5 text-left text-white transition shadow-sm',
-        tone,
-      )}
-    >
-      <Icon className="size-5 shrink-0" />
-      <div className="min-w-0">
-        {/* Each label is one complete text node so the Bangla layer can match it. */}
-        <div className="text-sm font-semibold leading-tight truncate">{label}</div>
-        <div className="text-xs opacity-80 leading-tight truncate">{hint}</div>
-      </div>
-    </div>
-  );
-
-  if (onClick) {
-    return (
-      <button onClick={onClick} className="block w-full" title={label}>
-        {body}
-      </button>
-    );
-  }
   return (
-    <Link to={to ?? '#'} className="block w-full" title={label}>
-      {body}
+    <Link to={to} className="block w-full rounded-lg focus-ring" title={label}>
+      <div className={tileClass(primary)}>
+        <span
+          className={cn(
+            'size-9 rounded-md grid place-items-center shrink-0',
+            primary ? 'bg-white/15' : chip,
+          )}
+        >
+          <Icon className="size-5" />
+        </span>
+        <div className="min-w-0">
+          {/* Each label is one complete text node so the Bangla layer can match it. */}
+          <div className="text-sm font-semibold leading-tight truncate">{label}</div>
+          <div
+            className={cn(
+              'text-xs leading-tight truncate',
+              primary ? 'text-primary-foreground/85' : 'text-muted-foreground',
+            )}
+          >
+            {hint}
+          </div>
+        </div>
+      </div>
     </Link>
   );
 }

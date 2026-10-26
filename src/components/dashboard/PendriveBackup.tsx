@@ -6,6 +6,8 @@ import { useBackup, type UsbDrive } from '@/stores/backup';
 import { useCan } from '@/hooks/useCan';
 import { toast } from '@/stores/toast';
 import { cn } from '@/lib/utils';
+import { useDateFormat } from '@/lib/formatDate';
+import { tileClass } from './tile';
 
 /**
  * "Backup to Pendrive" — one button on the dashboard.
@@ -38,6 +40,7 @@ export function PendriveBackup({ variant = 'inline' }: { variant?: 'inline' | 't
   const lastUsbAt = useBackup((s) => s.config.lastUsbBackupAt);
   const lastUsbLabel = useBackup((s) => s.config.lastUsbLabel);
   const canBackup = useCan('settings.backup');
+  const fmt = useDateFormat();
 
   const [running, setRunning] = useState(false);
   const [choices, setChoices] = useState<UsbDrive[] | null>(null);
@@ -113,9 +116,7 @@ export function PendriveBackup({ variant = 'inline' }: { variant?: 'inline' | 't
   };
 
   const title = lastUsbAt
-    ? `Last pendrive backup: ${new Date(lastUsbAt).toLocaleString('en-GB')}${
-        lastUsbLabel ? ` — ${lastUsbLabel}` : ''
-      }`
+    ? `${fmt.dateTime(lastUsbAt)}${lastUsbLabel ? ` — ${lastUsbLabel}` : ''}`
     : 'No pendrive backup taken yet';
 
   return (
@@ -124,27 +125,25 @@ export function PendriveBackup({ variant = 'inline' }: { variant?: 'inline' | 't
         <button
           onClick={() => void run()}
           disabled={running}
-          className="block w-full text-left"
+          className="block w-full text-left rounded-lg focus-ring"
           title={title}
         >
-          <div
-            className={cn(
-              'h-full min-h-[3.25rem] w-full rounded-lg px-3 py-2 flex items-center gap-2.5 text-white transition shadow-sm bg-blue-600 hover:bg-blue-700',
-              running && 'opacity-70',
-            )}
-          >
-            {running ? (
-              <Loader2 className="size-5 shrink-0 animate-spin" />
-            ) : (
-              <Usb className="size-5 shrink-0" />
-            )}
+          <div className={cn(tileClass(), running && 'opacity-70')}>
+            <span className="size-9 rounded-md grid place-items-center shrink-0 bg-blue-500/15 text-blue-500">
+              {running ? <Loader2 className="size-5 animate-spin" /> : <Usb className="size-5" />}
+            </span>
             <div className="min-w-0">
               <div className="text-sm font-semibold leading-tight truncate">
                 {running ? 'Saving to Pendrive…' : 'Backup to Pendrive'}
               </div>
-              <div className="text-xs opacity-80 leading-tight truncate">
-                A copy you can take home
-              </div>
+              {/* When the last copy was taken — it used to hide in a tooltip. */}
+              {lastUsbAt ? (
+                <div className="text-xs text-muted-foreground leading-tight truncate">
+                  <span>Last copy:</span> <span>{fmt.dayMonth(lastUsbAt)}</span>
+                </div>
+              ) : (
+                <div className="text-xs text-warning leading-tight truncate">No copy taken yet</div>
+              )}
             </div>
           </div>
         </button>

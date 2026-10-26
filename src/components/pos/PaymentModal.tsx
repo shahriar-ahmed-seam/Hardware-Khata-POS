@@ -10,6 +10,7 @@ import {
   Check,
   NotebookPen,
   UserPlus,
+  Delete,
 } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
@@ -17,6 +18,9 @@ import { cn, formatBDT } from '@/lib/utils';
 import { NumberField } from '@/components/ui/NumberField';
 import { round2, sum2 } from '@/lib/money';
 import { useCan } from '@/hooks/useCan';
+import { IconButton } from '@/components/ui/IconButton';
+import { Select } from '@/components/ui/Select';
+import { keyLabel, matchesKey } from './shortcuts';
 
 /**
  * ============================================================================
@@ -115,6 +119,14 @@ interface Props {
   /** Opens the customer picker, so the block is one tap from being resolved. */
   onPickCustomer?: () => void;
   startMode?: 'single' | 'split';
+  /** Settings → POS: the method picked when the modal opens ('Credit' = nothing now). */
+  defaultMethod?: PaymentMethod;
+  /** Settings → POS: which methods are offered. Empty/undefined = all. */
+  visibleMethods?: string[];
+  /** Big-button mode: larger tiles and an on-screen number pad. */
+  big?: boolean;
+  /** The Pay key (F8 by default) confirms while the modal is open. */
+  confirmKey?: string;
   onConfirm: (result: PaymentResult) => void;
 }
 
@@ -144,8 +156,25 @@ export function PaymentModal({
   hasNamedCustomer = false,
   onPickCustomer,
   startMode = 'single',
+  defaultMethod = 'Cash',
+  visibleMethods,
+  big = false,
+  confirmKey,
   onConfirm,
 }: Props) {
+  // Methods offered (Settings → POS). 'Credit' is not a tile: it decides
+  // whether "Nothing now" is offered.
+  const methods = useMemo(() => {
+    if (!visibleMethods || visibleMethods.length === 0) return METHODS;
+    const list = METHODS.filter((m) => visibleMethods.includes(m.id));
+    return list.length > 0 ? list : METHODS;
+  }, [visibleMethods]);
+  const allowNothingNow = !visibleMethods || visibleMethods.length === 0 || visibleMethods.includes('Credit');
+  const startMethod: PaymentMethod = methods.some((m) => m.id === defaultMethod)
+    ? defaultMethod
+    : methods[0].id;
+  // A default of 'Credit' opens on "Nothing now" (all on khata).
+  const startAmount = defaultMethod === 'Credit' && allowNothingNow ? 0 : total;
   /**
    * The FIRST payment is the one everybody makes; extra rows only appear if the
    * customer genuinely splits (part cash, part bKash). No mode switch.
@@ -158,10 +187,14 @@ export function PaymentModal({
   const initialPayments = (): PaymentLine[] =>
     startMode === 'split'
       ? [
-          { id: 'p1', method: 'Cash', amount: total },
-          { id: 'p2', method: 'bKash', amount: 0 },
+          { id: 'p1', method: startMethod, amount: total },
+          {
+            id: 'p2',
+            method: (methods.find((m) => m.id !== startMethod) ?? methods[0]).id,
+            amount: 0,
+          },
         ]
-      : [{ id: 'p1', method: 'Cash', amount: total }];
+      : [{ id: 'p1', method: startMethod, amount: startAmount }];
   const [payments, setPayments] = useState<PaymentLine[]>(initialPayments);
   const amountRef = useRef<HTMLInputElement>(null);
 
@@ -193,7 +226,11 @@ export function PaymentModal({
   const addPayment = () =>
     setPayments((ps) => [
       ...ps,
-      { id: 'p' + ps.length + '_' + Date.now(), method: 'Cash', amount: owing },
+      {
+        id: 'p' + ps.length + '_' + Date.now(),
+        method: (methods.find((m) => m.id !== ps[0]?.method) ?? methods[0]).id,
+        amount: owing,
+      },
     ]);
 
   const removePayment = (id: string) =>
@@ -201,7 +238,7 @@ export function PaymentModal({
 
   /** Set the whole payment to one amount, collapsing any split back to one row. */
   const setSingleAmount = (amount: number) =>
-    setPayments((ps) => [{ ...(ps[0] ?? { id: 'p1', method: 'Cash' as PaymentMethod }), amount }]);
+    setPayments((ps) => [{ ...(ps[0] ?? { id: 'p1', method: startMethod }), amount }]);
 
   const first = payments[0];
   const isSplit = payments.length > 1;
@@ -232,41 +269,64 @@ export function PaymentModal({
     confirm();
   };
 
-  /** The button says what is about to happen. No hidden modes. */
+  // The Pay key pressed again confirms (the cashier's hand is already there).
+  const confirmRef = useRef(confirm);
+  confirmRef.current = confirm;
+  const canConfirmRef = useRef(false);
+  canConfirmRef.current = canConfirm && !(isSplit && owing > 0);
+  useEffect(() => {
+    if (!open || !confirmKey) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (!matchesKey(e, confirmKey)) return;
+      e.preventDefault();
+      if (canConfirmRef.current) confirmRef.current();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, confirmKey]);
+
+  /** Whole phrases, so Bangla translates them; the outcome panel says the amounts. */
   const confirmLabel = needsCustomer
     ? 'Choose a customer first'
-    : change > 0
-      ? `Take ৳${formatBDT(total, { withSymbol: false })} · give ৳${formatBDT(change, { withSymbol: false })} change`
-      : owing > 0
-        ? totalPaid > 0
-          ? `Take ৳${formatBDT(totalPaid, { withSymbol: false })} · ৳${formatBDT(owing, { withSymbol: false })} on khata`
-          : `Put all ৳${formatBDT(total, { withSymbol: false })} on khata`
-        : `Take ৳${formatBDT(total, { withSymbol: false })} — paid in full`;
+    : owing > 0 && totalPaid === 0
+      ? 'Put it all on khata'
+      : 'Confirm sale';
+
+  /** On-screen number pad (big-button mode). The first press replaces the prefill. */
+  const padFresh = useRef(true);
+  useEffect(() => {
+    padFresh.current = true;
+  }, [open]);
+  const pad = (k: string) => {
+    const cur = padFresh.current ? '' : String(first?.amount ?? 0);
+    padFresh.current = false;
+    let next = cur;
+    if (k === 'back') next = cur.slice(0, -1);
+    else if (k === '.') next = cur.includes('.') ? cur : (cur || '0') + '.';
+    else next = (cur === '0' ? '' : cur) + k;
+    setSingleAmount(Number(next) || 0);
+  };
 
   return (
     <Modal
       open={open}
       onClose={onClose}
-      width="max-w-2xl"
+      width={big ? 'max-w-3xl' : 'max-w-xl'}
       title="Take payment"
+      subtitle={customerName}
       footer={
-        <div className="flex items-center justify-between gap-3">
-          <div className="text-xs text-muted-foreground hidden sm:flex items-center gap-3">
-            <span>
-              <kbd className="font-mono">Enter</kbd> <span>take payment</span>
-            </span>
-            <span>
-              <kbd className="font-mono">Esc</kbd> <span>cancel</span>
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button onClick={confirm} disabled={!canConfirm} className="min-w-48 h-11 text-base">
-              {confirmLabel}
-            </Button>
-          </div>
+        <div className="flex items-center justify-end gap-2">
+          <Button variant="outline" size="lg" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button size="lg" onClick={confirm} disabled={!canConfirm} className="min-w-48">
+            <span>{confirmLabel}</span>
+            {canConfirm && (
+              <kbd className="text-xs opacity-80 ml-1">
+                {confirmKey ? `Enter / ${keyLabel(confirmKey)}` : 'Enter'}
+              </kbd>
+            )}
+          </Button>
         </div>
       }
     >
@@ -274,9 +334,7 @@ export function PaymentModal({
         {/* ---------- THE BILL ---------- */}
         <div className="flex items-baseline justify-between border-b border-border pb-3">
           <span className="text-sm text-muted-foreground">Bill total</span>
-          <span className="text-3xl font-bold tabular">
-            ৳ {formatBDT(total, { withSymbol: false })}
-          </span>
+          <span className="text-3xl font-bold tabular">{formatBDT(total)}</span>
         </div>
 
         {/* ---------- THE ONE QUESTION ---------- */}
@@ -290,10 +348,30 @@ export function PaymentModal({
               ref={amountRef}
               autoFocus
               value={first?.amount ?? 0}
-              onChangeNumber={(v) => setSingleAmount(v)}
+              onChangeNumber={(v) => {
+                padFresh.current = false;
+                setSingleAmount(v);
+              }}
               placeholder="0.00"
+              aria-label="Amount paid now"
               className="h-16 px-4 text-3xl text-right font-bold"
             />
+          )}
+
+          {!isSplit && big && (
+            <div className="grid grid-cols-4 gap-2">
+              {['7', '8', '9', '4', '5', '6', '1', '2', '3', '0', '.', 'back'].map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => pad(k)}
+                  className="h-14 rounded-md border border-border bg-card hover:border-primary text-2xl font-semibold tabular grid place-items-center"
+                  aria-label={k === 'back' ? 'Delete last digit' : k}
+                >
+                  {k === 'back' ? <Delete className="size-6" /> : k}
+                </button>
+              ))}
+            </div>
           )}
 
           {/* Amounts a customer plausibly hands over for THIS bill. */}
@@ -301,7 +379,10 @@ export function PaymentModal({
             <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={() => setSingleAmount(total)}
-                className="px-3 h-10 rounded-md border border-primary bg-primary/10 text-primary text-sm font-semibold"
+                className={cn(
+                  'px-3 rounded-md border border-primary bg-primary/10 text-primary text-sm font-semibold',
+                  big ? 'h-14 text-base' : 'h-10',
+                )}
               >
                 Full amount
               </button>
@@ -309,38 +390,53 @@ export function PaymentModal({
                 <button
                   key={v}
                   onClick={() => setSingleAmount(v)}
-                  className="px-3 h-10 rounded-md border border-border bg-card hover:border-primary text-sm tabular"
+                  className={cn(
+                    'px-3 rounded-md border border-border bg-card hover:border-primary text-sm tabular',
+                    big ? 'h-14 text-base' : 'h-10',
+                  )}
                 >
                   ৳ {v.toLocaleString('en-IN')}
                 </button>
               ))}
-              <button
-                onClick={() => setSingleAmount(0)}
-                className="px-3 h-10 rounded-md border border-border bg-card hover:border-warning text-sm font-medium inline-flex items-center gap-1.5"
-                title="Record the whole bill as owing"
-              >
-                <NotebookPen className="size-4" /> Nothing now
-              </button>
+              {allowNothingNow && (
+                <button
+                  onClick={() => setSingleAmount(0)}
+                  className={cn(
+                    'px-3 rounded-md border border-border bg-card hover:border-warning text-sm font-medium inline-flex items-center gap-1.5',
+                    big ? 'h-14 text-base' : 'h-10',
+                  )}
+                  title="Record the whole bill as owing"
+                >
+                  <NotebookPen className="size-4" /> Nothing now
+                </button>
+              )}
             </div>
           )}
         </div>
 
         {/* ---------- HOW IT ARRIVED ---------- */}
-        {(totalPaid > 0 || isSplit) && (
-          <div className="space-y-2">
+        {/* Always shown (disabled at 0) so the layout does not jump while typing. */}
+        <div className="space-y-2">
             <div className="text-sm font-semibold">Paid by</div>
             {!isSplit ? (
               <>
-                <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
-                  {METHODS.map((mt) => {
+                <div
+                  className="grid gap-1.5"
+                  style={{ gridTemplateColumns: `repeat(${Math.min(methods.length, 5)}, minmax(0, 1fr))` }}
+                >
+                  {methods.map((mt) => {
                     const Icon = mt.icon;
                     const active = first?.method === mt.id;
                     return (
                       <button
                         key={mt.id}
                         onClick={() => setPayment(first.id, { method: mt.id })}
+                        disabled={totalPaid <= 0}
+                        aria-pressed={active}
                         className={cn(
-                          'flex flex-col items-center justify-center gap-1 h-14 rounded-md border text-xs font-medium transition',
+                          'flex flex-col items-center justify-center gap-1 rounded-md border text-sm font-medium transition',
+                          'disabled:opacity-40 disabled:pointer-events-none',
+                          big ? 'h-16 text-base' : 'h-14',
                           active
                             ? 'border-primary bg-primary/10 text-primary'
                             : 'border-border bg-card hover:border-primary/40',
@@ -352,36 +448,47 @@ export function PaymentModal({
                     );
                   })}
                 </div>
-                {METHODS.find((m) => m.id === first?.method)?.needsRef && (
+                {totalPaid > 0 && METHODS.find((m) => m.id === first?.method)?.needsRef && (
                   <input
                     value={first?.reference ?? ''}
                     onChange={(e) => setPayment(first.id, { reference: e.target.value })}
-                    placeholder={`${first.method} transaction number (optional)`}
-                    className="h-10 w-full px-3 rounded-md border border-input bg-background text-sm font-mono outline-none focus:ring-2 focus:ring-ring/50"
+                    placeholder="Transaction number (optional)"
+                    aria-label="Transaction number"
+                    className="h-10 w-full px-3 rounded-md border border-input bg-background text-sm outline-none focus:ring-2 focus:ring-ring/50"
                   />
                 )}
               </>
             ) : (
               <div className="space-y-2">
+                <div className="grid grid-cols-12 gap-2 text-xs font-medium text-muted-foreground">
+                  <span className="col-span-4">Method</span>
+                  <span className="col-span-3 text-right">Amount</span>
+                  <span className="col-span-4">Reference</span>
+                </div>
                 {payments.map((p) => (
                   <SplitRow
                     key={p.id}
                     line={p}
+                    methods={methods}
                     onChange={(patch) => setPayment(p.id, patch)}
                     onRemove={() => removePayment(p.id)}
                     canRemove={payments.length > 1}
                   />
                 ))}
+                {owing > 0 && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Still to pay</span>
+                    <span className="tabular font-semibold text-warning">{formatBDT(owing)}</span>
+                  </div>
+                )}
               </div>
             )}
-            <button
-              onClick={addPayment}
-              className="text-xs text-primary hover:underline inline-flex items-center gap-1"
-            >
-              <Plus className="size-3" /> Part of it another way (cash + bKash)
-            </button>
-          </div>
-        )}
+            {(totalPaid > 0 || isSplit) && methods.length > 1 && (
+              <Button variant="outline" size="md" onClick={addPayment}>
+                <Plus className="size-4" /> Split payment
+              </Button>
+            )}
+        </div>
 
         {/* ---------- WHAT WILL HAPPEN, IN WORDS ---------- */}
         <div
@@ -400,7 +507,8 @@ export function PaymentModal({
                 <AlertTriangle className="size-5 text-destructive mt-0.5 shrink-0" />
                 <div>
                   <div className="font-semibold text-destructive">
-                    Who owes the ৳{formatBDT(owing, { withSymbol: false })}?
+                    <span>Who owes this money?</span>{' '}
+                    <span className="tabular">{formatBDT(owing)}</span>
                   </div>
                   <div className="text-sm text-muted-foreground mt-1">
                     Money left on khata has to be against a name, or it is not in anyone's
@@ -411,12 +519,12 @@ export function PaymentModal({
               </div>
               <div className="flex flex-wrap gap-2">
                 {onPickCustomer && (
-                  <Button size="sm" onClick={onPickCustomer}>
+                  <Button size="md" onClick={onPickCustomer}>
                     <UserPlus className="size-4" /> Choose customer
                   </Button>
                 )}
-                <Button size="sm" variant="outline" onClick={() => setSingleAmount(total)}>
-                  Take the full ৳{formatBDT(total, { withSymbol: false })} instead
+                <Button size="md" variant="outline" onClick={() => setSingleAmount(total)}>
+                  Take the full amount instead
                 </Button>
               </div>
             </div>
@@ -428,37 +536,42 @@ export function PaymentModal({
                   The bill is paid in full.
                 </div>
               </div>
-              <div className="text-3xl font-bold tabular text-success">
-                ৳ {formatBDT(change, { withSymbol: false })}
-              </div>
+              <div className="text-3xl font-bold tabular text-success">{formatBDT(change)}</div>
             </div>
           ) : owing > 0 ? (
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <div className="text-sm">
-                  <span className="font-semibold">
-                    {customerName || 'This customer'} will still owe
-                  </span>
+                  {customerName ? (
+                    <span className="font-semibold">
+                      <span>{customerName}</span> <span>will still owe</span>
+                    </span>
+                  ) : (
+                    <span className="font-semibold">This customer will still owe</span>
+                  )}
                   <div className="text-xs text-muted-foreground mt-0.5">
                     Goes on their khata. You can collect it any time.
                   </div>
                 </div>
-                <div className="text-3xl font-bold tabular text-warning">
-                  ৳ {formatBDT(owing, { withSymbol: false })}
-                </div>
+                <div className="text-3xl font-bold tabular text-warning">{formatBDT(owing)}</div>
               </div>
               {customerCurrentDue > 0 && (
-                <div className="text-xs text-muted-foreground border-t border-warning/20 pt-2">
-                  Already owed ৳{formatBDT(customerCurrentDue, { withSymbol: false })} · khata
-                  becomes ৳{formatBDT(newDue, { withSymbol: false })}
+                <div className="text-sm text-muted-foreground border-t border-warning/20 pt-2 flex flex-wrap gap-x-4 gap-y-1">
+                  <span>
+                    <span>Already owed</span> <span className="tabular">{formatBDT(customerCurrentDue)}</span>
+                  </span>
+                  <span>
+                    <span>Khata after this sale</span>{' '}
+                    <span className="tabular font-semibold text-foreground">{formatBDT(newDue)}</span>
+                  </span>
                 </div>
               )}
               {overLimitBy && (
                 <div className="flex items-start gap-2 text-destructive text-sm border-t border-destructive/20 pt-2">
                   <AlertTriangle className="size-4 mt-0.5 shrink-0" />
                   <span>
-                    <span>That is over their credit limit of</span> ৳
-                    {formatBDT(customerCreditLimit ?? 0, { withSymbol: false })}.{' '}
+                    <span>That is over their credit limit of</span>{' '}
+                    <span className="tabular">{formatBDT(customerCreditLimit ?? 0)}</span>.{' '}
                     {canPassLimit ? (
                       <span>You can still save it. The sale will record that the limit was passed.</span>
                     ) : (
@@ -482,11 +595,13 @@ export function PaymentModal({
 
 function SplitRow({
   line,
+  methods,
   onChange,
   onRemove,
   canRemove,
 }: {
   line: PaymentLine;
+  methods: typeof METHODS;
   onChange: (patch: Partial<PaymentLine>) => void;
   onRemove: () => void;
   canRemove: boolean;
@@ -494,37 +609,41 @@ function SplitRow({
   const m = METHODS.find((x) => x.id === line.method) ?? METHODS[0];
   return (
     <div className="grid grid-cols-12 gap-2 items-center">
-      <select
+      <Select
         value={line.method}
         onChange={(e) => onChange({ method: e.target.value as PaymentMethod })}
-        className="col-span-4 h-10 px-2 rounded-md border border-input bg-background text-sm outline-none focus:ring-2 focus:ring-ring/50"
+        aria-label="Method"
+        className="col-span-4"
       >
-        {METHODS.map((mt) => (
+        {methods.map((mt) => (
           <option key={mt.id} value={mt.id}>
             {mt.label}
           </option>
         ))}
-      </select>
+      </Select>
       <NumberField
         value={line.amount}
         onChangeNumber={(v) => onChange({ amount: v })}
         placeholder="0.00"
+        aria-label="Amount"
         className="col-span-3 h-10 px-2 text-right"
       />
       <input
         value={line.reference ?? ''}
         onChange={(e) => onChange({ reference: e.target.value })}
-        placeholder={m.needsRef ? 'TxID' : 'note'}
-        className="col-span-4 h-10 px-2 rounded-md border border-input bg-background text-xs font-mono outline-none focus:ring-2 focus:ring-ring/50"
+        placeholder={m.needsRef ? 'Transaction number' : 'Note'}
+        aria-label="Reference"
+        className="col-span-4 h-10 px-2 rounded-md border border-input bg-background text-sm outline-none focus:ring-2 focus:ring-ring/50"
       />
-      <button
+      <IconButton
+        label="Remove this payment"
+        tone="danger"
         onClick={onRemove}
         disabled={!canRemove}
-        className="col-span-1 h-10 rounded-md border border-border hover:bg-destructive/10 hover:text-destructive disabled:opacity-30 disabled:pointer-events-none grid place-items-center"
-        title="Remove"
+        className="col-span-1 justify-self-end"
       >
-        <Trash2 className="size-3.5" />
-      </button>
+        <Trash2 className="size-4" />
+      </IconButton>
     </div>
   );
 }

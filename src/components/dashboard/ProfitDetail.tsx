@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/Button';
 import { apiSafe } from '@/lib/api';
 import { useDashboard } from '@/stores/dashboard';
 import { DASHBOARD_BRANCH, toRangeInput, useDashboardData } from '@/hooks/useDashboardData';
-import { formatBDT } from '@/lib/utils';
+import { cn, formatBDT } from '@/lib/utils';
+import { useRange } from './range';
 
 interface Props {
   open: boolean;
@@ -15,45 +16,26 @@ interface Props {
 
 /** Subset of `reports.profitLoss` this modal reads (see backend/services/reports.ts). */
 interface ProfitLossReport {
-  moneyIn: {
-    totalSalesExclTaxDisc: number;
-    sellShipping: number;
-    sellOther: number;
-    purchaseReturns: number;
-  };
-  moneyOut: {
-    cogs: number;
-    sellReturns: number;
-    expenses: number;
-    stockAdjustment: number;
-  };
-  grossProfit: number;
-  marginPct: number;
-  netProfit: number;
-  totalPurchases: number;
+  moneyIn: { totalSalesExclTaxDisc: number };
+  moneyOut: { cogs: number; sellReturns: number };
 }
 
-/** Neutral placeholder for a row the backend does not expose yet. */
-const NA = '—';
-const money = (v: number | null | undefined) => (typeof v === 'number' ? formatBDT(v) : NA);
-
+/**
+ * Profit for the dashboard's range, as one short sum the owner can follow:
+ * sales, cost of goods, gross profit, expenses, net profit, margin.
+ *
+ * It used to be an 18-row two-column accountant's sheet in a wide modal, half
+ * of it permanently "—" (no backend source), with Gross and Net each shown
+ * twice and closing-stock rows that are not profit at all. Rows with no figure
+ * are now left out. Headline figures come from the backend unchanged.
+ */
 export function ProfitDetail({ open, onClose }: Props) {
   const range = useDashboard((s) => s.range);
   const customRange = useDashboard((s) => s.customRange);
+  const { label: period } = useRange();
   const { data: bundle } = useDashboardData();
 
-  // Net profit calc per UltimatePOS formula:
-  // Gross = (Closing stock by sale + Total sales) − (Opening stock by purchase + Total purchase + …)
-  // The numbers below are NOT recomputed here: grossProfit / marginPct / netProfit
-  // come straight from the backend (dashboard.stats + reports.profitLoss).
-
-  // Backend-only: the mock `todayProfitDetail` / `todayProfit` blocks were
-  // removed. Headline figures come from the dashboard bundle; the line-item
-  // breakdown comes from `reports.profitLoss` for the selected range, fetched
-  // when the modal opens. Anything the backend does not expose renders as '—'
-  // instead of a fabricated number.
   const [report, setReport] = useState<ProfitLossReport | null>(null);
-
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -70,237 +52,87 @@ export function ProfitDetail({ open, onClose }: Props) {
   }, [open, range, customRange]);
 
   const p = bundle?.stats.profit ?? null;
-  const stats = bundle?.stats ?? null;
+  const sales = report?.moneyIn.totalSalesExclTaxDisc;
+  const cogs = report?.moneyOut.cogs;
+  const returns = report?.moneyOut.sellReturns;
 
   return (
     <Modal
       open={open}
       onClose={onClose}
-      width="max-w-4xl"
-      title="Today's Profit"
-      subtitle="Detailed profit breakdown for the current day"
+      width="max-w-lg"
+      title="Profit"
+      subtitle={period}
       footer={
-        <div className="flex items-center justify-between">
-          <div className="text-xs text-muted-foreground">
-            Margin{' '}
-            <span className="tabular font-semibold text-success">
-              {p ? `${p.marginPct.toFixed(2)}%` : NA}
-            </span>
-            <span className="mx-2">·</span>
-            vs yesterday{' '}
-            <span
-              className={`tabular font-semibold ${
-                p?.deltaPct == null
-                  ? 'text-muted-foreground'
-                  : p.deltaPct >= 0
-                    ? 'text-success'
-                    : 'text-destructive'
-              }`}
-            >
-              {p && p.deltaPct != null ? `${p.deltaPct >= 0 ? '+' : ''}${p.deltaPct}%` : NA}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Link to="/expenses" onClick={onClose}>
-              <Button variant="outline" size="sm">
-                <Wallet className="size-3.5" /> Expenses
-              </Button>
-            </Link>
-            <Link to="/reports" onClick={onClose}>
-              <Button size="sm">
-                <Receipt className="size-3.5" /> Profit / Loss Report <ChevronRight className="size-3" />
-              </Button>
-            </Link>
-          </div>
+        <div className="flex items-center justify-end gap-2">
+          <Link to="/expenses" onClick={onClose}>
+            <Button variant="outline">
+              <Wallet className="size-4" /> Expenses
+            </Button>
+          </Link>
+          <Link to="/reports/profit-loss" onClick={onClose}>
+            <Button>
+              <Receipt className="size-4" /> Profit / Loss Report <ChevronRight className="size-4" />
+            </Button>
+          </Link>
         </div>
       }
     >
-      <div className="p-6 space-y-6">
-        {/* Top summary banner */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <SummaryStat
-            label="Gross Profit"
-            value={money(p?.grossProfit)}
-            sub="Total sale price − Total purchase price"
-            tone="primary"
-          />
-          <SummaryStat
-            label="Total Expenses"
-            value={money(p?.expenses)}
-            sub="Sum of all expenses today"
-            tone="warning"
-          />
-          <SummaryStat
-            label="Net Profit"
-            value={money(p?.netProfit)}
-            sub="Gross profit − Expenses"
-            tone="success"
-            highlight
-          />
+      <div className="p-5">
+        <div className="divide-y divide-border rounded-lg border border-border">
+          {typeof sales === 'number' && <Line label="Sales" value={formatBDT(sales)} />}
+          {typeof cogs === 'number' && <Line label="Cost of goods sold" value={`− ${formatBDT(cogs)}`} />}
+          {typeof returns === 'number' && returns > 0 && (
+            <Line label="Sales returns" value={`− ${formatBDT(returns)}`} />
+          )}
+          {p && <Line label="Gross profit" value={formatBDT(p.grossProfit)} strong />}
+          {p && <Line label="Expenses" value={`− ${formatBDT(p.expenses)}`} tone="warning" />}
+          {p && (
+            <div className="flex items-baseline justify-between gap-3 px-4 py-3 bg-success/5">
+              <span className="text-base font-semibold">Net profit</span>
+              <span
+                className={cn(
+                  'text-2xl font-bold tabular',
+                  p.netProfit >= 0 ? 'text-success' : 'text-destructive',
+                )}
+              >
+                {formatBDT(p.netProfit)}
+              </span>
+            </div>
+          )}
+          {p && <Line label="Margin" value={`${p.marginPct.toFixed(2)}%`} />}
         </div>
-
-        {/* Two-column breakdown — mirrors UltimatePOS layout */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-1 border-t border-border pt-5">
-          {/* LEFT */}
-          <div className="space-y-3">
-            {/* Opening stock is not exposed by the backend — shown as '—'. */}
-            <Row label="Opening Stock" sub="(By purchase price)" value={NA} />
-            <Row label="Opening Stock" sub="(By sale price)" value={NA} muted />
-            <Row
-              label="Total purchase"
-              sub="(Exc. tax, Discount)"
-              value={money(report?.totalPurchases)}
-            />
-            <Row label="Total Stock Adjustment" value={money(report?.moneyOut.stockAdjustment)} />
-            <Row label="Total Expense" value={money(report?.moneyOut.expenses)} tone="warning" />
-            {/* Purchase / transfer shipping, sell discount and customer reward
-                totals have no backend source yet — shown as '—'. */}
-            <Row label="Total purchase shipping charge" value={NA} />
-            <Row label="Total transfer shipping charge" value={NA} />
-            <Row label="Total Sell discount" value={NA} />
-            <Row label="Total customer reward" value={NA} />
-            <Row label="Total Sell Return" value={money(report?.moneyOut.sellReturns)} tone="warning" />
-          </div>
-
-          {/* RIGHT */}
-          <div className="space-y-3">
-            {/* Closing stock = current stock valuation from dashboard.stats. */}
-            <Row
-              label="Closing stock"
-              sub="(By purchase price)"
-              value={money(stats?.stockValueAtCost)}
-            />
-            <Row
-              label="Closing stock"
-              sub="(By sale price)"
-              value={money(stats?.stockValueAtRetail)}
-              muted
-            />
-            <Row
-              label="Total Sales"
-              sub="(Exc. tax, Discount)"
-              value={money(report?.moneyIn.totalSalesExclTaxDisc)}
-              tone="success"
-            />
-            <Row label="Total sell shipping charge" value={money(report?.moneyIn.sellShipping)} />
-            {/* Stock recovered, purchase discount and sell round-off totals have
-                no backend source yet — shown as '—'. */}
-            <Row label="Total Stock Recovered" value={NA} />
-            <Row label="Total Purchase Return" value={money(report?.moneyIn.purchaseReturns)} />
-            <Row label="Total Purchase discount" value={NA} />
-            <Row label="Total sell round off" value={NA} />
-          </div>
-        </div>
-
-        {/* Bottom big numbers — like the screenshot */}
-        <div className="border-t border-border pt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-          <BigStat
-            label="Gross Profit"
-            value={money(p?.grossProfit)}
-            sub="Total sell price − Total purchase price"
-            tone="primary"
-          />
-          <BigStat
-            label="Net Profit"
-            value={money(p?.netProfit)}
-            sub="Gross profit − Total expenses + …"
-            tone="success"
-          />
-        </div>
+        {!p && !report && (
+          <div className="py-6 text-center text-sm text-muted-foreground">Loading…</div>
+        )}
       </div>
     </Modal>
   );
 }
 
-function Row({
+function Line({
   label,
-  sub,
   value,
-  muted,
+  strong,
   tone,
 }: {
   label: string;
-  sub?: string;
   value: string;
-  muted?: boolean;
-  tone?: 'success' | 'warning' | 'destructive';
+  strong?: boolean;
+  tone?: 'warning';
 }) {
   return (
-    <div className="flex items-baseline justify-between gap-3">
-      <div className="min-w-0">
-        <div className={muted ? 'text-sm text-muted-foreground' : 'text-sm font-medium'}>{label}</div>
-        {sub && <div className="text-xs text-muted-foreground -mt-0.5">{sub}</div>}
-      </div>
-      <div
-        className={`font-mono text-sm whitespace-nowrap ${
-          tone === 'success'
-            ? 'text-success'
-            : tone === 'warning'
-              ? 'text-warning'
-              : tone === 'destructive'
-                ? 'text-destructive'
-                : ''
-        }`}
+    <div className="flex items-baseline justify-between gap-3 px-4 py-2.5">
+      <span className={cn('text-sm', strong ? 'font-semibold' : 'text-muted-foreground')}>{label}</span>
+      <span
+        className={cn(
+          'text-sm tabular whitespace-nowrap',
+          strong && 'text-base font-semibold',
+          tone === 'warning' && 'text-warning',
+        )}
       >
         {value}
-      </div>
-    </div>
-  );
-}
-
-function SummaryStat({
-  label,
-  value,
-  sub,
-  tone,
-  highlight,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  tone: 'primary' | 'success' | 'warning';
-  highlight?: boolean;
-}) {
-  const toneCls = {
-    primary: 'from-primary/15 to-primary/5 text-primary',
-    success: 'from-success/20 to-success/5 text-success',
-    warning: 'from-warning/15 to-warning/5 text-warning',
-  };
-  return (
-    <div
-      className={`relative rounded-xl border bg-gradient-to-br p-4 ${toneCls[tone]} ${
-        highlight ? 'border-success/40 ring-1 ring-success/20' : 'border-border'
-      }`}
-    >
-      <div className="text-xs font-medium opacity-80">{label}</div>
-      <div className="text-2xl font-bold tabular mt-1 tracking-tight">{value}</div>
-      {sub && <div className="text-xs opacity-70 mt-1">{sub}</div>}
-    </div>
-  );
-}
-
-function BigStat({
-  label,
-  value,
-  sub,
-  tone,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  tone: 'primary' | 'success';
-}) {
-  return (
-    <div className="rounded-xl border border-border p-5 bg-card">
-      <div className="text-sm text-muted-foreground">{label}</div>
-      <div
-        className={`text-3xl font-bold tabular mt-1 tracking-tight ${
-          tone === 'success' ? 'text-success' : 'text-primary'
-        }`}
-      >
-        {value}
-      </div>
-      {sub && <div className="text-xs text-muted-foreground mt-1.5">{sub}</div>}
+      </span>
     </div>
   );
 }

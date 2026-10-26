@@ -9,7 +9,6 @@ import {
   FileText,
   Undo2,
   Truck,
-  Tag,
   Package,
   Boxes,
   ListTree,
@@ -30,6 +29,11 @@ import {
   ChevronRight,
   BarChart3,
   Store,
+  FileClock,
+  ShieldCheck,
+  Percent,
+  PackageMinus,
+  UsersRound,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUI } from '@/stores/ui';
@@ -66,7 +70,7 @@ const nav: Entry[] = [
       items: [
         { label: 'All Sales', to: '/sales', icon: Receipt },
         { label: 'New Sale', to: '/sales/new', icon: PenSquare },
-        { label: 'Drafts', to: '/sales/drafts', icon: PenSquare },
+        { label: 'Drafts', to: '/sales/drafts', icon: FileClock },
         { label: 'Quotations', to: '/sales/quotations', icon: FileText },
         { label: 'Sell Returns', to: '/sales/returns', icon: Undo2 },
         { label: 'Shipments', to: '/sales/shipments', icon: Truck },
@@ -95,9 +99,9 @@ const nav: Entry[] = [
         { label: 'Categories', to: '/products/categories', icon: ListTree },
         { label: 'Brands', to: '/products/brands', icon: Award },
         { label: 'Units', to: '/products/units', icon: Ruler },
-        { label: 'Bulk Price Update', to: '/products/price-update', icon: Tag },
+        { label: 'Bulk Price Update', to: '/products/price-update', icon: Percent },
         { label: 'Barcode Print', to: '/products/barcodes', icon: Barcode },
-        { label: 'Warranties', to: '/products/warranties', icon: Award },
+        { label: 'Warranties', to: '/products/warranties', icon: ShieldCheck },
       ],
     },
   },
@@ -111,7 +115,7 @@ const nav: Entry[] = [
         { label: 'Stock Alerts', to: '/stock/alerts', icon: AlertTriangle },
         // Hidden while the shop has one branch (see `visibleNav`).
         { label: 'Transfers', to: '/stock/transfers', icon: ArrowLeftRight },
-        { label: 'Damage / Adjustment', to: '/stock/adjustments', icon: AlertTriangle },
+        { label: 'Damage / Adjustment', to: '/stock/adjustments', icon: PackageMinus },
       ],
     },
   },
@@ -123,7 +127,7 @@ const nav: Entry[] = [
       items: [
         { label: 'Customers', to: '/contacts/customers', icon: Users },
         { label: 'Suppliers', to: '/contacts/suppliers', icon: UserCog },
-        { label: 'Customer Groups', to: '/contacts/customer-groups', icon: Users },
+        { label: 'Customer Groups', to: '/contacts/customer-groups', icon: UsersRound },
         { label: 'Customer Dues', to: '/contacts/dues', icon: HandCoins },
       ],
     },

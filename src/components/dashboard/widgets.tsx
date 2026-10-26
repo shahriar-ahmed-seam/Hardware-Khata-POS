@@ -1,6 +1,4 @@
 import {
-  AreaChart,
-  Area,
   BarChart,
   Bar,
   LineChart,
@@ -20,14 +18,18 @@ import { Badge } from '@/components/ui/Badge';
 import { useDashboardData } from '@/hooks/useDashboardData';
 import { formatBDT, formatNumber } from '@/lib/utils';
 import { cn } from '@/lib/utils';
+import { labelFor } from '@/lib/labels';
+import { formatTime } from '@/lib/formatDate';
 
 const TOOLTIP_STYLE = {
   background: 'hsl(var(--popover))',
   border: '1px solid hsl(var(--border))',
   borderRadius: 8,
-  fontSize: 12,
+  fontSize: 14,
   color: 'hsl(var(--popover-foreground))',
 };
+/** Tooltip value text in the popover colour (the series colour was low-contrast). */
+const TOOLTIP_ITEM = { color: 'hsl(var(--popover-foreground))' };
 
 const PIE_COLORS = [
   'hsl(var(--primary))',
@@ -62,7 +64,7 @@ function ListBody({
   children: React.ReactNode;
 }) {
   return (
-    <div className={cn('flex-1 overflow-auto scroll-hide pr-1', empty ? 'min-h-0' : 'min-h-[200px]', className)}>
+    <div className={cn('flex-1 overflow-auto pr-1', empty ? 'min-h-0' : 'min-h-[200px]', className)}>
       {children}
     </div>
   );
@@ -82,19 +84,14 @@ export function HourlySales() {
   return (
     <div className="h-64 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={chartData}>
-          <defs>
-            <linearGradient id="hsGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.5} />
-              <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity={0} />
-            </linearGradient>
-          </defs>
+        {/* Bars, not a smooth area: a curve drew sales into hours that had none. */}
+        <BarChart data={chartData}>
           <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
-          <XAxis dataKey="hour" stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} />
-          <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => `${v / 1000}k`} />
-          <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [formatBDT(v), 'Sales']} />
-          <Area type="monotone" dataKey="sales" stroke="hsl(var(--primary))" strokeWidth={2} fill="url(#hsGrad)" />
-        </AreaChart>
+          <XAxis dataKey="hour" stroke="hsl(var(--muted-foreground))" fontSize={13} tickLine={false} axisLine={false} />
+          <YAxis stroke="hsl(var(--muted-foreground))" fontSize={13} tickLine={false} axisLine={false} tickFormatter={(v) => `${v / 1000}k`} />
+          <Tooltip contentStyle={TOOLTIP_STYLE} itemStyle={TOOLTIP_ITEM} formatter={(v: number) => [formatBDT(v), 'Sales']} />
+          <Bar dataKey="sales" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} maxBarSize={36} />
+        </BarChart>
       </ResponsiveContainer>
     </div>
   );
@@ -111,9 +108,9 @@ export function SalesTrend() {
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={chartData}>
           <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
-          <XAxis dataKey="day" stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} />
-          <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => `${v / 1000}k`} />
-          <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [formatBDT(v), 'Sales']} />
+          <XAxis dataKey="day" stroke="hsl(var(--muted-foreground))" fontSize={13} tickLine={false} axisLine={false} />
+          <YAxis stroke="hsl(var(--muted-foreground))" fontSize={13} tickLine={false} axisLine={false} tickFormatter={(v) => `${v / 1000}k`} />
+          <Tooltip contentStyle={TOOLTIP_STYLE} itemStyle={TOOLTIP_ITEM} formatter={(v: number) => [formatBDT(v), 'Sales']} />
           <Line type="monotone" dataKey="sales" stroke="hsl(var(--primary))" strokeWidth={2.5} dot={{ r: 3 }} activeDot={{ r: 5 }} />
         </LineChart>
       </ResponsiveContainer>
@@ -134,9 +131,9 @@ export function SalesVsPurchaseVsExpense() {
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={chartData}>
           <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
-          <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} />
-          <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => `${v / 1000000}M`} />
-          <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => formatBDT(v)} />
+          <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={13} tickLine={false} axisLine={false} />
+          <YAxis stroke="hsl(var(--muted-foreground))" fontSize={13} tickLine={false} axisLine={false} tickFormatter={(v) => `${v / 1000000}M`} />
+          <Tooltip contentStyle={TOOLTIP_STYLE} itemStyle={TOOLTIP_ITEM} formatter={(v: number) => formatBDT(v)} />
           <Legend wrapperStyle={{ fontSize: 11 }} />
           <Bar dataKey="sales" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
           <Bar dataKey="purchases" fill="hsl(var(--accent))" radius={[4, 4, 0, 0]} />
@@ -201,20 +198,26 @@ export function TopSellingProducts() {
   const { data, loading } = useDashboardData();
   if (loading && !data) return <Loading />;
   // Backend-only: mock top-items list removed.
-  const items = data?.topProducts ?? [];
+  // Ranked by money, so the order matches the bold figure on the right.
+  const items = [...(data?.topProducts ?? [])].sort((a, b) => b.total - a.total);
   return (
     <ListBody empty={items.length === 0} className="space-y-2.5">
       {items.length === 0 && <EmptyNote>No sales yet.</EmptyNote>}
       {items.map((it, i) => (
         <div key={i} className="flex items-center gap-3">
-          <div className="grid place-items-center size-8 rounded-md bg-secondary text-xs font-semibold shrink-0">
-            #{i + 1}
+          <div className="grid place-items-center size-8 rounded-md bg-secondary text-xs font-semibold shrink-0 tabular">
+            {i + 1}
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium truncate">{it.name}</div>
-            <div className="text-xs text-muted-foreground">{formatNumber(it.qty)} units</div>
+            {/* Two lines, not truncate: similar names stay tellable apart. */}
+            <div className="text-sm font-medium leading-snug line-clamp-2" title={it.name}>
+              {it.name}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              <span className="tabular">{formatNumber(it.qty)}</span> <span>units</span>
+            </div>
           </div>
-          <div className="text-sm tabular">{formatBDT(it.total)}</div>
+          <div className="text-sm font-semibold tabular shrink-0">{formatBDT(it.total)}</div>
         </div>
       ))}
     </ListBody>
@@ -236,7 +239,9 @@ export function TopCustomers() {
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-medium truncate">{c.name}</div>
-            <div className="text-xs text-muted-foreground">{c.orders} orders</div>
+            <div className="text-xs text-muted-foreground">
+              <span className="tabular">{c.orders}</span> <span>{c.orders === 1 ? 'sale' : 'sales'}</span>
+            </div>
           </div>
           <div className="text-sm tabular">{formatBDT(c.total)}</div>
         </div>
@@ -271,10 +276,10 @@ export function RecentSales() {
           <tbody>
             {rows.map((s) => (
               <tr key={s.id} className="border-b border-border/50 hover:bg-secondary/40">
-                <td className="px-4 py-2 font-mono text-xs">{s.invoiceNo}</td>
-                <td className="px-2 py-2 truncate max-w-[140px]">{s.customerName}</td>
-                <td className="px-2 py-2 text-right tabular">{formatBDT(s.total, { withSymbol: false })}</td>
-                <td className="px-4 py-2">
+                <td className="px-4 py-3 tabular whitespace-nowrap">{s.invoiceNo}</td>
+                <td className="px-2 py-3 truncate max-w-[140px]">{s.customerName}</td>
+                <td className="px-2 py-3 text-right tabular">{formatBDT(s.total, { withSymbol: false })}</td>
+                <td className="px-4 py-3">
                   <Badge
                     variant={
                       s.status === 'paid'
@@ -285,7 +290,7 @@ export function RecentSales() {
                     }
                     // Same vocabulary as every list and drawer — see SettlementBadge.
                   >
-                    {s.status}
+                    {labelFor('paymentStatus', s.status)}
                   </Badge>
                 </td>
               </tr>
@@ -331,8 +336,9 @@ export function LowStockList() {
         <div key={p.id} className="flex items-center justify-between text-sm gap-3">
           <div className="min-w-0">
             <div className="font-medium truncate">{p.name}</div>
-            <div className="text-xs text-muted-foreground font-mono">
-              {p.sku} · reorder at {p.reorderLevel}
+            <div className="text-xs text-muted-foreground">
+              <span className="font-mono">{p.sku}</span> · <span>Reorder at</span>{' '}
+              <span className="tabular">{p.reorderLevel}</span>
             </div>
           </div>
           <Badge variant={p.stock === 0 ? 'destructive' : 'warning'}>
@@ -361,7 +367,7 @@ export function CustomerDuesList() {
         >
           <div className="min-w-0">
             <div className="text-sm font-medium truncate">{c.name}</div>
-            <div className="text-xs text-muted-foreground">{c.group}</div>
+            <div className="text-xs text-muted-foreground">{labelFor('priceGroup', c.group)}</div>
           </div>
           <div className="text-sm tabular text-destructive">{formatBDT(c.due)}</div>
         </Link>
@@ -410,7 +416,7 @@ export function CashRegisterCard() {
   let footer = '—';
   if (card) {
     const opened = card.openedAt
-      ? new Date(card.openedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+      ? formatTime(card.openedAt)
       : '';
     footer = `Shift #${card.shiftNo ?? '—'} · Opened ${opened} by ${card.openedBy ?? '—'}`;
   } else if (data) {
@@ -465,7 +471,7 @@ export function ExpenseBreakdown() {
                 <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} stroke="hsl(var(--card))" strokeWidth={2} />
               ))}
             </Pie>
-            <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => formatBDT(v)} />
+            <Tooltip contentStyle={TOOLTIP_STYLE} itemStyle={TOOLTIP_ITEM} formatter={(v: number) => formatBDT(v)} />
           </PieChart>
         </ResponsiveContainer>
       </div>
@@ -502,7 +508,7 @@ export function PaymentMethodBreakdown() {
                 <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} stroke="hsl(var(--card))" strokeWidth={2} />
               ))}
             </Pie>
-            <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => formatBDT(v)} />
+            <Tooltip contentStyle={TOOLTIP_STYLE} itemStyle={TOOLTIP_ITEM} formatter={(v: number) => formatBDT(v)} />
           </PieChart>
         </ResponsiveContainer>
       </div>

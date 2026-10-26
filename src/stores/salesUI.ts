@@ -41,7 +41,9 @@ export const SALES_COLUMN_META: Record<SalesColumn, { label: string; align?: 'ri
   type:          { label: 'Type' },
 };
 
-const DEFAULT: SalesColumn[] = ['date', 'invoice', 'customer', 'items', 'total', 'paid', 'due', 'paymentStatus', 'paymentMethod', 'cashier'];
+// Seven columns fit 1366px on one line per row (UI audit step 3). Paid, Items and
+// By stay available in the Columns panel.
+const DEFAULT: SalesColumn[] = ['date', 'invoice', 'customer', 'total', 'due', 'paymentStatus', 'paymentMethod'];
 
 interface State {
   columns: SalesColumn[];
@@ -71,6 +73,11 @@ export const useSalesUI = create<State>()(
       move: (c, dir) => set((s) => ({ columns: move(s.columns, c, dir) })),
       reset: () => set({ columns: DEFAULT }),
     }),
-    { name: 'pos-sales-ui' },
+    {
+      name: 'pos-sales-ui',
+      // v1: the default column set shrank to seven; move saved lists onto it once.
+      version: 1,
+      migrate: () => ({ columns: DEFAULT }) as unknown as State,
+    },
   ),
 );

@@ -111,6 +111,11 @@ const DEFAULT_SCHEMES: InvoiceScheme[] = [
 
 // ---------- Receipt Template ----------
 export interface ReceiptTemplate {
+  /**
+   * Legacy, no longer read or written: the width that prints is the printer
+   * profile's (`PrinterProfile.paperWidth`); Receipt Template only picks a
+   * preview width, which is not saved. Kept so stored blobs still type-check.
+   */
   paperSize: '50mm' | '80mm' | 'A4';
   showLogo: boolean;
   headerLines: string[]; // free text
@@ -183,16 +188,79 @@ const DEFAULT_BARCODE: BarcodeSettings = {
 };
 
 // ---------- Printer Profiles ----------
+/**
+ * How a profile reaches paper (src/lib/printing.ts, electron/printing.ts):
+ *  - 'driver'  — a printer installed in Windows (USB thermal with its driver,
+ *                or an A4 printer). Printed as HTML, so Bangla prints.
+ *  - 'network' — an ESC/POS thermal printer on the LAN (IP, port 9100). Sent
+ *                raw ESC/POS text; cut and drawer kick are commands in it.
+ *
+ * Older builds stored connection 'USB' | 'Network' | 'Bluetooth', an
+ * `ipOrPort` string, `encoding` and `model`, none of which did anything.
+ * `normalizePrinter` reads those into this shape.
+ */
+export type PrinterConnection = 'driver' | 'network';
+export type PrinterPaperWidth = 58 | 80 | 210;
+
 export interface PrinterProfile {
   id: string;
   name: string;
-  branch?: string;
-  connection: 'USB' | 'Network' | 'Bluetooth';
-  model?: string;
-  ipOrPort?: string; // network ip or COM port
-  paperWidth: 50 | 58 | 80 | 210;
-  encoding: 'UTF-8' | 'GB18030' | 'CP437';
+  connection: PrinterConnection;
+  /** Driver printers: the Windows printer name; '' = the PC's default printer. */
+  deviceName?: string;
+  /** Network printers. */
+  host?: string;
+  port?: number;
+  paperWidth: PrinterPaperWidth;
+  copies: number;
+  /** Network only: cut the paper after each copy. */
+  autoCut: boolean;
+  /** Network only: kick the cash drawer wired to the printer. */
+  openDrawer: boolean;
   isDefault?: boolean;
+}
+
+/** Read any stored profile (old or new shape) as a current one. */
+export function normalizePrinter(raw: unknown): PrinterProfile {
+  const p = (raw ?? {}) as Record<string, unknown>;
+  const conn = String(p.connection ?? '').toLowerCase();
+  const connection: PrinterConnection = conn === 'network' ? 'network' : 'driver';
+  let host = typeof p.host === 'string' ? p.host.trim() : '';
+  let port = Number(p.port);
+  if (!host && connection === 'network' && typeof p.ipOrPort === 'string') {
+    const [h, pt] = p.ipOrPort.trim().split(':');
+    host = h ?? '';
+    port = Number(pt);
+  }
+  const w = Number(p.paperWidth);
+  // 50mm rolls print on the 58mm layout; a network printer is never A4.
+  let paperWidth: PrinterPaperWidth = w === 210 ? 210 : w === 50 || w === 58 ? 58 : 80;
+  if (connection === 'network' && paperWidth === 210) paperWidth = 80;
+  const copies = Math.max(1, Math.min(10, Math.floor(Number(p.copies) || 1)));
+  return {
+    id: typeof p.id === 'string' && p.id ? p.id : 'pr_' + Math.random().toString(36).slice(2, 10),
+    name: typeof p.name === 'string' && p.name.trim() ? p.name : 'Printer',
+    connection,
+    deviceName: connection === 'driver' && typeof p.deviceName === 'string' ? p.deviceName : connection === 'driver' ? '' : undefined,
+    host: connection === 'network' ? host : undefined,
+    port: connection === 'network' ? (Number.isInteger(port) && port > 0 && port < 65536 ? port : 9100) : undefined,
+    paperWidth,
+    copies,
+    autoCut: connection === 'network' ? p.autoCut !== false : false,
+    openDrawer: connection === 'network' ? p.openDrawer === true : false,
+    isDefault: !!p.isDefault,
+  };
+}
+
+/** The profile receipts print on: the one marked default, else the first. */
+export function defaultPrinter(list: readonly PrinterProfile[]): PrinterProfile | undefined {
+  return list.find((p) => p.isDefault) ?? list[0];
+}
+
+/** Keep at most one default; `preferId` wins when it is marked. */
+function oneDefault(list: PrinterProfile[], preferId?: string): PrinterProfile[] {
+  const winner = list.find((p) => p.id === preferId && p.isDefault) ?? list.find((p) => p.isDefault);
+  return list.map((p) => ({ ...p, isDefault: !!winner && p.id === winner.id }));
 }
 
 // ---------- Theme & Appearance ----------
@@ -414,7 +482,7 @@ export const useSettings = create<State>()(
               if (kv.schemes != null) patch.schemes = kv.schemes as InvoiceScheme[];
               if (kv.receipt != null) patch.receipt = kv.receipt as ReceiptTemplate;
               if (kv.barcode != null) patch.barcode = kv.barcode as BarcodeSettings;
-              if (kv.printers != null) patch.printers = kv.printers as PrinterProfile[];
+              if (Array.isArray(kv.printers)) patch.printers = kv.printers.map(normalizePrinter);
               if (kv.appearance != null) {
                 const ap = kv.appearance as AppearancePrefs;
                 patch.appearance = { ...ap, fontScale: snapFontScale(ap.fontScale) };
@@ -530,16 +598,19 @@ export const useSettings = create<State>()(
 
         // ----- Printers (KV write-through) -----
         addPrinter: (data) => {
-          const item: PrinterProfile = { id: 'pr_' + Date.now(), ...data };
-          writePref('printers', 'printers', [...get().printers, item]);
+          const item = normalizePrinter({ ...data, id: 'pr_' + Date.now() });
+          const current = get().printers.map(normalizePrinter);
+          // The first printer a shop adds is the one it prints on.
+          if (current.length === 0) item.isDefault = true;
+          writePref('printers', 'printers', oneDefault([...current, item], item.id));
           return item;
         },
         updatePrinter: (id, patch) => {
-          const next = get().printers.map((p) => (p.id === id ? { ...p, ...patch } : p));
-          writePref('printers', 'printers', next);
+          const next = get().printers.map((p) => normalizePrinter(p.id === id ? { ...p, ...patch } : p));
+          writePref('printers', 'printers', oneDefault(next, id));
         },
         removePrinter: (id) => {
-          writePref('printers', 'printers', get().printers.filter((p) => p.id !== id));
+          writePref('printers', 'printers', get().printers.filter((p) => p.id !== id).map(normalizePrinter));
         },
 
         setAppearance: (patch) => writePref('appearance', 'appearance', { ...get().appearance, ...patch }),

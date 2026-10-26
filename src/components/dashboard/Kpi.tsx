@@ -48,8 +48,15 @@ interface KpiProps {
   to?: string;
   onClick?: () => void;
   showDelta?: boolean;
-  removable?: boolean;
-  onRemove?: () => void;
+  /** The range this figure covers ("Today", "This month"); own text node. */
+  period?: string;
+  /** "vs yesterday", "vs last month" … */
+  compareLabel?: string;
+  /**
+   * Today only: the previous figure in words ("Yesterday ৳3,72,300") instead of
+   * a % that is always red in the morning (a part-day against a full day).
+   */
+  prevValue?: string;
 }
 
 export function Kpi({
@@ -61,8 +68,9 @@ export function Kpi({
   to,
   onClick,
   showDelta = true,
-  removable,
-  onRemove,
+  period,
+  compareLabel = 'vs yesterday',
+  prevValue,
 }: KpiProps) {
   const positive = (delta ?? 0) >= 0;
 
@@ -78,27 +86,32 @@ export function Kpi({
       <CardContent className="p-4 pl-5">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <div className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+            <div className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground min-w-0">
               <span className="truncate">{label}</span>
+              {period && (
+                <span className="shrink-0 text-xs rounded bg-secondary px-1.5 py-0.5">{period}</span>
+              )}
               {(to || onClick) && (
-                <ChevronRight className="size-3 shrink-0 opacity-0 group-hover:opacity-100 transition" />
+                <ChevronRight className="size-4 shrink-0 opacity-0 group-hover:opacity-100 transition" />
               )}
             </div>
-            <div className="text-xl font-bold mt-1 tracking-tight tabular text-foreground">
+            <div className="text-2xl font-bold mt-1 tracking-tight tabular text-foreground truncate">
               {value}
             </div>
-            {showDelta && delta === null && (
-              <div
-                className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-muted-foreground"
-                title="Nothing to compare with yesterday"
-              >
-                — <span>vs yesterday</span>
+            {showDelta && prevValue !== undefined && (
+              <div className="mt-2 flex items-center gap-1 text-xs text-muted-foreground whitespace-nowrap">
+                <span>Yesterday</span> <span className="tabular">{prevValue}</span>
               </div>
             )}
-            {showDelta && typeof delta === 'number' && (
+            {showDelta && prevValue === undefined && delta === null && (
+              <div className="mt-2 flex items-center gap-1 text-xs font-medium text-muted-foreground whitespace-nowrap">
+                — <span>{compareLabel}</span>
+              </div>
+            )}
+            {showDelta && prevValue === undefined && typeof delta === 'number' && (
               <div
                 className={cn(
-                  'mt-2 inline-flex items-center gap-1 text-xs font-medium',
+                  'mt-2 flex items-center gap-1 text-xs font-medium whitespace-nowrap',
                   positive ? 'text-success' : 'text-destructive',
                 )}
               >
@@ -107,7 +120,8 @@ export function Kpi({
                 ) : (
                   <ArrowDownRight className="size-3" />
                 )}
-                {Math.abs(delta)}% <span className="text-muted-foreground">vs yesterday</span>
+                <span className="tabular">{Math.abs(delta)}%</span>{' '}
+                <span className="text-muted-foreground">{compareLabel}</span>
               </div>
             )}
           </div>
@@ -115,19 +129,6 @@ export function Kpi({
             <Icon className="size-5" />
           </div>
         </div>
-        {removable && (
-          <button
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onRemove?.();
-            }}
-            className="absolute top-1.5 right-1.5 size-6 grid place-items-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground"
-            title="Remove from dashboard"
-          >
-            ×
-          </button>
-        )}
       </CardContent>
     </Card>
   );

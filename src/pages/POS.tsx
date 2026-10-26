@@ -14,10 +14,11 @@ import { usePOS } from '@/stores/pos';
 import { usePOSCart, type PriceResolver } from '@/stores/posCart';
 import { useSettings } from '@/stores/settings';
 import { CustomerPicker } from '@/components/pos/CustomerPicker';
-import { PaymentModal, type PaymentMethod, type PaymentResult } from '@/components/pos/PaymentModal';
+import { PaymentModal, type PaymentResult } from '@/components/pos/PaymentModal';
 import { HeldList } from '@/components/pos/HeldList';
 import { ReceiptModal } from '@/components/pos/ReceiptModal';
 import { ShortcutsOverlay } from '@/components/pos/ShortcutsOverlay';
+import { matchesKey, usePosKeys } from '@/components/pos/shortcuts';
 import { api, hasBackend } from '@/lib/api';
 import { useProducts } from '@/hooks/useProducts';
 import { useDefaultBranchId } from '@/lib/branch';
@@ -111,6 +112,10 @@ export default function POS() {
   const { orientation, cartRatio, setCartRatio } = usePOS();
   const defaultOrderTaxPct = useSettings((s) => s.pos.defaultOrderTaxPct);
   const defaultPriceMarkupPct = useSettings((s) => s.pos.defaultPriceMarkupPct);
+  // Settings → POS Preferences (R81) — these were saved but never read.
+  const posPrefs = useSettings((s) => s.pos);
+  // Settings → Keyboard Shortcuts (R81); the built-in keys fill any gap.
+  const keys = usePosKeys();
 
   // Hydrate settings on mount so the persisted POS defaults are loaded under a
   // backend. Cheap no-op outside Electron.
@@ -180,7 +185,8 @@ export default function POS() {
   // The line last scanned/tapped — CartPanel scrolls it into view and flashes it.
   const [touched, setTouched] = useState<{ cartId: string; productId: string; n: number } | null>(null);
   const [paymentStartMode, setPaymentStartMode] = useState<'single' | 'split'>('single');
-  const [paymentStartMethod, setPaymentStartMethod] = useState<PaymentMethod>('Cash');
+  // Order-discount key: CartPanel opens the charges and focuses Discount %.
+  const [discountSignal, setDiscountSignal] = useState(0);
   const [receipt, setReceipt] = useState<ReceiptState | null>(null);
   const [lastReceipt, setLastReceiptState] = useState<ReceiptState | null>(() => lastReceiptMemo);
   const setLastReceipt = (r: ReceiptState) => {
@@ -330,7 +336,24 @@ export default function POS() {
   };
 
   const setActiveId = (id: string) => usePOSCart.getState().setActiveId(id);
-  const addCart = () => usePOSCart.getState().addCart(cartDefaults);
+  /**
+   * "Reset customer on new cart" OFF (Settings → POS): a fresh cart keeps the
+   * customer (and their price group) of the cart it replaces. The cart is
+   * empty, so nothing needs re-pricing.
+   */
+  const carryCustomer = (from: ParkedCart | undefined) => {
+    if (posPrefs.resetCustomerPerCart !== false || !from || from.customerId === 'cu1') return;
+    const st = usePOSCart.getState();
+    const fresh = st.carts.find((c) => c.id === st.activeId);
+    if (fresh && fresh.lines.length === 0) {
+      st.setActiveCart({ ...fresh, customerId: from.customerId, priceGroup: from.priceGroup });
+    }
+  };
+  const addCart = () => {
+    const from = active;
+    usePOSCart.getState().addCart(cartDefaults);
+    carryCustomer(from);
+  };
   /**
    * Closing a cart tab or clearing a cart throws its items away, so a cart
    * with items asks first (B5). An empty one just goes.
@@ -339,8 +362,8 @@ export default function POS() {
     const c = usePOSCart.getState().carts.find((x) => x.id === id);
     if (c && c.lines.length > 0) {
       const ok = await confirm({
-        title: `Close ${c.label}?`,
-        message: `It has ${c.lines.length} item${c.lines.length === 1 ? '' : 's'} in it. To keep them for later, use Suspend instead.`,
+        title: 'Close this cart?',
+        message: 'The items in it will be removed. To keep them for later, use Hold instead.',
         confirmLabel: 'Close cart',
         cancelLabel: 'Keep it',
         variant: 'destructive',
@@ -354,7 +377,7 @@ export default function POS() {
     if (c && c.lines.length > 0) {
       const ok = await confirm({
         title: 'Clear this cart?',
-        message: `All ${c.lines.length} item${c.lines.length === 1 ? '' : 's'} will be removed from ${c.label}.`,
+        message: 'Every item in this cart will be removed.',
         confirmLabel: 'Clear cart',
         cancelLabel: 'Keep it',
         variant: 'destructive',
@@ -365,8 +388,14 @@ export default function POS() {
   };
 
   const onPickCustomer = () => setPickerOpen(true);
+  /** A wholesale or contractor customer brings their price group with them. */
   const onSelectCustomer = (id: string) => {
-    if (active) setActiveCart({ ...active, customerId: id });
+    if (!active) return;
+    const c = customers.find((x) => x.id === id);
+    const g = c?.group?.toLowerCase();
+    const priceGroup: PriceGroup =
+      g === 'retail' || g === 'wholesale' || g === 'contractor' ? g : active.priceGroup;
+    setActiveCart({ ...active, customerId: id, priceGroup });
   };
 
   const totalsForActive = active
@@ -396,11 +425,11 @@ export default function POS() {
     if (short.length === 0) return true;
     const first = short[0];
     toast.error(
-      short.length === 1 ? `Not enough stock for ${first.name}` : `Not enough stock for ${short.length} items`,
+      'Not enough stock',
       {
         description:
           short.length === 1
-            ? `${first.have} ${first.unit} in stock, ${first.qty} in the cart. Reduce the quantity, or receive a purchase first.`
+            ? `${first.name}: ${first.have} ${first.unit} in stock, ${first.qty} in the cart. Reduce the quantity, or receive a purchase first.`
             : short.map((x) => `${x.name}: ${x.have} in stock, ${x.qty} in the cart`).join(' · '),
         duration: 8000,
       },
@@ -408,7 +437,7 @@ export default function POS() {
     return false;
   };
 
-  const openPay = (method: PaymentMethod = 'Cash') => {
+  const openPay = () => {
     if (!active || active.lines.length === 0) return;
     if (!canCreateSale) {
       toast.error("You don't have permission to create sales");
@@ -416,7 +445,6 @@ export default function POS() {
     }
     if (!cartFitsStock()) return;
     setPaymentStartMode('single');
-    setPaymentStartMethod(method);
     setPaymentOpen(true);
   };
   const openSplitPay = () => {
@@ -494,10 +522,11 @@ export default function POS() {
       setReceipt({ invoiceNo, cart: snapshot, payment: receiptPayment, fresh: true });
       setLastReceipt({ invoiceNo, cart: snapshot, payment: receiptPayment });
       setPaymentOpen(false);
-      toast.success(`Sale ${invoiceNo} recorded`);
+      toast.success('Sale recorded', { description: invoiceNo });
       // Clear the active cart slot for the next sale (the receipt keeps the
       // snapshot, so the printed copy is unaffected).
       usePOSCart.getState().resetActiveSlot(cartDefaults);
+      carryCustomer(snapshot);
       // Reflect stock-out, the new sale, and any drawer movement.
       void qc.invalidateQueries({ queryKey: ['products'] });
       void useSales.getState().hydrate();
@@ -516,7 +545,9 @@ export default function POS() {
   const startNewSale = () => {
     setReceipt(null);
     // Reset the current cart instead of opening a new one
+    const from = usePOSCart.getState().carts.find((c) => c.id === usePOSCart.getState().activeId);
     usePOSCart.getState().resetActiveSlot(cartDefaults);
+    carryCustomer(from?.lines.length ? from : lastReceipt?.cart);
     searchInputRef.current?.focus();
   };
 
@@ -531,7 +562,7 @@ export default function POS() {
     const swapped = !!current && current.lines.length > 0;
     usePOSCart.getState().resumeHeld(id);
     setHeldOpen(false);
-    if (swapped) toast.info('The cart that was open has been held. Find it in Held carts (F5).');
+    if (swapped) toast.info('The cart that was open has been held', { description: 'Find it under Held carts.' });
   };
 
   const discardHeld = async (id: string) => {
@@ -577,15 +608,19 @@ export default function POS() {
       } else {
         res = await api<{ invoiceNo: string }>('sales.create', payload);
       }
-      toast.success(
-        `${status === 'draft' ? 'Draft' : 'Quotation'} ${res.invoiceNo} saved`,
-      );
+      toast.success(status === 'draft' ? 'Draft saved' : 'Quotation saved', {
+        description: res.invoiceNo,
+      });
+      const from = active;
       usePOSCart.getState().resetActiveSlot(cartDefaults);
+      carryCustomer(from);
       // Surface it in Sales → Drafts/Quotations (backend-backed list).
       void useSales.getState().hydrate();
     } catch (e) {
       // Keep the cart intact so the cashier can retry.
-      toast.error(e instanceof Error ? e.message : `Failed to save ${status}`);
+      toast.error(
+        e instanceof Error ? e.message : status === 'draft' ? 'Failed to save draft' : 'Failed to save quotation',
+      );
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
@@ -600,67 +635,37 @@ export default function POS() {
     void persistAsStatus('quotation');
   };
 
-  // Global F-key shortcuts (POS scope only)
+  // POS keys, read from Settings → Keyboard Shortcuts (R81). The search key
+  // is handled in ProductPanel; the Pay key inside the open payment modal.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // Ignore when typing in normal inputs (except F-keys still fire)
+      // A popup is open: its own keys win (Esc, Enter, Pay-to-confirm).
+      if (document.querySelector('[data-overlay], [role="dialog"], [aria-modal="true"]')) return;
       const tag = (document.activeElement?.tagName ?? '').toLowerCase();
       const inText = ['input', 'textarea', 'select'].includes(tag);
-      const isFKey = /^F\d{1,2}$/.test(e.key);
-
-      if (e.key === '?' && !inText) {
+      // Plain keys ("?", letters) must not fire while typing; F-keys and
+      // Ctrl/Alt combos always do.
+      const plain = !/^F\d{1,2}$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey;
+      if (inText && plain) return;
+      const run = (fn: () => void) => {
         e.preventDefault();
-        setShortcutsOpen(true);
-        return;
-      }
-      if (e.key === 'F3') {
-        e.preventDefault();
-        setPickerOpen(true);
-        return;
-      }
-      if (e.key === 'F5') {
-        e.preventDefault();
-        setHeldOpen(true);
-        return;
-      }
-      if (e.key === 'F6') {
-        e.preventDefault();
-        onSaveAsDraft();
-        return;
-      }
-      if (e.key === 'F7') {
-        e.preventDefault();
-        onSaveAsQuotation();
-        return;
-      }
-      if (e.key === 'F8') {
-        e.preventDefault();
-        openPay('Cash');
-        return;
-      }
-      if (e.key === 'F9') {
-        e.preventDefault();
-        onSuspend();
-        return;
-      }
-      if (e.key === 'F10') {
-        e.preventDefault();
-        addCart();
-        return;
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
-        e.preventDefault();
-        reprintLast();
-        return;
-      }
-      if (isFKey) {
-        // Other F-keys handled in ProductPanel (F2)
-      }
+        fn();
+      };
+      if (matchesKey(e, keys.showHelp)) return run(() => setShortcutsOpen(true));
+      if (matchesKey(e, keys.customer)) return run(() => setPickerOpen(true));
+      if (matchesKey(e, keys.orderDiscount)) return run(() => setDiscountSignal((n) => n + 1));
+      if (matchesKey(e, keys.heldCarts)) return run(() => setHeldOpen(true));
+      if (matchesKey(e, keys.saveDraft)) return run(onSaveAsDraft);
+      if (matchesKey(e, keys.saveQuotation)) return run(onSaveAsQuotation);
+      if (matchesKey(e, keys.pay)) return run(openPay);
+      if (matchesKey(e, keys.hold)) return run(onSuspend);
+      if (matchesKey(e, keys.newCart)) return run(addCart);
+      if (matchesKey(e, keys.reprintLast)) return run(reprintLast);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, lastReceipt, held, canReprint]);
+  }, [active, lastReceipt, held, canReprint, keys, posPrefs.resetCustomerPerCart]);
 
   const customerForActive = customers.find((c) => c.id === active?.customerId);
 
@@ -706,8 +711,10 @@ export default function POS() {
       costOf={costOf}
       listPriceOf={listPriceOf}
       touched={touched}
+      discountSignal={discountSignal}
+      onShowKeys={() => setShortcutsOpen(true)}
       onPickCustomer={onPickCustomer}
-      onPay={(m) => openPay(m)}
+      onPay={openPay}
       onSplitPay={openSplitPay}
       onSuspend={onSuspend}
       onShowHeld={() => setHeldOpen(true)}
@@ -727,6 +734,8 @@ export default function POS() {
       onAdd={addToCart}
       onSubmitSearch={handleSubmitSearch}
       searchInputRef={searchInputRef}
+      enterAdds={bestMatch ? { id: bestMatch.id, name: bestMatch.name, price: bestMatch.price } : null}
+      big={posPrefs.bigButtonMode}
     />
   );
 
@@ -766,6 +775,7 @@ export default function POS() {
         onClose={() => setPickerOpen(false)}
         selectedId={active.customerId}
         onSelect={onSelectCustomer}
+        showWalkIn
       />
 
       <HeldList
@@ -800,9 +810,11 @@ export default function POS() {
           setPickerOpen(true);
         }}
         startMode={paymentStartMode}
-        // The payment modal initialises with `Cash` regardless; user clicks the chosen tile.
-        // Keep startMethod available for a future "preselect" tweak.
-        key={`pay-${paymentOpen}-${paymentStartMethod}`}
+        defaultMethod={posPrefs.defaultPaymentMethod}
+        visibleMethods={posPrefs.visiblePaymentMethods}
+        big={posPrefs.bigButtonMode}
+        confirmKey={keys.pay}
+        key={`pay-${paymentOpen}`}
         onConfirm={handleConfirmPayment}
       />
 
@@ -822,7 +834,7 @@ export default function POS() {
         />
       )}
 
-      <ShortcutsOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+      <ShortcutsOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} keys={keys} />
     </div>
   );
 }

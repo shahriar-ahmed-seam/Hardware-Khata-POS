@@ -1,6 +1,6 @@
 import { ReactNode, Suspense } from 'react';
 import { Link } from 'react-router-dom';
-import { ChevronRight, X, GripVertical } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/Card';
 import { cn } from '@/lib/utils';
 
@@ -10,32 +10,15 @@ interface Props {
   to?: string;
   toLabel?: string;
   className?: string;
-  removable?: boolean;
-  onRemove?: () => void;
-  // Reorder controls (in customize mode)
-  canMoveUp?: boolean;
-  canMoveDown?: boolean;
-  onMoveUp?: () => void;
-  onMoveDown?: () => void;
   badge?: ReactNode;
   children: ReactNode;
 }
 
-export function Widget({
-  title,
-  description,
-  to,
-  toLabel = 'View all',
-  className,
-  removable,
-  onRemove,
-  canMoveUp,
-  canMoveDown,
-  onMoveUp,
-  onMoveDown,
-  badge,
-  children,
-}: Props) {
+/**
+ * A dashboard card. Show / hide / reorder live in the Customize panel only —
+ * the in-card ↑ ↓ × buttons (24px) of the old edit mode are gone.
+ */
+export function Widget({ title, description, to, toLabel = 'View all', className, badge, children }: Props) {
   return (
     <Card className={cn('overflow-hidden flex flex-col h-full w-full', className)}>
       <CardHeader className="pb-2">
@@ -47,46 +30,15 @@ export function Widget({
             </div>
             {description && <CardDescription>{description}</CardDescription>}
           </div>
-          <div className="flex items-center gap-1 shrink-0">
-            {(canMoveUp || canMoveDown) && (
-              <div className="flex items-center bg-secondary rounded-md">
-                <button
-                  onClick={onMoveUp}
-                  disabled={!canMoveUp}
-                  className="size-6 grid place-items-center text-xs disabled:opacity-30 hover:bg-background rounded-l-md"
-                  title="Move up"
-                >
-                  ↑
-                </button>
-                <button
-                  onClick={onMoveDown}
-                  disabled={!canMoveDown}
-                  className="size-6 grid place-items-center text-xs disabled:opacity-30 hover:bg-background rounded-r-md"
-                  title="Move down"
-                >
-                  ↓
-                </button>
-              </div>
-            )}
-            {to && (
-              <Link
-                to={to}
-                className="inline-flex items-center gap-0.5 px-2 py-1 rounded-md hover:bg-secondary text-xs text-muted-foreground hover:text-foreground"
-              >
-                {toLabel}
-                <ChevronRight className="size-3" />
-              </Link>
-            )}
-            {removable && (
-              <button
-                onClick={onRemove}
-                className="size-6 grid place-items-center rounded text-muted-foreground hover:bg-destructive hover:text-destructive-foreground"
-                title="Remove from dashboard"
-              >
-                <X className="size-3.5" />
-              </button>
-            )}
-          </div>
+          {to && (
+            <Link
+              to={to}
+              className="shrink-0 inline-flex items-center gap-1 h-9 px-3 rounded-md hover:bg-secondary text-xs font-medium text-muted-foreground hover:text-foreground focus-ring"
+            >
+              {toLabel}
+              <ChevronRight className="size-4" />
+            </Link>
+          )}
         </div>
       </CardHeader>
       {/* The widget BODIES are code-split (see lazyWidgets.ts), so every widget

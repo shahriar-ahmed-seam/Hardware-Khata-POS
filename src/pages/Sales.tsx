@@ -1,21 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import {
-  Search,
-  Filter,
-  Download,
-  Plus,
-  Settings2,
-  Calendar,
-  Eye,
-  EyeOff,
-  Printer,
-  Undo2,
-} from 'lucide-react';
+import { Search, Download, Plus, Settings2, Eye, EyeOff, Printer, Undo2 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
+import { Select } from '@/components/ui/Select';
+import { Segmented } from '@/components/ui/Segmented';
+import { IconButton } from '@/components/ui/IconButton';
 import {
   SettlementBadge,
   SETTLEMENT_LABEL,
@@ -23,8 +15,9 @@ import {
 } from '@/components/ui/SettlementBadge';
 import { Card } from '@/components/ui/Card';
 import { DateField } from '@/components/ui/DateTimeField';
-import { Popover } from '@/components/ui/Popover';
 import { ColumnsPanel } from '@/components/ui/ColumnsPanel';
+import { labelFor } from '@/lib/labels';
+import { useDateFormat } from '@/lib/formatDate';
 import { Pagination } from '@/components/ui/Pagination';
 import { useSales, type SaleRecord, type SaleStatus } from '@/stores/sales';
 import { ALL_SALES_COLUMNS, SALES_COLUMN_META, useSalesUI, type SalesColumn } from '@/stores/salesUI';
@@ -227,10 +220,7 @@ export default function Sales() {
     return {
       count: arr.length,
       revenue: arr.reduce((s, x) => s + x.total, 0),
-      paid: arr.reduce((s, x) => s + x.paid, 0),
       due: arr.reduce((s, x) => s + x.due, 0),
-      tax: arr.reduce((s, x) => s + x.tax, 0),
-      discount: arr.reduce((s, x) => s + x.orderDiscount + x.totalLineDiscount, 0),
     };
   }, [pageRows]);
 
@@ -238,12 +228,15 @@ export default function Sales() {
     <div>
       <PageHeader
         title="All Sales"
-        subtitle="Final and voided sales"
         actions={
           <>
-            <IconBtn title="Customize columns" onClick={() => setColsOpen(true)}>
+            <IconButton
+              label="Customize columns"
+              variant="outline"
+              onClick={() => setColsOpen(true)}
+            >
               <Settings2 className="size-4" />
-            </IconBtn>
+            </IconButton>
             {/* Import is switched off until real importers exist (see /import). */}
             {/* Was a button with no handler. Writes the accountant-friendly CSV
                 through the same `backup.export` channel Settings uses, into the
@@ -251,7 +244,6 @@ export default function Sales() {
                 whole sales table, not the filtered page. */}
             <Button
               variant="outline"
-              size="sm"
               disabled={exportBusy}
               onClick={() => void exportCsv('sales')}
               title="Write every sale to a CSV file in your backup folder"
@@ -266,22 +258,6 @@ export default function Sales() {
       />
 
       <div className="p-6 space-y-4">
-        {/* KPI strip — PAGE-SCOPED. Only the current page is in memory, so these
-            are explicitly labelled instead of masquerading as range totals. */}
-        <div>
-          <div className="text-xs text-muted-foreground mb-1.5">
-            Totals for this page only. Use Reports for full-range figures.
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-            <Stat label="Sales (this page)" value={String(totals.count)} />
-            <Stat label="Revenue (this page)" value={formatBDT(totals.revenue)} tone="primary" />
-            <Stat label="Paid (this page)" value={formatBDT(totals.paid)} tone="success" />
-            <Stat label="Due (this page)" value={formatBDT(totals.due)} tone="destructive" />
-            <Stat label="Tax (this page)" value={formatBDT(totals.tax)} />
-            <Stat label="Discount (this page)" value={formatBDT(totals.discount)} />
-          </div>
-        </div>
-
         {/* Filters */}
         <Card className="p-3 flex flex-wrap items-center gap-2">
           <div className="relative flex-1 min-w-[240px]">
@@ -293,21 +269,22 @@ export default function Sales() {
               className="pl-9"
             />
           </div>
-          <select
+          <Select
+            aria-label="Date"
             value={date}
             onChange={(e) => {
               const preset = e.target.value as DateFilter;
               setDate(preset);
               void loadPage(presetToRange(preset));
             }}
-            className="h-10 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
+            className="w-auto"
           >
             <option value="all">All dates</option>
             <option value="today">Today</option>
             <option value="week">This week</option>
             <option value="month">This month</option>
             <option value="custom">Custom</option>
-          </select>
+          </Select>
           {date === 'custom' && (
             <>
               <DateField
@@ -328,13 +305,14 @@ export default function Sales() {
               />
             </>
           )}
-          <select
+          <Select
+            aria-label="Customer"
             value={customerId}
             onChange={(e) => {
               setCustomerId(e.target.value);
               void loadPage({ customerId: e.target.value });
             }}
-            className="h-10 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
+            className="w-auto max-w-[220px]"
           >
             <option value="all">All customers</option>
             {customers.map((c) => (
@@ -342,14 +320,15 @@ export default function Sales() {
                 {c.name}
               </option>
             ))}
-          </select>
-          <select
+          </Select>
+          <Select
+            aria-label="User"
             value={cashier}
             onChange={(e) => {
               setCashier(e.target.value);
               void loadPage({ userId: e.target.value });
             }}
-            className="h-10 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
+            className="w-auto"
           >
             <option value="all">All users</option>
             {users.map((u) => (
@@ -357,43 +336,33 @@ export default function Sales() {
                 {u.name}
               </option>
             ))}
-          </select>
-          <select
+          </Select>
+          <Select
+            aria-label="Method"
             value={method}
             onChange={(e) => {
               setMethod(e.target.value);
               void loadPage({ method: e.target.value });
             }}
-            className="h-10 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
+            className="w-auto"
           >
             <option value="all">All methods</option>
             {['Cash', 'bKash', 'Nagad', 'Card', 'Bank', 'Credit'].map((m) => (
               <option key={m} value={m}>
-                {m}
+                {labelFor('paymentMethod', m)}
               </option>
             ))}
-          </select>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-0.5 p-0.5 bg-secondary rounded-md text-xs">
-              {/* Plain words, one vocabulary — see SettlementBadge. These used to
-                  render the raw filter keys, so the chips read "partial" / "due"
-                  while meaning "part paid" / "nothing paid yet". */}
-              {(['all', 'paid', 'partial', 'due'] as StatusFilter[]).map((s) => (
-                <button
-                  key={s}
-                  onClick={() => onStatus(s)}
-                  className={cn(
-                    'px-3 py-1 rounded font-medium transition',
-                    status === s
-                      ? 'bg-card text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  {s === 'all' ? 'All' : SETTLEMENT_LABEL[s as SettlementKey]}
-                </button>
-              ))}
-            </div>
-          </div>
+          </Select>
+          {/* Plain words, one vocabulary — see SettlementBadge. */}
+          <Segmented
+            ariaLabel="Payment status"
+            value={status}
+            onChange={(s) => onStatus(s)}
+            options={(['all', 'paid', 'partial', 'due'] as StatusFilter[]).map((s) => ({
+              value: s,
+              label: s === 'all' ? 'All' : SETTLEMENT_LABEL[s as SettlementKey],
+            }))}
+          />
 
           {/* VOIDED — hidden unless asked for. Kept as its own small toggle rather
               than a chip in the row above, because it answers a different
@@ -407,20 +376,20 @@ export default function Sales() {
                 : 'Show cancelled (voided) sales as well'
             }
             className={cn(
-              'h-9 px-3 inline-flex items-center gap-1.5 rounded-md border text-xs font-medium transition',
+              'h-10 px-3 inline-flex items-center gap-1.5 rounded-md border text-sm font-medium transition',
               showVoided
                 ? 'border-destructive/50 bg-destructive/10 text-destructive'
                 : 'border-border text-muted-foreground hover:bg-secondary hover:text-foreground',
             )}
           >
-            {showVoided ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+            {showVoided ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
             {showVoided ? 'Voided shown' : 'Show voided'}
           </button>
           {showVoided && (
             <button
               onClick={() => onStatus(status === 'voided' ? 'all' : 'voided')}
               className={cn(
-                'h-9 px-3 rounded-md border text-xs font-medium transition',
+                'h-10 px-3 rounded-md border text-sm font-medium transition',
                 status === 'voided'
                   ? 'border-destructive bg-destructive text-destructive-foreground'
                   : 'border-border text-muted-foreground hover:bg-secondary',
@@ -430,6 +399,33 @@ export default function Sales() {
             </button>
           )}
         </Card>
+
+        {/* One summary line for the loaded page (was six "(this page)" cards).
+            Words and numbers in separate nodes so Bangla can translate them. */}
+        {pageRows.length > 0 && (
+          <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-sm text-muted-foreground px-1">
+            <span>On this page</span>
+            <span>
+              <span>Sales</span>{' '}
+              <span className="font-semibold text-foreground tabular">{totals.count}</span>
+            </span>
+            <span>
+              <span>Total</span>{' '}
+              <span className="font-semibold text-foreground tabular">{formatBDT(totals.revenue)}</span>
+            </span>
+            <span>
+              <span>Due</span>{' '}
+              <span
+                className={cn(
+                  'font-semibold tabular',
+                  totals.due > 0.004 ? 'text-destructive' : 'text-foreground',
+                )}
+              >
+                {formatBDT(totals.due)}
+              </span>
+            </span>
+          </div>
+        )}
 
         {/* Table */}
         {loading && sales.length === 0 ? (
@@ -451,47 +447,33 @@ export default function Sales() {
                       {SALES_COLUMN_META[c].label}
                     </th>
                   ))}
-                  <th className="w-24"></th>
+                  <th className="w-24">
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {pageRows.map((s) => (
+                  // The row opens the sale (the Eye icon said the same thing).
                   <tr
                     key={s.id}
-                    className={cn(
-                      'border-t border-border hover:bg-secondary/40 cursor-pointer group',
-                      s.status === 'void' && 'opacity-60',
-                    )}
+                    className="border-t border-border hover:bg-secondary/40 cursor-pointer"
                     onClick={() => setOpenId(s.id)}
                   >
                     {columns.map((c) => (
                       <Cell key={c} c={c} s={s} />
                     ))}
-                    <td className="px-2 py-2.5" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex items-center justify-end gap-0.5 opacity-60 group-hover:opacity-100">
-                        <button
-                          onClick={() => setOpenId(s.id)}
-                          className="size-7 grid place-items-center rounded hover:bg-secondary"
-                          title="View"
-                        >
-                          <Eye className="size-3.5" />
-                        </button>
-                        {/* Was a button with no handler at all. Opens the stored
-                            invoice ready to print or save as PDF. */}
-                        <button
-                          onClick={() => setPrintFor(s)}
-                          className="size-7 grid place-items-center rounded hover:bg-secondary"
-                          title="Print invoice"
-                        >
-                          <Printer className="size-3.5" />
-                        </button>
-                        <button
-                          onClick={() => setReturnFor(s.id)}
-                          className="size-7 grid place-items-center rounded hover:bg-warning/10 hover:text-warning"
-                          title="Create return"
-                        >
-                          <Undo2 className="size-3.5" />
-                        </button>
+                    <td className="px-2 py-1.5" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center justify-end gap-1">
+                        <IconButton size="sm" label="Print invoice" onClick={() => setPrintFor(s)}>
+                          <Printer className="size-4" />
+                        </IconButton>
+                        {/* A voided sale has nothing left to return. */}
+                        {s.status !== 'void' && (
+                          <IconButton size="sm" label="Return goods" onClick={() => setReturnFor(s.id)}>
+                            <Undo2 className="size-4" />
+                          </IconButton>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -560,21 +542,21 @@ export default function Sales() {
 }
 
 function Cell({ c, s }: { c: SalesColumn; s: SaleRecord }) {
+  const fmt = useDateFormat();
   const align = SALES_COLUMN_META[c].align === 'right' ? 'text-right tabular' : '';
   switch (c) {
-    case 'date': {
-      const d = new Date(s.date);
+    case 'date':
       return (
-        <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
-          {d.toLocaleDateString('en-GB')}{' '}
-          <span className="opacity-70">{d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</span>
+        <td className="px-3 py-2.5 whitespace-nowrap">
+          {fmt.date(s.date)}{' '}
+          <span className="text-muted-foreground">{fmt.time(s.date)}</span>
         </td>
       );
-    }
     case 'invoice':
-      return <td className="px-3 py-2.5 font-mono text-xs">{s.invoiceNo}</td>;
+      // Never wraps: the number broke onto three lines and tripled row height.
+      return <td className="px-3 py-2.5 whitespace-nowrap">{s.invoiceNo}</td>;
     case 'customer':
-      return <td className="px-3 py-2.5 font-medium">{s.customerName}</td>;
+      return <td className="px-3 py-2.5 font-medium min-w-[180px]">{s.customerName}</td>;
     case 'items':
       return <td className={`px-3 py-2.5 ${align}`}>{s.lines.reduce((n, l) => n + l.qty, 0)}</td>;
     case 'subtotal':
@@ -584,7 +566,12 @@ function Cell({ c, s }: { c: SalesColumn; s: SaleRecord }) {
     case 'tax':
       return <td className={`px-3 py-2.5 ${align} text-muted-foreground`}>{formatBDT(s.tax, { withSymbol: false })}</td>;
     case 'total':
-      return <td className={`px-3 py-2.5 ${align} font-semibold`}>{formatBDT(s.total, { withSymbol: false })}</td>;
+      // A voided total is struck through (the row used to fade, which failed contrast).
+      return (
+        <td className={cn(`px-3 py-2.5 ${align} font-semibold`, s.status === 'void' && 'line-through text-muted-foreground')}>
+          {formatBDT(s.total, { withSymbol: false })}
+        </td>
+      );
     case 'paid':
       return <td className={`px-3 py-2.5 ${align} text-success`}>{formatBDT(s.paid, { withSymbol: false })}</td>;
     case 'due':
@@ -602,67 +589,23 @@ function Cell({ c, s }: { c: SalesColumn; s: SaleRecord }) {
       );
     case 'paymentMethod': {
       const methods = Array.from(new Set(s.payments.map((p) => p.method)));
-      const text = methods.length === 0 ? '—' : methods.length === 1 ? methods[0] : 'Mixed';
-      return <td className="px-3 py-2.5 text-xs">{text}</td>;
+      const text =
+        methods.length === 0 ? '—' : labelFor('paymentMethod', methods.length === 1 ? methods[0] : 'Mixed');
+      return <td className="px-3 py-2.5 whitespace-nowrap">{text}</td>;
     }
     case 'cashier':
-      return <td className="px-3 py-2.5 text-xs text-muted-foreground">{s.user}</td>;
+      return <td className="px-3 py-2.5 text-muted-foreground">{s.user}</td>;
     case 'branch':
-      return <td className="px-3 py-2.5 text-xs text-muted-foreground">{s.branch}</td>;
+      return <td className="px-3 py-2.5 text-muted-foreground">{s.branch}</td>;
     case 'profit':
       return <td className={`px-3 py-2.5 ${align} text-success`}>{s.profit ? formatBDT(s.profit, { withSymbol: false }) : '—'}</td>;
     case 'type':
-      return <td className="px-3 py-2.5"><Badge variant="default">{s.status}</Badge></td>;
+      return (
+        <td className="px-3 py-2.5">
+          <Badge variant={s.status === 'void' ? 'destructive' : 'default'}>
+            {s.status === 'void' ? 'Voided' : labelFor('saleStatus', s.status)}
+          </Badge>
+        </td>
+      );
   }
 }
-
-function Stat({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone?: 'primary' | 'success' | 'destructive';
-}) {
-  return (
-    <Card className="p-4">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div
-        className={cn(
-          'text-lg font-bold mt-0.5 tabular',
-          tone === 'primary' && 'text-primary',
-          tone === 'success' && 'text-success',
-          tone === 'destructive' && 'text-destructive',
-        )}
-      >
-        {value}
-      </div>
-    </Card>
-  );
-}
-
-function IconBtn({
-  children,
-  title,
-  onClick,
-}: {
-  children: React.ReactNode;
-  title: string;
-  onClick?: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      title={title}
-      className="h-10 w-10 grid place-items-center rounded-md border border-border hover:bg-secondary text-muted-foreground hover:text-foreground transition"
-    >
-      {children}
-    </button>
-  );
-}
-
-// silence unused
-void Filter;
-void Calendar;
-void Popover;

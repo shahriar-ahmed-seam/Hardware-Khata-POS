@@ -5,21 +5,21 @@ import {
   Plus,
   Settings2,
   Download,
-  Eye,
-  EyeOff,
   Printer,
   Banknote,
-  Undo2,
+  MoreHorizontal,
+  PackageSearch,
 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
-import {
-  SettlementBadge,
-  SETTLEMENT_LABEL,
-  type SettlementKey,
-} from '@/components/ui/SettlementBadge';
+import { Select } from '@/components/ui/Select';
+import { Segmented } from '@/components/ui/Segmented';
+import { IconButton } from '@/components/ui/IconButton';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Popover } from '@/components/ui/Popover';
+import { SettlementBadge, SETTLEMENT_LABEL } from '@/components/ui/SettlementBadge';
 import { Card } from '@/components/ui/Card';
 import { ColumnsPanel } from '@/components/ui/ColumnsPanel';
 import { Pagination } from '@/components/ui/Pagination';
@@ -33,16 +33,27 @@ import {
   type PurchaseColumn,
 } from '@/stores/purchasesUI';
 import { formatBDT, cn } from '@/lib/utils';
+import { formatDate } from '@/lib/formatDate';
 import { endOfLocalDay, startOfBusinessWeek, startOfLocalDay } from '@/lib/datetime';
 import { hasBackend } from '@/lib/api';
 import { SkeletonTable } from '@/components/ui/Skeleton';
 import { PurchaseDetail } from '@/components/purchases/PurchaseDetail';
 import { PayBillModal } from '@/components/purchases/PayBillModal';
 import { PurchasePrintModal } from '@/components/purchases/PurchasePrintModal';
+import { PURCHASE_STATUS_LABEL, PURCHASE_STATUS_VARIANT } from '@/components/purchases/labels';
 
 type DateFilter = 'all' | 'today' | 'week' | 'month';
+type StatusFilter = 'live' | PurchaseStatus;
+type PaymentFilter = 'all' | 'paid' | 'partial' | 'due';
 
-/** Everything except cancelled — see `showCancelled` below. */
+const PAYMENT_OPTIONS: { value: PaymentFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'paid', label: SETTLEMENT_LABEL.paid },
+  { value: 'partial', label: SETTLEMENT_LABEL.partial },
+  { value: 'due', label: SETTLEMENT_LABEL.due },
+];
+
+/** Everything except cancelled (the status select's default). */
 const LIVE_STATUSES: PurchaseStatus[] = ['received', 'ordered', 'in-transit'];
 
 /**
@@ -100,21 +111,15 @@ export default function Purchases() {
   const [q, setQ] = useState('');
   const [supplierId, setSupplierId] = useState<string | 'all'>('all');
   const [date, setDate] = useState<DateFilter>('all');
-  const [payment, setPayment] = useState<'all' | 'paid' | 'partial' | 'due'>('all');
-  const [status, setStatus] = useState<'all' | PurchaseStatus>('all');
+  const [payment, setPayment] = useState<PaymentFilter>('all');
+  /** 'live' = everything except cancelled (the default). */
+  const [status, setStatus] = useState<StatusFilter>('live');
   const [colsOpen, setColsOpen] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [payBillOpen, setPayBillOpen] = useState(false);
   const [printFor, setPrintFor] = useState<PurchaseRecord | null>(null);
-  /**
-   * CANCELLED PURCHASES ARE HIDDEN BY DEFAULT.
-   *
-   * A cancelled purchase has had its stock-in and its cash-out reversed, so it
-   * buys nothing but confusion in a list an employee reads all day. Nothing is
-   * deleted (the reversal history is exactly what makes a cancel auditable) and
-   * one small button brings them back. Same rule as voided sales.
-   */
-  const [showCancelled, setShowCancelled] = useState(false);
+  // Cancelled purchases are hidden by default (their stock-in and cash-out were
+  // reversed); the status select brings them back. Nothing is deleted.
 
   // Search hits the database (reference + supplier name) — debounced ~300ms so
   // typing doesn't fire a query per keystroke. First run skipped: the mount
@@ -140,34 +145,12 @@ export default function Purchases() {
    * totals then disagreed with the rows on screen. `paid` and `due` ARE columns on
    * `purchases`; see `PageQuery.payment` in backend/services/paged.ts.
    */
-  /**
-   * The lifecycle statuses to ask SQL for, given the chip AND the cancelled
-   * toggle. Kept in one place so the two controls can never disagree (a chip
-   * saying "cancelled" while the toggle claims they are hidden).
-   */
-  const statusesFor = (chip: 'all' | PurchaseStatus, withCancelled: boolean) => {
-    if (chip !== 'all') return [chip];
-    return withCancelled ? undefined : LIVE_STATUSES;
-  };
-
-  const onStatusChip = (next: 'all' | PurchaseStatus) => {
+  const onStatus = (next: StatusFilter) => {
     setStatus(next);
-    // Picking "cancelled" obviously means showing them.
-    if (next === 'cancelled') setShowCancelled(true);
-    void loadPage({ statuses: statusesFor(next, next === 'cancelled' || showCancelled), page: 1 });
+    void loadPage({ statuses: next === 'live' ? LIVE_STATUSES : [next], page: 1 });
   };
 
-  const toggleCancelled = () => {
-    const next = !showCancelled;
-    setShowCancelled(next);
-    // Hiding them while the "cancelled" chip is active would be contradictory,
-    // so the chip falls back to "all".
-    const chip = !next && status === 'cancelled' ? 'all' : status;
-    if (chip !== status) setStatus(chip);
-    void loadPage({ statuses: statusesFor(chip, next), page: 1 });
-  };
-
-  const onPaymentChip = (next: 'all' | 'paid' | 'partial' | 'due') => {
+  const onPaymentChip = (next: PaymentFilter) => {
     setPayment(next);
     void loadPage({ payment: next === 'all' ? undefined : next, page: 1 });
   };
@@ -191,6 +174,27 @@ export default function Purchases() {
     };
   }, [list]);
 
+  const filtersOn =
+    q !== '' || supplierId !== 'all' || date !== 'all' || payment !== 'all' || status !== 'live';
+  const clearFilters = () => {
+    setQ('');
+    setSupplierId('all');
+    setDate('all');
+    setPayment('all');
+    setStatus('live');
+    void loadPage({
+      page: 1,
+      statuses: LIVE_STATUSES,
+      supplierId: undefined,
+      payment: undefined,
+      from: undefined,
+      to: undefined,
+      q: undefined,
+    });
+  };
+
+  // The six page-only KPI cards were removed (they repeated the page size and
+  // wrapped "৳" onto its own line); one line under the table says the same.
   return (
     <div>
       <PageHeader
@@ -198,26 +202,40 @@ export default function Purchases() {
         subtitle="Goods received from suppliers"
         actions={
           <>
-            <IconBtn title="Customize columns" onClick={() => setColsOpen(true)}>
-              <Settings2 className="size-4" />
-            </IconBtn>
-            {/* Import is switched off until real importers exist (see /import). */}
-            {/* Was a button with no handler. Same `backup.export` channel as
-                Settings, so there is one exporter in the app. "All" is literal:
-                the whole purchases table, not the filtered page. */}
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={exportBusy}
-              onClick={() => void exportCsv('purchases')}
-              title="Write every purchase to a CSV file in your backup folder"
+            {/* Rare admin actions live in one "More" menu. */}
+            <Popover
+              align="right"
+              width="w-60"
+              trigger={(_o, set) => (
+                <IconButton variant="outline" label="More" onClick={() => set(true)}>
+                  <MoreHorizontal className="size-4" />
+                </IconButton>
+              )}
             >
-              <Download className="size-4" /> Export all
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => nav('/purchases/returns')}>
-              <Undo2 className="size-4" /> Returns
-            </Button>
-            <Button variant="destructive" size="sm" onClick={() => setPayBillOpen(true)}>
+              {(close) => (
+                <div className="py-1">
+                  <MenuItem
+                    icon={Settings2}
+                    label="Customize columns"
+                    onClick={() => {
+                      close();
+                      setColsOpen(true);
+                    }}
+                  />
+                  {/* Same `backup.export` channel as Settings: the whole table. */}
+                  <MenuItem
+                    icon={Download}
+                    label="Export all"
+                    disabled={exportBusy}
+                    onClick={() => {
+                      close();
+                      void exportCsv('purchases');
+                    }}
+                  />
+                </div>
+              )}
+            </Popover>
+            <Button variant="outline" onClick={() => setPayBillOpen(true)}>
               <Banknote className="size-4" /> Pay Bill
             </Button>
             <Button onClick={() => nav('/purchases/new')}>
@@ -228,39 +246,25 @@ export default function Purchases() {
       />
 
       <div className="p-6 space-y-4">
-        {/* KPI strip — PAGE-SCOPED. Only the current page is in memory, so these
-            are explicitly labelled instead of masquerading as range totals. */}
-        <div>
-          <div className="text-xs text-muted-foreground mb-1.5">
-            Totals for this page only. Use Reports for full-range figures.
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-            <Stat label="Purchases (this page)" value={String(totals.count)} />
-            <Stat label="Total Value (this page)" value={formatBDT(totals.value)} tone="primary" />
-            <Stat label="Paid (this page)" value={formatBDT(totals.paid)} tone="success" />
-            <Stat label="Payable (this page)" value={formatBDT(totals.due)} tone="destructive" />
-            <Stat label="Tax (this page)" value={formatBDT(totals.tax)} />
-            <Stat label="Discount (this page)" value={formatBDT(totals.discount)} />
-          </div>
-        </div>
-
         <Card className="p-3 flex flex-wrap items-center gap-2">
-          <div className="relative flex-1 min-w-[240px]">
+          <div className="relative flex-1 min-w-[220px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
             <Input
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Reference, supplier…"
               className="pl-9"
+              aria-label="Search purchases"
             />
           </div>
-          <select
+          <Select
             value={supplierId}
+            aria-label="Supplier"
             onChange={(e) => {
               setSupplierId(e.target.value);
               void loadPage({ supplierId: e.target.value });
             }}
-            className="h-10 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
+            className="w-auto max-w-[13rem]"
           >
             <option value="all">All suppliers</option>
             {suppliers.map((s) => (
@@ -268,83 +272,41 @@ export default function Purchases() {
                 {s.name}
               </option>
             ))}
-          </select>
-          <select
+          </Select>
+          <Select
             value={date}
+            aria-label="Date"
             onChange={(e) => {
               const preset = e.target.value as DateFilter;
               setDate(preset);
               void loadPage(presetToRange(preset));
             }}
-            className="h-10 px-2 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
+            className="w-auto"
           >
             <option value="all">All dates</option>
             <option value="today">Today</option>
             <option value="week">This week</option>
             <option value="month">This month</option>
-          </select>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-0.5 p-0.5 bg-secondary rounded-md text-xs">
-              {/* Plain words, shared with the badges — see SettlementBadge. */}
-              {(['all', 'paid', 'partial', 'due'] as const).map((p) => (
-                <button
-                  key={p}
-                  onClick={() => onPaymentChip(p)}
-                  className={cn(
-                    'px-3 py-1 rounded font-medium transition',
-                    payment === p
-                      ? 'bg-card text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  {p === 'all' ? 'All' : SETTLEMENT_LABEL[p as SettlementKey]}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="flex items-center gap-0.5 p-0.5 bg-secondary rounded-md text-xs">
-            {(
-              [
-                'all',
-                'received',
-                'ordered',
-                'in-transit',
-                ...(showCancelled ? (['cancelled'] as const) : []),
-              ] as const
-            ).map((s) => (
-              <button
-                key={s}
-                onClick={() => onStatusChip(s)}
-                className={cn(
-                  'px-3 py-1 rounded font-medium capitalize transition',
-                  status === s
-                    ? 'bg-card text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground',
-                )}
-              >
-                {s.replace('-', ' ')}
-              </button>
-            ))}
-          </div>
-
-          {/* Cancelled purchases: out of the way, one click back. */}
-          <button
-            onClick={toggleCancelled}
-            title={
-              showCancelled
-                ? 'Hide cancelled purchases'
-                : 'Show cancelled purchases as well'
-            }
-            className={cn(
-              'h-9 px-3 inline-flex items-center gap-1.5 rounded-md border text-xs font-medium transition',
-              showCancelled
-                ? 'border-destructive/50 bg-destructive/10 text-destructive'
-                : 'border-border text-muted-foreground hover:bg-secondary hover:text-foreground',
-            )}
+          </Select>
+          {/* One select replaces the status chips + "Show cancelled" toggle. */}
+          <Select
+            value={status}
+            aria-label="Status"
+            onChange={(e) => onStatus(e.target.value as StatusFilter)}
+            className="w-auto"
           >
-            {showCancelled ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
-            {showCancelled ? 'Cancelled shown' : 'Show cancelled'}
-          </button>
+            <option value="live">All (not cancelled)</option>
+            <option value="received">Received</option>
+            <option value="ordered">Ordered</option>
+            <option value="in-transit">In transit</option>
+            <option value="cancelled">Cancelled</option>
+          </Select>
+          <Segmented
+            ariaLabel="Payment"
+            value={payment}
+            onChange={onPaymentChip}
+            options={PAYMENT_OPTIONS}
+          />
         </Card>
 
         <Card className="overflow-hidden">
@@ -355,7 +317,7 @@ export default function Purchases() {
               </div>
             ) : (
             <table className="w-full text-sm">
-              <thead className="text-xs text-muted-foreground bg-secondary/50 sticky top-0">
+              <thead className="text-xs text-muted-foreground bg-secondary/50">
                 <tr>
                   {columns.map((c) => (
                     <th
@@ -368,7 +330,7 @@ export default function Purchases() {
                       {PURCHASE_COLUMN_META[c].label}
                     </th>
                   ))}
-                  <th className="w-24"></th>
+                  <th className="w-14"></th>
                 </tr>
               </thead>
               <tbody>
@@ -377,42 +339,40 @@ export default function Purchases() {
                     key={p.id}
                     onClick={() => setOpenId(p.id)}
                     className={cn(
-                      'border-t border-border hover:bg-secondary/40 cursor-pointer group',
+                      'border-t border-border hover:bg-secondary/40 cursor-pointer',
                       p.status === 'cancelled' && 'opacity-60',
                     )}
                   >
                     {columns.map((c) => (
-                      <Cell key={c} c={c} p={p} />
+                      <Cell key={c} c={c} p={p} showStatus={!columns.includes('status')} />
                     ))}
-                    <td className="px-2 py-2.5" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex items-center justify-end gap-0.5 opacity-60 group-hover:opacity-100">
-                        <button
-                          onClick={() => setOpenId(p.id)}
-                          className="size-7 grid place-items-center rounded hover:bg-secondary"
-                          title="View"
-                        >
-                          <Eye className="size-3.5" />
-                        </button>
-                        {/* Was a button with no handler. Prints the goods
-                            received note for this purchase. */}
-                        <button
-                          onClick={() => setPrintFor(p)}
-                          className="size-7 grid place-items-center rounded hover:bg-secondary"
-                          title="Print goods received note"
-                        >
-                          <Printer className="size-3.5" />
-                        </button>
-                      </div>
+                    {/* The row opens the bill; Print is the one row action. */}
+                    <td className="px-2 py-2" onClick={(e) => e.stopPropagation()}>
+                      <IconButton size="sm" label="Print goods received note" onClick={() => setPrintFor(p)}>
+                        <Printer className="size-4" />
+                      </IconButton>
                     </td>
                   </tr>
                 ))}
                 {list.length === 0 && (
                   <tr>
-                    <td
-                      colSpan={columns.length + 1}
-                      className="px-4 py-12 text-center text-muted-foreground"
-                    >
-                      No purchases match.
+                    <td colSpan={columns.length + 1}>
+                      <EmptyState
+                        compact
+                        icon={PackageSearch}
+                        title={filtersOn ? 'No purchases match these filters.' : 'No purchases yet.'}
+                        action={
+                          filtersOn ? (
+                            <Button variant="outline" onClick={clearFilters}>
+                              Clear filters
+                            </Button>
+                          ) : (
+                            <Button onClick={() => nav('/purchases/new')}>
+                              <Plus className="size-4" /> Add Purchase
+                            </Button>
+                          )
+                        }
+                      />
                     </td>
                   </tr>
                 )}
@@ -420,6 +380,20 @@ export default function Purchases() {
             </table>
             )}
           </div>
+          {list.length > 0 && (
+            <div className="px-4 py-2.5 border-t border-border text-sm text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
+              <span>This page:</span>
+              <span>
+                <span className="tabular text-foreground font-medium">{formatBDT(totals.value)}</span> <span>bought</span>
+              </span>
+              <span>
+                <span className="tabular text-foreground font-medium">{formatBDT(totals.paid)}</span> <span>paid</span>
+              </span>
+              <span>
+                <span className="tabular text-destructive font-medium">{formatBDT(totals.due)}</span> <span>unpaid</span>
+              </span>
+            </div>
+          )}
           <Pagination
             page={query.page}
             pageSize={query.pageSize}
@@ -455,42 +429,43 @@ export default function Purchases() {
   );
 }
 
-function Cell({ c, p }: { c: PurchaseColumn; p: PurchaseRecord }) {
-  const align = PURCHASE_COLUMN_META[c].align === 'right' ? 'text-right tabular' : '';
+function StatusBadge({ s }: { s: PurchaseStatus }) {
+  return <Badge variant={PURCHASE_STATUS_VARIANT[s]}>{PURCHASE_STATUS_LABEL[s]}</Badge>;
+}
+
+function Cell({ c, p, showStatus }: { c: PurchaseColumn; p: PurchaseRecord; showStatus: boolean }) {
+  const align = PURCHASE_COLUMN_META[c].align === 'right' ? 'text-right tabular whitespace-nowrap' : '';
+  const td = 'px-3 py-3';
   switch (c) {
     case 'date':
-      return (
-        <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
-          {new Date(p.date).toLocaleDateString('en-GB')}
-        </td>
-      );
+      return <td className={cn(td, 'whitespace-nowrap')}>{formatDate(p.date)}</td>;
     case 'ref':
-      return <td className="px-3 py-2.5 font-mono text-xs">{p.refNo}</td>;
+      return <td className={cn(td, 'font-mono whitespace-nowrap')}>{p.refNo}</td>;
     case 'supplier':
-      return <td className="px-3 py-2.5 font-medium">{p.supplierName}</td>;
+      return <td className={cn(td, 'font-medium')}>{p.supplierName}</td>;
     case 'branch':
-      return <td className="px-3 py-2.5 text-xs text-muted-foreground">{p.branch}</td>;
+      return <td className={cn(td, 'text-muted-foreground whitespace-nowrap')}>{p.branch}</td>;
     case 'items':
-      return <td className={cn('px-3 py-2.5', align)}>{p.lines.reduce((n, l) => n + l.qty, 0)}</td>;
+      return <td className={cn(td, align)}>{p.lines.length}</td>;
     case 'subtotal':
-      return <td className={cn('px-3 py-2.5 text-muted-foreground', align)}>{formatBDT(p.subtotal, { withSymbol: false })}</td>;
+      return <td className={cn(td, 'text-muted-foreground', align)}>{formatBDT(p.subtotal, { withSymbol: false })}</td>;
     case 'discount':
       return (
-        <td className={cn('px-3 py-2.5 text-muted-foreground', align)}>
+        <td className={cn(td, 'text-muted-foreground', align)}>
           {formatBDT(p.orderDiscount + p.totalLineDiscount, { withSymbol: false })}
         </td>
       );
     case 'tax':
-      return <td className={cn('px-3 py-2.5 text-muted-foreground', align)}>{formatBDT(p.tax, { withSymbol: false })}</td>;
+      return <td className={cn(td, 'text-muted-foreground', align)}>{formatBDT(p.tax, { withSymbol: false })}</td>;
     case 'shipping':
-      return <td className={cn('px-3 py-2.5 text-muted-foreground', align)}>{formatBDT(p.shipping, { withSymbol: false })}</td>;
+      return <td className={cn(td, 'text-muted-foreground', align)}>{formatBDT(p.shipping, { withSymbol: false })}</td>;
     case 'total':
-      return <td className={cn('px-3 py-2.5 font-semibold', align)}>{formatBDT(p.total, { withSymbol: false })}</td>;
+      return <td className={cn(td, 'font-semibold', align)}>{formatBDT(p.total, { withSymbol: false })}</td>;
     case 'paid':
-      return <td className={cn('px-3 py-2.5 text-success', align)}>{formatBDT(p.paid, { withSymbol: false })}</td>;
+      return <td className={cn(td, 'text-success', align)}>{formatBDT(p.paid, { withSymbol: false })}</td>;
     case 'due':
       return (
-        <td className={cn('px-3 py-2.5', align)}>
+        <td className={cn(td, align)}>
           {p.due > 0 ? (
             <span className="text-destructive">{formatBDT(p.due, { withSymbol: false })}</span>
           ) : (
@@ -499,74 +474,47 @@ function Cell({ c, p }: { c: PurchaseColumn; p: PurchaseRecord }) {
         </td>
       );
     case 'paymentStatus':
+      // Status rides along here when it isn't "received" (no own column by default).
       return (
-        <td className="px-3 py-2.5">
-          <SettlementBadge paid={p.paid} due={p.due} credited={p.credited} />
+        <td className={td}>
+          <div className="flex flex-wrap items-center gap-1">
+            {p.status !== 'cancelled' && (
+              <SettlementBadge paid={p.paid} due={p.due} credited={p.credited} />
+            )}
+            {showStatus && p.status !== 'received' && <StatusBadge s={p.status} />}
+          </div>
         </td>
       );
     case 'status':
       return (
-        <td className="px-3 py-2.5">
-          <Badge
-            variant={
-              p.status === 'received'
-                ? 'success'
-                : p.status === 'cancelled'
-                  ? 'destructive'
-                  : 'info'
-            }
-          >
-            {p.status.replace('-', ' ')}
-          </Badge>
+        <td className={td}>
+          <StatusBadge s={p.status} />
         </td>
       );
     case 'user':
-      return <td className="px-3 py-2.5 text-xs text-muted-foreground">{p.user}</td>;
+      return <td className={cn(td, 'text-muted-foreground whitespace-nowrap')}>{p.user}</td>;
   }
 }
 
-function Stat({
+function MenuItem({
+  icon: Icon,
   label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone?: 'primary' | 'success' | 'destructive';
-}) {
-  return (
-    <Card className="p-4">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div
-        className={cn(
-          'text-lg font-bold mt-0.5 tabular',
-          tone === 'primary' && 'text-primary',
-          tone === 'success' && 'text-success',
-          tone === 'destructive' && 'text-destructive',
-        )}
-      >
-        {value}
-      </div>
-    </Card>
-  );
-}
-
-function IconBtn({
-  children,
-  title,
   onClick,
+  disabled,
 }: {
-  children: React.ReactNode;
-  title: string;
-  onClick?: () => void;
+  icon: typeof Download;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
-      title={title}
-      className="h-10 w-10 grid place-items-center rounded-md border border-border hover:bg-secondary text-muted-foreground hover:text-foreground transition"
+      disabled={disabled}
+      className="w-full flex items-center gap-2 px-3 h-10 text-sm hover:bg-secondary disabled:opacity-50"
     >
-      {children}
+      <Icon className="size-4" /> {label}
     </button>
   );
 }

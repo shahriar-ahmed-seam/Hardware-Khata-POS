@@ -3,6 +3,10 @@ import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { NumberField } from '@/components/ui/NumberField';
 import { Input } from '@/components/ui/Input';
+import { FormField } from '@/components/ui/FormField';
+import { Select } from '@/components/ui/Select';
+import { Segmented } from '@/components/ui/Segmented';
+import { formatDate } from '@/lib/formatDate';
 import { Banknote, Smartphone, CreditCard, Building2, FileText, Save } from 'lucide-react';
 import { usePurchases, type PaymentMethod, type PurchaseRecord } from '@/stores/purchases';
 import { useSuppliers } from '@/stores/contacts';
@@ -198,168 +202,196 @@ export function PayBillModal({ open, onClose, initialSupplierId }: Props) {
     onClose();
   };
 
+  const stillOwed = Math.max(0, round2((supplier?.due ?? 0) - effective));
+  const oldest = dueBills[0];
+  const noneOwed = allSuppliers !== null && supplierOptions.length === 0;
+
   return (
     <Modal
       open={open}
       onClose={onClose}
-      width="max-w-3xl"
-      title="Pay Bill"
-      subtitle="Settle outstanding supplier dues"
+      width="max-w-2xl"
+      title="Pay a supplier"
+      subtitle={supplier?.name}
       footer={
-        <div className="flex items-center justify-between">
-          <div className="text-sm">
-            <span className="text-muted-foreground">Paying </span>
-            <span className="tabular font-semibold text-success">
-              {formatBDT(effective)}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
+        noneOwed ? (
+          <div className="flex justify-end">
             <Button variant="outline" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button onClick={() => void submit()} disabled={!supplier || effective <= 0 || saving}>
-              <Save className="size-4" /> Save Payment
+              Close
             </Button>
           </div>
-        </div>
+        ) : (
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm">
+              <span className="text-muted-foreground">Paying</span>{' '}
+              <span className="tabular font-semibold text-success">{formatBDT(effective)}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button onClick={() => void submit()} disabled={!supplier || effective <= 0 || saving}>
+                <Save className="size-4" /> Save Payment
+              </Button>
+            </div>
+          </div>
+        )
       }
     >
-      <div className="p-4 space-y-4">
-        <div>
-          <label className="text-xs font-semibold text-muted-foreground">
-            Supplier *
-          </label>
-          <select
-            value={supplierId}
-            onChange={(e) => setSupplierId(e.target.value)}
-            className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
-          >
-            <option value="">Select supplier…</option>
-            {supplierOptions.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name} · {formatBDT(s.due)}
-              </option>
-            ))}
-          </select>
+      {noneOwed ? (
+        <div className="p-8 text-center text-sm text-muted-foreground">
+          You don’t owe any supplier right now.
         </div>
+      ) : (
+      <form
+        className="p-4 space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+      >
+        {/* 1. Supplier */}
+        <FormField label="Supplier" required>
+          {(f) => (
+            <Select
+              {...f}
+              autoFocus={!initialSupplierId}
+              value={supplierId}
+              onChange={(e) => setSupplierId(e.target.value)}
+            >
+              <option value="">Select supplier…</option>
+              {supplierOptions.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name} · {formatBDT(s.due)}
+                </option>
+              ))}
+            </Select>
+          )}
+        </FormField>
 
         {supplier && (
           <>
-            <div className="flex items-center gap-1 p-0.5 bg-secondary rounded-md text-xs w-max">
-              {(['auto', 'pick'] as const).map((mm) => (
-                <button
-                  key={mm}
-                  onClick={() => setMode(mm)}
-                  className={cn(
-                    'px-3 h-8 rounded font-medium transition',
-                    mode === mm ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  {mm === 'auto' ? 'Auto-allocate (oldest first)' : 'Pick bills manually'}
-                </button>
-              ))}
-            </div>
-
-            <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
-              {METHODS.map((opt) => {
-                const Icon = opt.icon;
-                return (
-                  <button
-                    key={opt.id}
-                    onClick={() => setMethod(opt.id)}
-                    className={cn(
-                      'h-12 rounded-md border text-xs font-medium transition inline-flex flex-col items-center justify-center gap-1',
-                      method === opt.id
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border hover:bg-secondary',
-                    )}
-                  >
-                    <Icon className="size-4" />
-                    {opt.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {mode === 'auto' && (
-                <div>
-                  <label className="text-xs font-semibold text-muted-foreground">
-                    Amount
-                  </label>
-                  <NumberField value={amount} onChangeNumber={setAmount} className="text-right text-base" />
-                  <div className="flex items-center gap-1 mt-1">
-                    <button
-                      onClick={() => setAmount(supplier.due)}
-                      className="text-xs px-2 h-6 rounded border border-border hover:bg-secondary"
-                    >
-                      Full payable ({formatBDT(supplier.due, { withSymbol: false })})
-                    </button>
-                  </div>
-                </div>
-              )}
-              {m.needsRef && (
-                <div>
-                  <label className="text-xs font-semibold text-muted-foreground">
-                    Reference / TxID
-                  </label>
-                  <Input
-                    value={reference}
-                    onChange={(e) => setReference(e.target.value)}
-                    placeholder="TX1234567"
-                  />
-                </div>
-              )}
-            </div>
-
-            {mode === 'auto' && (allocation.opening > 0 || allocation.advance > 0) && (
-              <div className="rounded-md border border-border bg-secondary/40 px-3 py-2 text-sm space-y-1">
-                {allocation.opening > 0 && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Opening balance</span>
-                    <span className="tabular text-success">{formatBDT(allocation.opening)}</span>
+            {/* 2. Amount first — it is what the buyer came to type. */}
+            {mode === 'auto' && (
+              <FormField label="Amount" required hint="Recorded as paid now.">
+                {(f) => (
+                  <div className="space-y-2">
+                    <NumberField
+                      {...f}
+                      key={supplier.id}
+                      autoFocus
+                      value={amount}
+                      onChangeNumber={setAmount}
+                      className="h-11 text-right text-lg font-semibold"
+                    />
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setAmount(supplier.due)}
+                        className="h-8 px-3 text-xs rounded-md border border-border hover:bg-secondary"
+                      >
+                        <span>All</span> <span className="tabular">{formatBDT(supplier.due)}</span>
+                      </button>
+                      {oldest && oldest.due !== supplier.due && openingPart === 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setAmount(oldest.due)}
+                          className="h-8 px-3 text-xs rounded-md border border-border hover:bg-secondary"
+                        >
+                          <span>Oldest bill</span> <span className="tabular">{formatBDT(oldest.due)}</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )}
-                {allocation.advance > 0 && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Kept as an advance with the supplier</span>
-                    <span className="tabular text-success">{formatBDT(allocation.advance)}</span>
-                  </div>
-                )}
-              </div>
+              </FormField>
             )}
-            {dueBills.length === 0 ? (
-              <div className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-                No open bills. The payment goes to the opening balance first; anything more is kept as an
-                advance with the supplier.
+
+            {/* 3. Method (+ reference) */}
+            <div className="space-y-2">
+              <div className="text-sm font-medium">Paid by</div>
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+                {METHODS.map((opt) => {
+                  const Icon = opt.icon;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      aria-pressed={method === opt.id}
+                      onClick={() => setMethod(opt.id)}
+                      className={cn(
+                        'h-12 rounded-md border text-sm font-medium transition inline-flex flex-col items-center justify-center gap-0.5',
+                        method === opt.id
+                          ? 'border-primary bg-primary/10 text-foreground'
+                          : 'border-border hover:bg-secondary',
+                      )}
+                    >
+                      <Icon className="size-4" />
+                      {opt.label}
+                    </button>
+                  );
+                })}
               </div>
-            ) : (
+              {m.needsRef && (
+                <FormField label="Reference / TxID">
+                  {(f) => (
+                    <Input {...f} value={reference} onChange={(e) => setReference(e.target.value)} placeholder="TX1234567" />
+                  )}
+                </FormField>
+              )}
+            </div>
+
+            {/* 4. Where it goes — opening balance, bills, advance, still owed. */}
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-sm font-medium">Where it goes</div>
+                <Segmented
+                  size="sm"
+                  ariaLabel="How to apply the payment"
+                  value={mode}
+                  onChange={setMode}
+                  options={[
+                    { value: 'auto', label: 'Oldest bills first' },
+                    { value: 'pick', label: 'I’ll choose the bills' },
+                  ]}
+                />
+              </div>
               <div className="rounded-lg border border-border overflow-hidden">
-                <div className="px-3 py-2 border-b border-border bg-secondary/40 text-xs font-semibold text-muted-foreground">
-                  {mode === 'auto' ? 'Will apply to' : 'Choose how much per bill'}
-                </div>
                 <table className="w-full text-sm">
-                  <thead className="text-xs text-muted-foreground border-b border-border">
+                  <thead className="text-xs text-muted-foreground bg-secondary/40">
                     <tr>
-                      <th className="text-left px-3 py-2 font-medium">Reference</th>
-                      <th className="text-left px-2 py-2 font-medium">Date</th>
-                      <th className="text-right px-2 py-2 font-medium">Total</th>
-                      <th className="text-right px-2 py-2 font-medium">Due</th>
-                      <th className="text-right px-3 py-2 font-medium">Apply</th>
+                      <th className="text-left px-3 py-2 font-medium">Bill</th>
+                      <th className="text-right px-2 py-2 font-medium">Owed</th>
+                      <th className="text-right px-3 py-2 font-medium">This payment</th>
                     </tr>
                   </thead>
                   <tbody>
+                    {openingPart > 0 && (
+                      <tr className="border-t border-border">
+                        <td className="px-3 py-2">
+                          <div>Opening balance</div>
+                          {mode === 'pick' && (
+                            <div className="text-xs text-muted-foreground">Paid only with Oldest bills first</div>
+                          )}
+                        </td>
+                        <td className="px-2 py-2 text-right tabular text-destructive">
+                          {formatBDT(openingPart, { withSymbol: false })}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular text-success">
+                          {mode === 'auto' && allocation.opening > 0
+                            ? formatBDT(allocation.opening, { withSymbol: false })
+                            : '—'}
+                        </td>
+                      </tr>
+                    )}
                     {dueBills.map((p) => {
                       const auto = allocation.bills.find((a) => a.purchaseId === p.id)?.apply ?? 0;
                       const cur = mode === 'auto' ? auto : picked[p.id] ?? 0;
                       return (
                         <tr key={p.id} className="border-t border-border">
-                          <td className="px-3 py-2 font-mono text-xs">{p.refNo}</td>
-                          <td className="px-2 py-2 text-xs text-muted-foreground">
-                            {new Date(p.date).toLocaleDateString('en-GB')}
-                          </td>
-                          <td className="px-2 py-2 text-right tabular">
-                            {formatBDT(p.total, { withSymbol: false })}
+                          <td className="px-3 py-2">
+                            <div className="font-mono whitespace-nowrap">{p.refNo}</div>
+                            <div className="text-xs text-muted-foreground">{formatDate(p.date)}</div>
                           </td>
                           <td className="px-2 py-2 text-right tabular text-destructive">
                             {formatBDT(p.due, { withSymbol: false })}
@@ -372,27 +404,54 @@ export function PayBillModal({ open, onClose, initialSupplierId }: Props) {
                             ) : (
                               <NumberField
                                 value={cur}
+                                aria-label="Amount for this bill"
                                 onChangeNumber={(v) =>
-                                  setPicked((pp) => ({
-                                    ...pp,
-                                    [p.id]: Math.max(0, Math.min(p.due, v)),
-                                  }))
+                                  setPicked((pp) => ({ ...pp, [p.id]: Math.max(0, Math.min(p.due, v)) }))
                                 }
                                 placeholder="0"
-                                className="h-8 w-24 px-2 text-right text-xs ml-auto"
+                                className="h-9 w-28 px-2 text-right text-sm ml-auto"
                               />
                             )}
                           </td>
                         </tr>
                       );
                     })}
+                    {mode === 'auto' && allocation.advance > 0 && (
+                      <tr className="border-t border-border">
+                        <td className="px-3 py-2" colSpan={2}>
+                          Advance kept with supplier
+                        </td>
+                        <td className="px-3 py-2 text-right tabular text-success">
+                          {formatBDT(allocation.advance, { withSymbol: false })}
+                        </td>
+                      </tr>
+                    )}
+                    {dueBills.length === 0 && openingPart === 0 && (
+                      <tr className="border-t border-border">
+                        <td colSpan={3} className="px-3 py-3 text-muted-foreground">
+                          No open bills. The payment is kept as an advance with the supplier.
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
+                  <tfoot>
+                    <tr className="border-t border-border bg-secondary/30 font-semibold">
+                      <td className="px-3 py-2.5" colSpan={2}>
+                        Still owed after this
+                      </td>
+                      <td className={cn('px-3 py-2.5 text-right tabular', stillOwed > 0 ? 'text-destructive' : 'text-success')}>
+                        {formatBDT(stillOwed)}
+                      </td>
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
-            )}
+            </div>
           </>
         )}
-      </div>
+        <button type="submit" className="hidden" aria-hidden tabIndex={-1} />
+      </form>
+      )}
     </Modal>
   );
 }

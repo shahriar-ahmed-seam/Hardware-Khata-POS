@@ -6,6 +6,7 @@ import { usePaperWidth } from '@/hooks/usePaperWidth';
 import { Receipt } from './Receipt';
 import { Printer, Plus, FileDown } from 'lucide-react';
 import { api } from '@/lib/api';
+import { printSheet, sheetToHtml } from '@/lib/printing';
 import { toast } from '@/stores/toast';
 import type { ParkedCart } from './types';
 import type { PaymentResult } from './PaymentModal';
@@ -45,13 +46,39 @@ export function ReceiptModal({
   const paper = usePaperWidth();
   const [savingPdf, setSavingPdf] = useState(false);
 
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const [printing, setPrinting] = useState(false);
+  // A network printer's cash drawer opens with the FIRST print of a cash sale
+  // only — re-printing a slip must not be a way to open the till.
+  const drawerOpenedFor = useRef<string | null>(null);
+
+  /**
+   * Print on the default printer from Settings → Printers, silently. With no
+   * printer set up (or in the browser preview) this is the print dialog, as
+   * before. See src/lib/printing.ts.
+   */
+  const print = async () => {
+    if (printing) return;
+    setPrinting(true);
+    try {
+      const paidCash = payment.payments.some((p) => p.method === 'Cash' && p.amount > 0);
+      const openDrawer = paidCash && drawerOpenedFor.current !== invoiceNo;
+      drawerOpenedFor.current = invoiceNo;
+      await printSheet(sheetRef.current, { kind: 'receipt', openDrawer });
+    } finally {
+      setPrinting(false);
+    }
+  };
+  const printRef = useRef(print);
+  printRef.current = print;
+
   // Once per invoice, after the print sheet below is on the page.
   const printedFor = useRef<string | null>(null);
   useEffect(() => {
     if (!open || !autoPrint || printedFor.current === invoiceNo) return;
     const t = setTimeout(() => {
       printedFor.current = invoiceNo;
-      window.print();
+      void printRef.current();
     }, 250);
     return () => clearTimeout(t);
   }, [open, autoPrint, invoiceNo]);
@@ -76,7 +103,12 @@ export function ReceiptModal({
         primary?: { path: string } | null;
         saved?: { path: string; kind: string }[];
         failed?: { dir: string; error: string }[];
-      }>('invoice.savePdf', { invoiceNo });
+      }>('invoice.savePdf', {
+        invoiceNo,
+        // Rendered in a hidden window from this sheet (R75), not from whatever
+        // the app window shows.
+        html: sheetRef.current ? sheetToHtml(sheetRef.current, 210) : undefined,
+      });
 
       if (res.ok === false || !res.saved || res.saved.length === 0) {
         toast.error(res.error ?? 'Could not save the PDF');
@@ -116,8 +148,8 @@ export function ReceiptModal({
                 last receipt. Print prints it; the POS ⋯ menu (Ctrl+P) brings
                 the last one back once this is closed (B4). */}
             <div className="flex items-center gap-2">
-              <Button variant="outline" onClick={() => window.print()}>
-                <Printer className="size-4" /> Print
+              <Button variant="outline" onClick={() => void print()} disabled={printing}>
+                <Printer className="size-4" /> {printing ? 'Printing…' : 'Print'}
               </Button>
               <Button variant="outline" onClick={() => void savePdf()} disabled={savingPdf}>
                 <FileDown className="size-4" /> {savingPdf ? 'Saving…' : 'Save as PDF'}
@@ -143,7 +175,7 @@ export function ReceiptModal({
       {/* Invisible on screen; this is what the Print button actually sends to
           the printer. Same props as the preview above. */}
       {open && (
-        <PrintSheet paper={paper}>
+        <PrintSheet paper={paper} sheetRef={sheetRef}>
           <Receipt
             invoiceNo={invoiceNo}
             cart={cart}

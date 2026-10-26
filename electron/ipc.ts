@@ -30,7 +30,18 @@ import {
 } from './updater.ts';
 import { readPerfFlags, writePerfFlags, type PerfFlags } from './perf.ts';
 import {
+  configuredNetworkPrinters,
+  listPrinters,
+  printHtml,
+  sendRawEscpos,
+  type PrintHtmlInput,
+  type RawEscposInput,
+} from './printing.ts';
+import { PRINTER_SETUP_PERMISSION, SIGNED_IN_CHANNELS } from './permissions.ts';
+import {
   AttemptThrottle,
+  NOT_SIGNED_IN,
+  SCREEN_LOCKED,
   TOO_MANY_ATTEMPTS,
   isInternalOnlyChannel,
   loginThrottleKey,
@@ -103,6 +114,13 @@ const ELECTRON_UPDATE_CHANNELS = new Set([
 const ELECTRON_PERF_CHANNELS = new Set(['perf.get', 'perf.set']);
 
 /**
+ * Real printing (electron/printing.ts): the PC's printer list, printing HTML
+ * through an installed driver, and raw ESC/POS to a network printer. Needs a
+ * BrowserWindow / a TCP socket, so it cannot live in buildApi().
+ */
+const ELECTRON_PRINTER_CHANNELS = new Set(['printers.list', 'printers.printHtml', 'printers.rawEscpos']);
+
+/**
  * SESSION + PERMISSION ENFORCEMENT (the IPC boundary)
  *
  * This is the ONLY place permissions are enforced. The backend services and
@@ -169,6 +187,14 @@ function currentSessionPayload(user: SanitizedSessionUser | null) {
 function permissionError(channel: string): string | null {
   refreshSession();
   return gateError(channel, session);
+}
+
+/** For SIGNED_IN_CHANNELS: any role, but a live, unlocked session. */
+function signedInError(): string | null {
+  refreshSession();
+  if (!session) return NOT_SIGNED_IN;
+  if (session.locked) return SCREEN_LOCKED;
+  return null;
 }
 
 /**
@@ -255,6 +281,12 @@ export function registerIpc(): void {
       const denied = permissionError(channel);
       if (denied) return { ok: false, error: denied };
       return handleElectronUpdate(channel, payload);
+    }
+
+    if (channel.startsWith('printers.') && ELECTRON_PRINTER_CHANNELS.has(channel)) {
+      const denied = SIGNED_IN_CHANNELS.has(channel) ? signedInError() : permissionError(channel);
+      if (denied) return { ok: false, error: denied };
+      return handleElectronPrinter(channel, payload);
     }
 
     if (channel.startsWith('perf.') && ELECTRON_PERF_CHANNELS.has(channel)) {
@@ -641,8 +673,14 @@ async function handleElectronInvoice(channel: string, payload: unknown) {
   try {
     switch (channel) {
       case 'invoice.savePdf': {
-        const invoiceNo = (payload as { invoiceNo?: string } | undefined)?.invoiceNo;
-        return { ok: true, data: await saveInvoicePdf({ invoiceNo }) };
+        const p = (payload ?? {}) as { invoiceNo?: string; html?: unknown };
+        return {
+          ok: true,
+          data: await saveInvoicePdf({
+            invoiceNo: p.invoiceNo,
+            html: typeof p.html === 'string' ? p.html : undefined,
+          }),
+        };
       }
 
       case 'invoice.listPdfs': {
@@ -653,6 +691,48 @@ async function handleElectronInvoice(channel: string, payload: unknown) {
       case 'invoice.openPdf': {
         const file = (payload as { file?: string } | undefined)?.file;
         return { ok: true, data: await openPdf(file ?? '') };
+      }
+
+      default:
+        return { ok: false, error: `Unknown API channel: ${channel}` };
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    // eslint-disable-next-line no-console
+    console.error(`[ipc] ${channel} failed:`, message);
+    return { ok: false, error: message };
+  }
+}
+
+/**
+ * Printer channels (electron/printing.ts). Failures come back as
+ * `{ ok:false, error }` so the renderer toasts the reason and can fall back to
+ * the print dialog.
+ */
+async function handleElectronPrinter(channel: string, payload: unknown) {
+  try {
+    switch (channel) {
+      case 'printers.list':
+        return { ok: true, data: await listPrinters() };
+
+      case 'printers.printHtml': {
+        const res = await printHtml((payload ?? {}) as PrintHtmlInput);
+        return res.ok ? { ok: true, data: res } : { ok: false, error: res.error ?? 'Printing failed.' };
+      }
+
+      case 'printers.rawEscpos': {
+        const p = (payload ?? {}) as RawEscposInput;
+        // Only the owner's printer-setup right may reach an address that is not
+        // a saved network printer (that is the Test print of a new profile).
+        if (!session?.permissions.has(PRINTER_SETUP_PERMISSION)) {
+          const saved = api['settings.get'](getDb(), { key: 'printers' });
+          const host = typeof p.host === 'string' ? p.host.trim() : '';
+          const port = p.port == null || p.port === '' ? 9100 : Number(p.port);
+          const known = configuredNetworkPrinters(saved).some((x) => x.host === host && x.port === port);
+          if (!known) return { ok: false, error: 'That printer is not set up in Settings → Printers.' };
+        }
+        const res = await sendRawEscpos(p);
+        return res.ok ? { ok: true, data: res } : { ok: false, error: res.error ?? 'Printing failed.' };
       }
 
       default:

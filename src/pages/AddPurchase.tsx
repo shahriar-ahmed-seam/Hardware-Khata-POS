@@ -4,22 +4,18 @@ import { useCan } from '@/hooks/useCan';
 import { promptText } from '@/stores/prompt';
 import { branchNameOf, useDefaultBranchId } from '@/lib/branch';
 import { toPurchaseRecord, type BackendPurchase } from '@/hooks/purchaseAdapter';
-import {
-  ArrowLeft,
-  Plus,
-  Save,
-  Search,
-  Trash2,
-  Paperclip,
-  Banknote,
-  AlertTriangle,
-} from 'lucide-react';
+import { ArrowLeft, Plus, Save, Search, Trash2, Banknote, AlertTriangle } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { NumberField } from '@/components/ui/NumberField';
 import { Card } from '@/components/ui/Card';
-import { Badge } from '@/components/ui/Badge';
+import { FormField } from '@/components/ui/FormField';
+import { Select } from '@/components/ui/Select';
+import { Segmented } from '@/components/ui/Segmented';
+import { IconButton } from '@/components/ui/IconButton';
+import { useIsMultiBranch } from '@/components/stock/hooks';
+import { PAY_TERMS } from '@/components/purchases/labels';
 import { useProducts } from '@/hooks/useProducts';
 import { useBranches } from '@/stores/branches';
 import { useSuppliers } from '@/stores/contacts';
@@ -38,9 +34,9 @@ import {
   type PurchaseStatus,
 } from '@/stores/purchases';
 import { ProductImage } from '@/components/products/ProductImage';
-import { formatBDT, cn } from '@/lib/utils';
+import { formatBDT, formatNumber, cn } from '@/lib/utils';
 import { currentUserName } from '@/lib/actor';
-import { round2 } from '@/lib/money';
+import { markupOnCostPct, round2 } from '@/lib/money';
 import { consumePurchasePrefill } from '@/lib/purchasePrefill';
 import { AddPurchasePaymentModal } from '@/components/purchases/AddPurchasePaymentModal';
 import { NewSupplierModal } from '@/components/purchases/NewSupplierModal';
@@ -164,6 +160,7 @@ function AddPurchaseForm({ editing }: { editing?: PurchaseRecord }) {
   const productsQuery = useProducts(useDefaultBranchId());
   const products = productsQuery.data ?? [];
   const branches = useBranches((s) => s.items);
+  const multiBranch = useIsMultiBranch();
 
   // Hydrate branches + load the full supplier option list on mount (cheap
   // no-ops without a backend).
@@ -182,7 +179,8 @@ function AddPurchaseForm({ editing }: { editing?: PurchaseRecord }) {
 
   // Header
   const [supplierId, setSupplierId] = useState(editing?.supplierId ?? '');
-  const [refNo, setRefNo] = useState(editing?.refNo ?? '');
+  // The number is given by the backend on save; a correction keeps the original.
+  const refNo = editing?.refNo ?? '';
   /**
    * Defaults to RIGHT NOW on the shop's clock, and stays editable.
    * Was `new Date().toISOString().slice(0, 16)` — UTC, so it read six hours behind
@@ -192,7 +190,8 @@ function AddPurchaseForm({ editing }: { editing?: PurchaseRecord }) {
   const [branch, setBranch] = useState(defaultBranchName);
   const [status, setStatus] = useState<PurchaseStatus>(editing?.status ?? 'received');
   const [payTerms, setPayTerms] = useState<string>(editing?.payTerms ?? '');
-  const [attachmentName, setAttachmentName] = useState<string | undefined>(editing?.attachmentName);
+  // Upload is not built: the field was removed, an old name is kept as-is.
+  const attachmentName = editing?.attachmentName;
 
   // Branches arrive asynchronously from the backend, so adopt the default branch
   // once the list lands (a hardcoded branch name used to fill this gap).
@@ -251,6 +250,11 @@ function AddPurchaseForm({ editing }: { editing?: PurchaseRecord }) {
     supplier?.name ?? supplierOptions.find((o) => o.id === supplierId)?.name ?? '';
   const supplierAddress = supplier?.address ?? '';
   const supplierPayTerms = supplier?.paymentTerms ?? '';
+  // Pay term pre-set from the supplier on a new bill.
+  useEffect(() => {
+    if (!editing && supplierPayTerms) setPayTerms(supplierPayTerms);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supplierPayTerms]);
 
   const matches = useMemo(() => {
     if (!searchQ.trim()) return [];
@@ -292,11 +296,6 @@ function AddPurchaseForm({ editing }: { editing?: PurchaseRecord }) {
       setLines((ls) => [...ls, newLine]);
     }
     setSearchQ('');
-  };
-
-  const addLine = (productId: string) => {
-    const p = products.find((x) => x.id === productId);
-    if (p) addLineFromProduct(p);
   };
 
   const updateLine = (i: number, patch: Partial<PurchaseLine>) =>
@@ -353,7 +352,16 @@ function AddPurchaseForm({ editing }: { editing?: PurchaseRecord }) {
   // Margin warnings: count lines with margin < 10%
   const lowMarginLines = lines.filter((l) => l.marginPct !== undefined && l.marginPct < 10);
 
-  const isValid = supplierId && lines.length > 0 && lines.every((l) => l.qty > 0);
+  // Says what is missing instead of a silently disabled Save.
+  const zeroLine = lines.findIndex((l) => !(l.qty > 0));
+  const problem = !supplierId
+    ? 'Choose a supplier'
+    : lines.length === 0
+      ? 'Add at least one item'
+      : zeroLine >= 0
+        ? 'Quantity can’t be 0'
+        : '';
+  const isValid = problem === '';
 
   const buildRecord = (paid = 0): PurchaseRecord => ({
     id: editing?.id ?? 'pu_' + Date.now(),
@@ -404,7 +412,7 @@ function AddPurchaseForm({ editing }: { editing?: PurchaseRecord }) {
   const saveCorrection = async () => {
     if (!editing || !isValid || saving) return;
     const reason = await promptText({
-      title: `Why is ${editing.refNo} being corrected?`,
+      title: 'Why are you correcting this bill?',
       message:
         editing.status === 'received'
           ? 'The stock and buying prices from the original bill are replaced by the corrected ones. Payments already made stay on the bill.'
@@ -419,7 +427,7 @@ function AddPurchaseForm({ editing }: { editing?: PurchaseRecord }) {
     const ok = await updatePurchase(editing.id, buildRecord(editing.paid), reason);
     setSaving(false);
     if (!ok) return;
-    toast.success(`${editing.refNo} corrected`);
+    toast.success('Purchase corrected', { description: editing.refNo });
     nav('/purchases');
   };
 
@@ -448,7 +456,7 @@ function AddPurchaseForm({ editing }: { editing?: PurchaseRecord }) {
     if (editing) return saveCorrection();
     if (lowMarginLines.length > 0) {
       const ok = await confirm({
-        title: `${lowMarginLines.length} item(s) will have margin under 10%.`,
+        title: 'Some items will have a margin under 10%.',
         message: 'Save anyway?',
         confirmLabel: 'Save',
       });
@@ -470,7 +478,7 @@ function AddPurchaseForm({ editing }: { editing?: PurchaseRecord }) {
     // purchase. The optimistic local-id fallback was removed.
     if (lowMarginLines.length > 0) {
       const ok = await confirm({
-        title: `${lowMarginLines.length} item(s) will have margin under 10%.`,
+        title: 'Some items will have a margin under 10%.',
         message: 'Save anyway?',
         confirmLabel: 'Save',
       });
@@ -488,464 +496,570 @@ function AddPurchaseForm({ editing }: { editing?: PurchaseRecord }) {
     }
   };
 
-  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    setAttachmentName(f.name);
+  // ---- Product search: type or scan, ↑/↓ + Enter, focus returns here. ----
+  const searchRef = useRef<HTMLInputElement>(null);
+  const [hi, setHi] = useState(0);
+  const pickProduct = (p: Product) => {
+    addLineFromProduct(p);
+    setHi(0);
+    searchRef.current?.focus();
+  };
+  const onSearchKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown' && matches.length) {
+      e.preventDefault();
+      setHi((h) => (h + 1) % matches.length);
+    } else if (e.key === 'ArrowUp' && matches.length) {
+      e.preventDefault();
+      setHi((h) => (h - 1 + matches.length) % matches.length);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const t = searchQ.trim().toLowerCase();
+      if (!t) return;
+      // A scanner types the code and Enter: an exact barcode / SKU wins.
+      const exact = products.find((p) => p.barcode?.toLowerCase() === t || p.sku.toLowerCase() === t);
+      const p = exact ?? matches[hi];
+      if (p) pickProduct(p);
+    } else if (e.key === 'Escape' && searchQ) {
+      e.stopPropagation();
+      setSearchQ('');
+    }
+  };
+  // Once a supplier is picked on a new bill, the next thing is the first item.
+  const supplierPicked = useRef(!!editing);
+  useEffect(() => {
+    if (!supplierId || supplierPicked.current) return;
+    supplierPicked.current = true;
+    searchRef.current?.focus();
+  }, [supplierId]);
+
+  // Serial no. per line is rare in a hardware shop: shown on demand.
+  const [serialOpen, setSerialOpen] = useState<Set<number>>(new Set());
+
+  // Charges, notes and pay term sit behind one disclosure (open when used).
+  const [chargesOpen, setChargesOpen] = useState(
+    () =>
+      !!(
+        editing &&
+        (editing.orderDiscountValue || editing.taxPct || editing.shipping || editing.other || editing.notes || editing.shippingDetails)
+      ),
+  );
+
+  const back = async () => {
+    if (
+      lines.length > 0 &&
+      !(await confirm({
+        title: 'Leave without saving?',
+        message: 'The lines you entered will be lost.',
+        confirmLabel: 'Leave',
+        cancelLabel: 'Stay',
+        variant: 'destructive',
+      }))
+    )
+      return;
+    nav(-1);
   };
 
+  const totalQtyLabel = lines.length;
+  const willOwe = editing ? round2(totals.total - editing.paid) : 0;
+  const hasCharges = totals.totalLineDiscount > 0 || totals.orderDiscount > 0 || totals.tax > 0 || totals.shipping > 0 || totals.other > 0;
+  // A received bill cannot go back to Ordered / In transit (backend rule).
+  const statusLocked = editing?.status === 'received';
+
   return (
-    <div>
+    <div className="min-h-full flex flex-col">
       <PageHeader
-        title={editing ? 'Edit Purchase' : 'Add Purchase'}
-        subtitle="Goods Received Note"
+        title={editing ? 'Correct purchase' : 'Add Purchase'}
+        subtitle={
+          editing
+            ? `${editing.refNo} · ${supplierName}`
+            : 'Enter the supplier’s bill. Stock goes in when status is Received.'
+        }
         actions={
-          <>
-            <Button variant="ghost" onClick={() => nav(-1)}>
-              <ArrowLeft className="size-4" /> Back
-            </Button>
-            {editing ? (
-              <Button onClick={() => void saveCorrection()} disabled={!isValid || saving}>
-                <Save className="size-4" /> Save correction
-              </Button>
-            ) : (
-              <>
-            <Button variant="outline" onClick={saveUnpaid} disabled={!isValid || saving}>
-              <Save className="size-4" /> Save Unpaid
-            </Button>
-            <Button onClick={saveAndPay} disabled={!isValid || saving}>
-              <Banknote className="size-4" /> Save & Pay
-            </Button>
-              </>
-            )}
-          </>
+          <Button variant="outline" onClick={() => void back()}>
+            <ArrowLeft className="size-4" /> Back
+          </Button>
         }
       />
 
-      {/*
-        LAYOUT — ONE COLUMN, WIDEST THING FIRST.
-        This used to be a 2/3 + 1/3 split with a sticky Summary card on the right,
-        which left the item table about 60% of the window: eleven columns of
-        quantities and prices squeezed into it, so entering a purchase meant
-        scrolling the table sideways to reach the sell price and margin — with the
-        product name scrolled out of sight. The table is what the buyer actually
-        works in, so it now gets the FULL width and the Summary sits underneath,
-        where it is read once at the end.
-      */}
-      <div className="p-6 space-y-4">
-        <div className="space-y-4">
-          {/* Header card matching the reference layout */}
-          <Card className="p-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="md:col-span-1 space-y-3">
-              <Field label="Supplier" required>
+      <div className="p-6 space-y-4 flex-1">
+        {/* Header: Supplier | Date | Status on one row. */}
+        <Card className="p-4 space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-[2fr_1.4fr_1fr] gap-3">
+            <FormField label="Supplier" required>
+              {(f) => (
                 <div className="flex items-center gap-1.5">
-                  <select
+                  <Select
+                    {...f}
+                    autoFocus={!editing && lines.length === 0}
                     value={supplierId}
                     onChange={(e) => setSupplierId(e.target.value)}
-                    className="h-10 flex-1 min-w-0 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                    className="flex-1 min-w-0"
                   >
-                    <option value="">Please Select</option>
+                    <option value="">Choose a supplier…</option>
                     {supplierOptions.map((s) => (
                       <option key={s.id} value={s.id}>
                         {s.name}
                       </option>
                     ))}
-                  </select>
-                  <button
-                    type="button"
-                    onClick={() => setNewSupplierOpen(true)}
-                    title="Add new supplier"
-                    className="size-10 grid place-items-center rounded-md border border-border hover:border-primary hover:bg-primary/10 hover:text-primary text-muted-foreground transition shrink-0"
-                  >
+                  </Select>
+                  <IconButton variant="outline" label="Add new supplier" onClick={() => setNewSupplierOpen(true)}>
                     <Plus className="size-4" />
-                  </button>
-                </div>
-              </Field>
-              {supplierAddress && (
-                <div>
-                  <div className="text-xs font-semibold text-muted-foreground">
-                    Address
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-0.5">{supplierAddress}</div>
+                  </IconButton>
                 </div>
               )}
+            </FormField>
+            <FormField label="Purchase date" required>
+              <DateTimeField value={date} onChange={setDate} />
+            </FormField>
+            <FormField label="Status" required>
+              {(f) =>
+                statusLocked ? (
+                  <div id={f.id} className="h-10 flex items-center text-sm font-medium">
+                    Received
+                  </div>
+                ) : (
+                  <Select {...f} value={status} onChange={(e) => setStatus(e.target.value as PurchaseStatus)}>
+                    <option value="received">Received</option>
+                    <option value="ordered">Ordered</option>
+                    <option value="in-transit">In transit</option>
+                  </Select>
+                )
+              }
+            </FormField>
+          </div>
+          {(supplierAddress || (supplier && supplier.due > 0)) && (
+            <div className="text-sm text-muted-foreground flex flex-wrap gap-x-2">
+              {supplierAddress && <span>{supplierAddress}</span>}
+              {supplierAddress && supplier && supplier.due > 0 && <span aria-hidden>·</span>}
+              {supplier && supplier.due > 0 && (
+                <span>
+                  <span>Owes on earlier bills</span>{' '}
+                  <span className="tabular text-foreground font-medium">{formatBDT(supplier.due)}</span>
+                </span>
+              )}
             </div>
-
-            <div className="md:col-span-1 space-y-3">
-              <Field label="Reference No" hint="Auto-generated if blank">
-                <Input
-                  value={refNo}
-                  onChange={(e) => setRefNo(e.target.value)}
-                  placeholder={nextPurchaseRef()}
-                />
-              </Field>
-              <Field label="Business Location" required>
-                <select
-                  value={branch}
-                  onChange={(e) => setBranch(e.target.value)}
-                  className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
-                >
+          )}
+          {/* Branch only matters with more than one. */}
+          {multiBranch && (
+            <FormField label="Branch" required className="max-w-sm">
+              {(f) => (
+                <Select {...f} value={branch} onChange={(e) => setBranch(e.target.value)}>
                   {(branches.length > 0 ? branches.map((b) => b.name) : branch ? [branch] : []).map((b) => (
                     <option key={b} value={b}>
                       {b}
                     </option>
                   ))}
-                </select>
-              </Field>
-            </div>
-
-            <div className="md:col-span-1 space-y-3">
-              <Field label="Purchase Date" required>
-                <DateTimeField value={date} onChange={setDate} />
-              </Field>
-              <Field label="Pay Term" hint={supplierPayTerms ? `Supplier default: ${supplierPayTerms}` : undefined}>
-                <Input
-                  value={payTerms}
-                  onChange={(e) => setPayTerms(e.target.value)}
-                  placeholder={supplierPayTerms || 'Please Select'}
-                />
-              </Field>
-            </div>
-
-            <div className="md:col-span-1">
-              <Field label="Purchase Status" required>
-                <select
-                  value={status}
-                  onChange={(e) => setStatus(e.target.value as PurchaseStatus)}
-                  className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 capitalize"
-                >
-                  <option value="received">Received</option>
-                  <option value="ordered">Ordered</option>
-                  <option value="in-transit">In Transit</option>
-                  <option value="cancelled">Cancelled</option>
-                </select>
-              </Field>
-            </div>
-
-            <div className="md:col-span-2">
-              <Field label="Attach Document" hint="Max 5MB · pdf, csv, zip, doc, docx, jpeg, jpg, png">
-                <label className="cursor-pointer flex items-center gap-2 px-3 h-10 rounded-md border border-input bg-background hover:bg-secondary/50 transition text-xs">
-                  <Paperclip className="size-3.5" />
-                  <span className="flex-1 truncate">{attachmentName ?? 'Browse'}</span>
-                  <input type="file" className="hidden" onChange={handleFile} />
-                </label>
-              </Field>
-            </div>
-          </Card>
-
-          {/* Items */}
-          <Card className="p-4">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-sm font-semibold">Items</div>
-              {/* Was a dead button with no handler at all. Opens the real product
-                  form in a drawer; the saved product is added to this purchase
-                  immediately with its opening stock locked to 0, because the
-                  quantity arrives on the line below. */}
-              <Button variant="outline" size="sm" onClick={() => setNewProductOpen(true)}>
-                <Plus className="size-3.5" /> Add new product
-              </Button>
-            </div>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-              <Input
-                value={searchQ}
-                onChange={(e) => setSearchQ(e.target.value)}
-                placeholder="Enter product name / SKU / scan barcode / IMEI"
-                className="pl-9"
-              />
-              {matches.length > 0 && (
-                <div className="absolute left-0 right-0 top-full mt-1 bg-popover border border-border rounded-md shadow-xl overflow-hidden z-10">
-                  {matches.map((p) => (
-                    <button
-                      key={p.id}
-                      onClick={() => addLine(p.id)}
-                      className="w-full flex items-center gap-3 px-3 py-2 hover:bg-secondary text-left"
-                    >
-                      <ProductImage url={p.image} categoryId={p.categoryId} size={28} />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium truncate">{p.name}</div>
-                        <div className="text-xs text-muted-foreground font-mono">
-                          {p.sku} · stock {p.stock} {p.unit}
-                        </div>
-                      </div>
-                      {/* Last paid, average paid, current sell price — the three
-                          numbers a buyer needs to judge the price being quoted,
-                          before the line is even added. Colour is the label:
-                          amber = paid out, blue = average paid, green = coming in. */}
-                      <PriceTriplet
-                        cost={p.cost}
-                        avgCost={p.avgCost ?? p.cost}
-                        price={p.price}
-                      />
-                      <Plus className="size-3.5 text-primary shrink-0" />
-                    </button>
-                  ))}
-                </div>
+                </Select>
               )}
-            </div>
+            </FormField>
+          )}
+        </Card>
 
-            {/* `min-w` dropped from 1100px to 860px and the widest columns tightened,
-                so on any normal window the whole line — name through sell price —
-                is visible at once. overflow-x-auto stays as the safety valve for a
-                window narrowed to the 900px minimum. */}
-            <div className="mt-3 -mx-4 overflow-x-auto">
-              <table className="w-full text-sm min-w-[940px]">
-                <thead className="text-xs text-muted-foreground bg-secondary/40">
-                  <tr>
-                    <th className="text-left px-2 py-2 font-medium w-8">#</th>
-                    <th className="text-left px-2 py-2 font-medium">Product Name</th>
-                    <th className="text-right px-1 py-2 font-medium w-[74px]">Qty</th>
-                    {/* The unit the SUPPLIER is quoting. See the cell below. */}
-                    <th className="text-left px-1 py-2 font-medium w-[84px]">Bought as</th>
-                    <th className="text-left px-1 py-2 font-medium w-[96px]">Serial</th>
-                    {/* Read-only: the average we have paid for this item before,
-                        sitting right next to the price being entered so a bad
-                        quote is obvious while it is still being typed. */}
-                    <th className="text-right px-1 py-2 font-medium w-[84px]">Avg buy</th>
-                    <th className="text-right px-1 py-2 font-medium w-[92px]">Unit Cost</th>
-                    <th className="text-right px-1 py-2 font-medium w-[62px]">Disc %</th>
-                    <th className="text-right px-1 py-2 font-medium w-[86px]">Net Cost</th>
-                    <th className="text-right px-1 py-2 font-medium w-[92px]">Line Total</th>
-                    <th className="text-right px-1 py-2 font-medium w-[70px]">Margin</th>
-                    <th className="text-right px-1 py-2 font-medium w-[96px]">Sell Price</th>
-                    <th className="w-9"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {lines.map((l, i) => {
-                    // Read live from the catalogue, not copied onto the line: a
-                    // stored average would be stale the moment another purchase is
-                    // recorded. Unknown product renders '—', never 0.
-                    const cat = products.find((p) => p.id === l.productId);
-                    return (
-                    <tr key={i} className="border-t border-border">
-                      <td className="px-2 py-2 text-xs text-muted-foreground">{i + 1}</td>
-                      <td className="px-2 py-2">
+        {/* Items */}
+        <Card className="p-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-sm font-semibold">Items</div>
+            {/* Saved product lands on this purchase straight away (opening stock 0). */}
+            <Button variant="outline" onClick={() => setNewProductOpen(true)}>
+              <Plus className="size-4" /> Add new product
+            </Button>
+          </div>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+            <Input
+              ref={searchRef}
+              value={searchQ}
+              onChange={(e) => {
+                setSearchQ(e.target.value);
+                setHi(0);
+              }}
+              onKeyDown={onSearchKey}
+              placeholder="Product name, SKU or scan barcode"
+              aria-label="Search product"
+              className="pl-9"
+            />
+            {searchQ.trim() !== '' && (
+              <div className="absolute left-0 right-0 top-full mt-1 bg-popover border border-border rounded-md shadow-xl overflow-hidden z-20">
+                {matches.map((p, i) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onMouseEnter={() => setHi(i)}
+                    onClick={() => pickProduct(p)}
+                    className={cn(
+                      'w-full flex items-center gap-3 px-3 py-2 text-left',
+                      i === hi ? 'bg-secondary' : 'hover:bg-secondary',
+                    )}
+                  >
+                    <ProductImage url={p.image} categoryId={p.categoryId} size={28} />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium truncate">{p.name}</div>
+                      <div className="text-xs text-muted-foreground">
+                        <span className="font-mono">{p.sku}</span> · <span>In stock</span>{' '}
+                        <span className="tabular">{formatNumber(p.stock)}</span> {p.unit}
+                      </div>
+                    </div>
+                    {/* The three prices a buyer judges a quote by. */}
+                    <PriceTriplet cost={p.cost} avgCost={p.avgCost ?? p.cost} price={p.price} />
+                    <Plus className="size-4 text-primary shrink-0" />
+                  </button>
+                ))}
+                {matches.length === 0 && (
+                  <div className="px-3 py-3 text-sm text-muted-foreground">No product found.</div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* 7 columns: secondary numbers ride as small lines under their neighbours. */}
+          <div className="mt-3 -mx-4 overflow-x-auto">
+            <table className="w-full text-sm min-w-[860px]">
+              <thead className="text-xs text-muted-foreground bg-secondary/40">
+                <tr>
+                  <th className="text-left px-3 py-2 font-medium">Product</th>
+                  <th className="text-left px-1.5 py-2 font-medium w-[230px]">Qty</th>
+                  <th className="text-right px-1.5 py-2 font-medium w-[120px]">Unit cost</th>
+                  <th className="text-right px-1.5 py-2 font-medium w-[76px]">Disc %</th>
+                  <th className="text-right px-1.5 py-2 font-medium w-[120px]">Line total</th>
+                  <th className="text-right px-1.5 py-2 font-medium w-[120px]">Sell price</th>
+                  <th className="w-12"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {lines.map((l, i) => {
+                  // Live from the catalogue (a stored average would be stale).
+                  const cat = products.find((p) => p.id === l.productId);
+                  const baseUnit = cat?.unit ?? l.baseUnit ?? 'pc';
+                  const factor = l.unitFactor ?? 1;
+                  const convs = (cat?.unitConversions ?? []).filter((u) => u.factor > 1);
+                  const conv = convs.find((u) => u.unit === l.unit && u.factor === factor);
+                  const packValue = factor <= 1 ? 'p:1' : conv ? `u:${conv.unit}` : `p:${factor}`;
+                  const margin =
+                    l.marginPct ??
+                    (!l.newSellPrice && cat && cat.price > 0 && l.unitCostBeforeTax > 0
+                      ? markupOnCostPct(cat.price, l.unitCostBeforeTax)
+                      : undefined);
+                  const showSerial = !!l.imei || serialOpen.has(i);
+                  return (
+                    <tr key={i} className="border-t border-border align-top">
+                      <td className="px-3 py-2">
                         <div className="font-medium leading-tight">{l.name}</div>
                         <div className="text-xs text-muted-foreground font-mono">{l.sku}</div>
-                      </td>
-                      <td className="px-1 py-2 text-right">
-                        <NumberField
-                          value={l.qty}
-                          onChangeNumber={(v) => updateLine(i, { qty: Math.max(0, v) })}
-                          className="h-7 w-full px-1.5 text-right text-xs"
-                        />
+                        {showSerial ? (
+                          <Input
+                            value={l.imei ?? ''}
+                            onChange={(e) => updateLine(i, { imei: e.target.value })}
+                            placeholder="Serial no."
+                            aria-label="Serial no."
+                            className="h-9 mt-1 max-w-[14rem]"
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setSerialOpen((s) => new Set(s).add(i))}
+                            className="text-xs text-primary hover:underline mt-0.5 focus-ring rounded"
+                          >
+                            + Serial no.
+                          </button>
+                        )}
                       </td>
                       {/*
-                        BOUGHT BY THE PACK, SOLD BY THE PIECE.
-                        The supplier says "5 dozen at 620". Choosing the pack here
-                        keeps the bill exactly 5 × 620 while stock arrives as 60
-                        pieces — so nothing has to be divided by hand into a price
-                        like 51.6667 that does not come back to the bill.
+                        BOUGHT BY THE PACK, SOLD BY THE PIECE: "5 dozen at 620"
+                        keeps the bill exact while stock arrives as 60 pc.
+                        The product's own units come first.
                       */}
-                      <td className="px-1 py-2">
-                        <select
-                          value={l.unitFactor && l.unitFactor > 1 ? String(l.unitFactor) : '1'}
-                          onChange={(e) => {
-                            const factor = Number(e.target.value);
-                            const preset = PACKS.find((p) => p.factor === factor);
-                            updateLine(i, {
-                              unitFactor: factor,
-                              unit: factor > 1 ? (preset?.label ?? 'pack') : (cat?.unit ?? 'pc'),
-                              baseUnit: cat?.unit ?? 'pc',
-                            });
-                          }}
-                          className="h-7 w-full px-1 rounded border border-input bg-background text-xs outline-none focus:ring-2 focus:ring-ring/50"
-                          title="What the supplier is quoting — the price is per one of these"
-                        >
-                          {PACKS.map((p) => (
-                            <option key={p.factor} value={p.factor}>
-                              {p.factor === 1 ? (cat?.unit ?? 'each') : p.label}
-                            </option>
-                          ))}
-                        </select>
-                        {/* Says out loud what will land in stock, so the buyer can
-                            check it against the delivery before saving. */}
-                        {(l.unitFactor ?? 1) > 1 && (
-                          <div className="text-xs text-muted-foreground mt-0.5 text-center tabular">
-                            = {round2(l.qty * (l.unitFactor ?? 1))} {cat?.unit ?? 'pc'}
+                      <td className="px-1.5 py-2">
+                        <div className="flex items-center gap-1.5">
+                          <NumberField
+                            value={l.qty}
+                            aria-label="Quantity"
+                            onChangeNumber={(v) => updateLine(i, { qty: Math.max(0, v) })}
+                            className="h-9 w-20 px-2 text-right text-sm"
+                          />
+                          <Select
+                            value={packValue}
+                            aria-label="Bought as"
+                            title="What the supplier is quoting — the price is per one of these"
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              if (v.startsWith('u:')) {
+                                const u = convs.find((x) => x.unit === v.slice(2));
+                                if (u) updateLine(i, { unitFactor: u.factor, unit: u.unit, baseUnit });
+                                return;
+                              }
+                              const f = Number(v.slice(2));
+                              const preset = PACKS.find((p) => p.factor === f);
+                              updateLine(i, {
+                                unitFactor: f,
+                                unit: f > 1 ? (preset?.label ?? 'pack') : baseUnit,
+                                baseUnit,
+                              });
+                            }}
+                            className="h-9 flex-1 min-w-0 px-2"
+                          >
+                            <option value="p:1">{baseUnit}</option>
+                            {convs.map((u) => (
+                              <option key={`u:${u.unit}`} value={`u:${u.unit}`}>
+                                {u.unit} ({u.factor} {baseUnit})
+                              </option>
+                            ))}
+                            {convs.length > 0 && <option disabled>──────</option>}
+                            {PACKS.filter((p) => p.factor > 1).map((p) => (
+                              <option key={p.factor} value={`p:${p.factor}`}>
+                                {p.label}
+                              </option>
+                            ))}
+                          </Select>
+                        </div>
+                        {factor > 1 && (
+                          <div className="text-xs text-muted-foreground mt-0.5 tabular">
+                            = {formatNumber(round2(l.qty * factor))} {baseUnit}
                           </div>
                         )}
                       </td>
-                      <td className="px-1 py-2">
-                        <Input
-                          value={l.imei ?? ''}
-                          onChange={(e) => updateLine(i, { imei: e.target.value })}
-                          placeholder="—"
-                          className="h-7 px-1.5 text-xs"
-                        />
-                      </td>
-                      <td className="px-1 py-2 text-right tabular text-xs text-primary">
-                        {cat ? formatBDT(cat.avgCost ?? cat.cost, { withSymbol: false }) : '—'}
-                      </td>
-                      <td className="px-1 py-2 text-right">
+                      <td className="px-1.5 py-2 text-right">
                         <NumberField
                           value={l.unitCostBeforeDisc}
+                          aria-label="Unit cost"
                           onChangeNumber={(v) => updateLine(i, { unitCostBeforeDisc: v })}
-                          className="h-7 w-full px-1.5 text-right text-xs"
+                          className="h-9 w-full px-2 text-right text-sm"
                         />
+                        {/* Average paid, right beside the price being typed. */}
+                        {cat && (
+                          <div className="text-xs text-muted-foreground mt-0.5 tabular">
+                            <span>avg</span> {formatBDT(cat.avgCost ?? cat.cost, { withSymbol: false })}
+                          </div>
+                        )}
                       </td>
-                      <td className="px-1 py-2 text-right">
+                      <td className="px-1.5 py-2 text-right">
                         <NumberField
                           value={l.discountPct}
+                          aria-label="Discount %"
                           onChangeNumber={(v) => updateLine(i, { discountPct: v })}
                           placeholder="0"
-                          className="h-7 w-full px-1.5 text-right text-xs"
+                          className="h-9 w-full px-2 text-right text-sm"
                         />
                       </td>
-                      <td className="px-1 py-2 text-right tabular text-muted-foreground text-xs">
-                        {formatBDT(l.unitCostBeforeTax, { withSymbol: false })}
+                      <td className="px-1.5 py-2 text-right">
+                        <div className="h-9 flex items-center justify-end tabular font-semibold">
+                          {formatBDT(l.lineTotal, { withSymbol: false })}
+                        </div>
+                        <div className="text-xs text-muted-foreground tabular">
+                          {formatBDT(l.unitCostBeforeTax, { withSymbol: false })} <span>each</span>
+                        </div>
                       </td>
-                      <td className="px-1 py-2 text-right tabular font-semibold text-xs">
-                        {formatBDT(l.lineTotal, { withSymbol: false })}
-                      </td>
-                      <td className="px-1 py-2 text-right">
-                        <span
+                      <td className="px-1.5 py-2 text-right">
+                        <NumberField
+                          value={l.newSellPrice ?? 0}
+                          aria-label="Sell price"
+                          onChangeNumber={(v) => updateLine(i, { newSellPrice: v })}
+                          placeholder={cat ? formatBDT(cat.price, { withSymbol: false }) : ''}
+                          className="h-9 w-full px-2 text-right text-sm"
+                        />
+                        <div
                           className={cn(
-                            'tabular text-xs',
-                            l.marginPct === undefined
+                            'text-xs mt-0.5 tabular',
+                            margin === undefined
                               ? 'text-muted-foreground'
-                              : l.marginPct < 10
+                              : margin < 10
                                 ? 'text-destructive'
-                                : l.marginPct > 30
+                                : margin > 30
                                   ? 'text-success'
                                   : 'text-warning',
                           )}
                         >
-                          {l.marginPct !== undefined ? `${l.marginPct.toFixed(1)}%` : '—'}
-                        </span>
+                          {margin !== undefined ? (
+                            <>
+                              {margin.toFixed(1)}% <span>margin</span>
+                            </>
+                          ) : !l.newSellPrice && editing ? (
+                            <span>blank = keep current</span>
+                          ) : (
+                            '—'
+                          )}
+                        </div>
                       </td>
-                      <td className="px-1 py-2 text-right">
-                        <NumberField
-                          value={l.newSellPrice ?? 0}
-                          onChangeNumber={(v) => updateLine(i, { newSellPrice: v })}
-                          className="h-7 w-full px-1.5 text-right text-xs"
-                        />
-                      </td>
-                      <td className="px-1 py-2 text-right">
-                        <button
-                          onClick={() => removeLine(i)}
-                          title="Remove line"
-                          className="size-7 grid place-items-center rounded hover:bg-destructive/10 hover:text-destructive"
-                        >
-                          <Trash2 className="size-3.5" />
-                        </button>
+                      <td className="px-1.5 py-2 text-right">
+                        <IconButton size="sm" tone="danger" label="Remove line" onClick={() => removeLine(i)}>
+                          <Trash2 className="size-4" />
+                        </IconButton>
                       </td>
                     </tr>
-                    );
-                  })}
-                  {lines.length === 0 && (
-                    <tr>
-                      <td colSpan={13} className="px-4 py-8 text-center text-muted-foreground text-sm">
-                        Search above to add items.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </Card>
+                  );
+                })}
+                {lines.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground text-sm">
+                      Search or scan above to add items.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
 
-          {/* Bottom: discount type + tax + shipping + notes */}
-          <Card className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-3">
-              <Field label="Discount Type">
-                <select
-                  value={orderDiscountType}
-                  onChange={(e) => setOrderDiscountType(e.target.value as 'flat' | 'percent')}
-                  className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
-                >
-                  <option value="flat">Flat (৳)</option>
-                  <option value="percent">Percent (%)</option>
-                </select>
-              </Field>
-              <Field label="Discount Amount">
-                <NumberField value={orderDiscountValue} onChangeNumber={setOrderDiscountValue} />
-              </Field>
-              <Field label="Purchase Tax %">
-                <NumberField value={taxPct} onChangeNumber={setTaxPct} />
-              </Field>
-            </div>
-            <div className="space-y-3">
-              <Field label="Shipping Charge (৳)">
-                <NumberField value={shipping} onChangeNumber={setShipping} />
-              </Field>
-              <Field label="Shipping Details">
+        {/* Discount, tax, shipping, other, pay term, notes — opened when needed. */}
+        {chargesOpen ? (
+          <Card className="p-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+            <FormField label="Discount">
+              {(f) => (
+                <div className="flex items-center gap-1.5">
+                  <NumberField {...f} value={orderDiscountValue} onChangeNumber={setOrderDiscountValue} className="flex-1 min-w-0" />
+                  <Segmented
+                    ariaLabel="Discount type"
+                    value={orderDiscountType}
+                    onChange={setOrderDiscountType}
+                    options={[
+                      { value: 'flat', label: '৳' },
+                      { value: 'percent', label: '%' },
+                    ]}
+                  />
+                </div>
+              )}
+            </FormField>
+            <FormField label="Purchase tax %">
+              {(f) => <NumberField {...f} value={taxPct} onChangeNumber={setTaxPct} />}
+            </FormField>
+            <FormField label="Pay term">
+              {(f) => (
+                <Select {...f} value={payTerms} onChange={(e) => setPayTerms(e.target.value)}>
+                  <option value="">—</option>
+                  {PAY_TERMS.map((t) => (
+                    <option key={t.value} value={t.value}>
+                      {t.label}
+                    </option>
+                  ))}
+                  {payTerms && !PAY_TERMS.some((t) => t.value === payTerms) && (
+                    <option value={payTerms}>{payTerms}</option>
+                  )}
+                </Select>
+              )}
+            </FormField>
+            <FormField label="Shipping charge (৳)">
+              {(f) => <NumberField {...f} value={shipping} onChangeNumber={setShipping} />}
+            </FormField>
+            <FormField label="Shipping details">
+              {(f) => (
                 <Input
+                  {...f}
                   value={shippingDetails}
                   onChange={(e) => setShippingDetails(e.target.value)}
                   placeholder="Courier, vehicle, driver…"
                 />
-              </Field>
-              <Field label="Other Charge (৳)">
-                <NumberField value={other} onChangeNumber={setOther} />
-              </Field>
-            </div>
-            <div className="md:col-span-2">
-              <Field label="Additional Notes">
+              )}
+            </FormField>
+            <FormField label="Other charge (৳)">
+              {(f) => <NumberField {...f} value={other} onChangeNumber={setOther} />}
+            </FormField>
+            <FormField label="Notes" hint="Supplier’s invoice no., etc." className="md:col-span-3">
+              {(f) => (
                 <textarea
+                  {...f}
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  rows={3}
-                  placeholder="Anything to remember about this purchase…"
+                  rows={2}
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 resize-y"
                 />
-              </Field>
-            </div>
+              )}
+            </FormField>
           </Card>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setChargesOpen(true)}
+            className="text-sm text-primary hover:underline focus-ring rounded"
+          >
+            + Add discount, shipping or other charges
+          </button>
+        )}
+
+        {lowMarginLines.length > 0 && (
+          <div className="rounded-md bg-warning/10 text-warning px-3 py-2 text-sm flex items-start gap-2">
+            <AlertTriangle className="size-4 mt-0.5 shrink-0" />
+            <span>Some items will have a margin under 10%. Adjust sell prices in the table or save anyway.</span>
+          </div>
+        )}
+      </div>
+
+      {/* STICKY ACTION BAR — the total and the save buttons stay in view. */}
+      <div className="sticky bottom-0 z-10 border-t border-border bg-card px-6 py-3 flex flex-wrap items-center gap-x-6 gap-y-2">
+        <div className="text-sm text-muted-foreground">
+          <span className="tabular text-foreground font-medium">{formatNumber(totalQtyLabel)}</span> <span>items</span>
         </div>
-
-        {/* SUMMARY — at the BOTTOM, and no longer sticky.
-            It was a third of the window's width for the whole time the buyer was
-            typing lines, purely so it could hover. It is read once, at the end. */}
-        <div className="space-y-4">
-          <Card className="p-4 md:max-w-md md:ml-auto">
-            <div className="text-sm font-semibold">Summary</div>
-            <div className="mt-3 space-y-1.5 text-sm">
-              <Row label="Total items" value={String(lines.length)} />
-              <Row label="Total qty" value={String(lines.reduce((s, l) => s + l.qty, 0))} />
-              <div className="border-t border-border pt-2" />
-              <Row label="Subtotal" value={formatBDT(totals.subtotal)} />
-              {totals.totalLineDiscount > 0 && (
-                <Row label="Line discount" value={`− ${formatBDT(totals.totalLineDiscount)}`} tone="success" />
+        <div className="min-w-0">
+          <div className="flex items-baseline gap-2">
+            <span className="text-sm text-muted-foreground">Net total</span>
+            <span className="text-xl font-bold tabular">{formatBDT(totals.total)}</span>
+          </div>
+          {hasCharges && (
+            <div className="text-xs text-muted-foreground tabular">
+              <span>Subtotal</span> {formatBDT(totals.subtotal, { withSymbol: false })}
+              {totals.totalLineDiscount + totals.orderDiscount > 0 && (
+                <>
+                  {' · '}
+                  <span>Discount</span> −{formatBDT(totals.totalLineDiscount + totals.orderDiscount, { withSymbol: false })}
+                </>
               )}
-              {totals.orderDiscount > 0 && (
-                <Row label="Order discount" value={`− ${formatBDT(totals.orderDiscount)}`} tone="success" />
+              {totals.tax > 0 && (
+                <>
+                  {' · '}
+                  <span>Tax</span> {formatBDT(totals.tax, { withSymbol: false })}
+                </>
               )}
-              {totals.tax > 0 && <Row label={`Tax (${taxPct}%)`} value={formatBDT(totals.tax)} />}
-              {totals.shipping > 0 && <Row label="Shipping" value={formatBDT(totals.shipping)} />}
-              {totals.other > 0 && <Row label="Other" value={formatBDT(totals.other)} />}
-              <div className="border-t border-border pt-2 flex items-center justify-between">
-                <span className="font-semibold">Net Total</span>
-                <span className="text-xl font-bold tabular text-primary">
-                  {formatBDT(totals.total)}
-                </span>
-              </div>
+              {totals.shipping + totals.other > 0 && (
+                <>
+                  {' · '}
+                  <span>Charges</span> {formatBDT(totals.shipping + totals.other, { withSymbol: false })}
+                </>
+              )}
             </div>
-
-            {lowMarginLines.length > 0 && (
-              <div className="mt-3 rounded-md bg-warning/10 text-warning px-3 py-2 text-xs flex items-start gap-2">
-                <AlertTriangle className="size-4 mt-0.5 shrink-0" />
-                <span>
-                  {lowMarginLines.length} item{lowMarginLines.length === 1 ? '' : 's'} will have
-                  margin under 10%. Adjust sell prices in the table or save anyway.
-                </span>
+          )}
+        </div>
+        {editing && (
+          <div className="text-sm">
+            <div>
+              <span className="text-muted-foreground">Paid so far</span>{' '}
+              <span className="tabular">{formatBDT(editing.paid)}</span> ·{' '}
+              <span className="text-muted-foreground">Will owe</span>{' '}
+              <span className="tabular font-medium">{formatBDT(Math.max(0, willOwe))}</span>
+            </div>
+            {willOwe < 0 && (
+              <div className="text-warning text-xs">
+                <span className="tabular">{formatBDT(-willOwe)}</span>{' '}
+                <span>will become an advance with the supplier.</span>
               </div>
             )}
-
-            {supplier && supplier.due > 0 && (
-              <div className="mt-3 rounded-md bg-secondary/60 text-foreground px-3 py-2 text-xs">
-                Existing supplier payable: <span className="tabular">{formatBDT(supplier.due)}</span>
-              </div>
-            )}
-          </Card>
-        </div>
+          </div>
+        )}
+        <div className="flex-1" />
+        {problem && <span className="text-sm text-muted-foreground">{problem}</span>}
+        {editing ? (
+          <Button size="lg" className="min-w-[10rem]" onClick={() => void saveCorrection()} disabled={!isValid || saving}>
+            <Save className="size-4" /> Save correction
+          </Button>
+        ) : (
+          <>
+            <Button size="lg" variant="outline" className="min-w-[10rem]" onClick={saveUnpaid} disabled={!isValid || saving}>
+              <Save className="size-4" /> Save Unpaid
+            </Button>
+            <Button size="lg" className="min-w-[10rem]" onClick={saveAndPay} disabled={!isValid || saving}>
+              <Banknote className="size-4" /> Save & Pay
+            </Button>
+          </>
+        )}
       </div>
 
       {pendingPayment && (
         <AddPurchasePaymentModal
           open={!!pendingPayment}
+          cancelLabel="Pay later"
           onClose={() => {
+            // Closed without paying → say where the bill went.
+            const now = usePurchases.getState().purchases.find((p) => p.id === pendingPayment.id);
+            if (!now || now.paid <= pendingPayment.paid) {
+              toast.info('Saved as unpaid. Pay it later with Pay Bill.', { description: pendingPayment.refNo });
+            }
             setPendingPayment(null);
             nav('/purchases');
           }}
@@ -963,8 +1077,7 @@ function AddPurchaseForm({ editing }: { editing?: PurchaseRecord }) {
         }}
       />
 
-      {/* "Add new product" — the created product lands on this purchase straight
-          away, so the buyer can carry on typing the quantity and cost. */}
+      {/* "Add new product" — the created product lands on this purchase straight away. */}
       <NewProductDrawer
         open={newProductOpen}
         onClose={() => setNewProductOpen(false)}
@@ -979,66 +1092,15 @@ function AddPurchaseForm({ editing }: { editing?: PurchaseRecord }) {
   );
 }
 
-function Field({
-  label,
-  required,
-  hint,
-  children,
-}: {
-  label: string;
-  required?: boolean;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <label className="text-xs font-semibold text-muted-foreground">
-        {label} {required && <span className="text-destructive">*</span>}
-      </label>
-      {children}
-      {hint && <div className="text-xs text-muted-foreground mt-0.5">{hint}</div>}
-    </div>
-  );
-}
-
-function Row({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone?: 'success';
-}) {
-  return (
-    <div className="flex items-center justify-between text-sm">
-      <span className="text-muted-foreground">{label}</span>
-      <span className={cn('tabular', tone === 'success' && 'text-success')}>{value}</span>
-    </div>
-  );
-}
-
 /**
- * Buy / average buy / sell for a product in the search results.
- *
- * Colour is the label for someone who will not read three words every time:
- * amber = money that went out, blue = the average we have paid, green = money
- * coming in. `avgCost` is the simple mean of recorded buying prices, NOT the
- * quantity-weighted cost that drives COGS (see backend/services/costing.ts).
+ * Last buy / average / sell for a product in the search results.
+ * `avgCost` is the simple mean of recorded buying prices, not the COGS cost.
  */
-function PriceTriplet({
-  cost,
-  avgCost,
-  price,
-}: {
-  cost: number;
-  avgCost: number;
-  price: number;
-}) {
+function PriceTriplet({ cost, avgCost, price }: { cost: number; avgCost: number; price: number }) {
   return (
-    <div className="shrink-0 flex items-center gap-3 text-right">
-      <TripletCell label="Buy" value={cost} tone="text-warning" />
-      <TripletCell label="Avg" value={avgCost} tone="text-primary" />
+    <div className="shrink-0 flex items-center gap-4 text-right">
+      <TripletCell label="Last buy" value={cost} tone="text-warning" />
+      <TripletCell label="Average" value={avgCost} tone="text-foreground" />
       <TripletCell label="Sell" value={price} tone="text-success" />
     </div>
   );
@@ -1048,11 +1110,9 @@ function TripletCell({ label, value, tone }: { label: string; value: number; ton
   return (
     <div>
       <div className="text-xs text-muted-foreground leading-none">{label}</div>
-      <div className={cn('mt-0.5 text-xs tabular font-semibold', tone)}>
+      <div className={cn('mt-0.5 text-sm tabular font-semibold', tone)}>
         {formatBDT(value, { withSymbol: false })}
       </div>
     </div>
   );
 }
-
-void Badge;

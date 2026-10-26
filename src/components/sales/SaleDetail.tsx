@@ -9,9 +9,8 @@ import {
   Undo2,
   Truck,
   Trash2,
-  CheckCircle2,
-  AlertTriangle,
   History,
+  ChevronDown,
 } from 'lucide-react';
 import { Drawer } from '@/components/ui/Drawer';
 import { Button } from '@/components/ui/Button';
@@ -30,8 +29,13 @@ import type { Customer } from '@/types/domain';
 import { cn, formatBDT } from '@/lib/utils';
 import { currentUserId } from '@/lib/actor';
 import { PhoneAction, isCallable } from '@/components/ui/PhoneAction';
+import { labelFor } from '@/lib/labels';
+import { useDateFormat } from '@/lib/formatDate';
+import { parseRangeBound } from '@/lib/datetime';
 import { AddPaymentModal } from './AddPaymentModal';
 import { InvoicePrintModal } from './InvoicePrintModal';
+import { CreateReturnModal } from './CreateReturnModal';
+import { CreateShipmentModal } from './CreateShipmentModal';
 
 interface Props {
   open: boolean;
@@ -48,6 +52,10 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
   const customers = useCustomers((s) => s.items);
   const [payOpen, setPayOpen] = useState(false);
   const [printOpen, setPrintOpen] = useState(false);
+  // Used only when the opening page passes no Return / Ship handler.
+  const [returnOpen, setReturnOpen] = useState(false);
+  const [shipOpen, setShipOpen] = useState(false);
+  const fmt = useDateFormat();
   // UI-only gating; the IPC boundary is the real gate (see hooks/useCan.ts).
   const canEdit = useCan('sales.edit');
   const canVoid = useCan('sales.void');
@@ -173,71 +181,66 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
     );
   };
 
+  // B11 / UI audit: Return and Ship work wherever the drawer is opened. A page
+  // that handles them itself passes a handler; otherwise the drawer opens its own.
+  const startReturn = () => (onCreateReturn ? onCreateReturn(sale.id) : setReturnOpen(true));
+  const startShipment = () => (onCreateShipment ? onCreateShipment(sale.id) : setShipOpen(true));
+
   return (
     <>
       <Drawer
         open={open}
         onClose={onClose}
         width="max-w-3xl"
-        title={sale.invoiceNo}
-        subtitle={`${customerLabel} · ${new Date(sale.date).toLocaleString('en-GB')}`}
+        // The customer is the title (data); code and time underneath.
+        title={customerLabel}
+        subtitle={`${sale.invoiceNo} · ${fmt.dateTime(sale.date)}`}
       >
         <div className="flex-1 overflow-auto">
           <div className="p-5 space-y-5">
-            {/* Header band */}
+            {/* Header band — status and links to what followed the sale. */}
             <div className="flex flex-wrap items-center gap-2">
               <StatusPill />
-              <Badge variant="default">{sale.branch}</Badge>
-              <Badge variant="default">By {sale.user}</Badge>
               {sale.status === 'quotation' && sale.validUntil && (
-                <Badge variant="info">Valid till {new Date(sale.validUntil).toLocaleDateString('en-GB')}</Badge>
+                <Badge variant="info">
+                  <span>Valid until</span> <span>{fmt.date(parseRangeBound(sale.validUntil, 'from'))}</span>
+                </Badge>
               )}
               {saleReturns.length > 0 && (
                 <Badge variant="warning">
-                  {saleReturns.length === 1 ? '1 return' : `${saleReturns.length} returns`}
+                  <span>Returns</span> <span className="tabular">{saleReturns.length}</span>
                 </Badge>
               )}
-              {saleShipment && <Badge variant="info">Shipment {saleShipment.refNo}</Badge>}
-              {/* An "Open full page" link used to sit here pointing at
-                  /sales/:id. That route does not exist — App.tsx only routes
-                  /sales/:id/edit — so it landed the user on "Not Found". This
-                  drawer IS the full sale view; the link is gone rather than
-                  left as a trap. */}
+              {saleShipment && (
+                <Badge variant="info">
+                  <span>Shipment</span> <span>{saleShipment.refNo}</span>
+                </Badge>
+              )}
             </div>
 
-            {/* CUSTOMER — including the phone number, big enough to dial from.
-                On a due or partial invoice this is the reason the employee opened
-                the screen, so the number is shown as a proper contact line with a
-                Call button rather than buried in 11px grey text. */}
+            {/* CUSTOMER — the phone number big enough to dial from: on a due
+                invoice it is why the screen was opened. */}
             {(customer || sale.customerName) && (
               <div className="rounded-lg border border-border p-3 bg-card flex flex-wrap items-center gap-3">
-                <div className="size-10 rounded-full bg-gradient-to-br from-primary to-accent grid place-items-center text-white font-bold text-xs shrink-0">
-                  {(customer?.name ?? sale.customerName)
-                    .split(' ')
-                    .map((n) => n[0])
-                    .slice(0, 2)
-                    .join('')}
-                </div>
                 <div className="flex-1 min-w-0">
-                  <div className="font-semibold truncate">{customer?.name ?? sale.customerName}</div>
+                  <div className="font-semibold truncate">{customerLabel}</div>
                   <div className="flex items-center gap-2 mt-0.5">
                     {callablePhone ? (
-                      <span className="text-sm tabular font-semibold">
-                        {callablePhone}
-                      </span>
+                      <span className="text-sm tabular font-semibold">{callablePhone}</span>
                     ) : (
-                      <span className="text-xs text-muted-foreground">No phone on file</span>
+                      <span className="text-sm text-muted-foreground">No phone on file</span>
                     )}
                     {customer?.group && (
-                      <Badge variant="default">{customer.group}</Badge>
+                      <Badge variant="default">{labelFor('priceGroup', customer.group)}</Badge>
                     )}
                   </div>
                 </div>
-                {callablePhone && (
-                  <PhoneAction phone={callablePhone} label={customer?.name} />
-                )}
+                {callablePhone && <PhoneAction phone={callablePhone} label={customer?.name} />}
+                {/* Customer-wide, not this invoice's own Due (that is below). */}
                 {customer && customer.due > 0 && (
-                  <Badge variant="destructive">Total Due {formatBDT(customer.due)}</Badge>
+                  <Badge variant="warning">
+                    <span>Owes in total</span> <span className="tabular">{formatBDT(customer.due)}</span>
+                  </Badge>
                 )}
               </div>
             )}
@@ -247,8 +250,7 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
               <table className="w-full text-sm">
                 <thead className="text-xs text-muted-foreground bg-secondary/50">
                   <tr>
-                    <th className="text-left px-3 py-2 font-medium w-10">#</th>
-                    <th className="text-left px-2 py-2 font-medium">Item</th>
+                    <th className="text-left px-3 py-2 font-medium">Item</th>
                     <th className="text-right px-2 py-2 font-medium">Qty</th>
                     <th className="text-right px-2 py-2 font-medium">Unit Price</th>
                     <th className="text-right px-3 py-2 font-medium">Subtotal</th>
@@ -256,18 +258,15 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
                 </thead>
                 <tbody>
                   {sale.lines.map((l, i) => {
-                    // The same arithmetic the invoice was stored with (clamped at
-                    // zero, rounded) — this cell used to recompute it inline and
-                    // could print a negative subtotal.
+                    // Same arithmetic the invoice was stored with (clamped, rounded).
                     const sub = saleLineSubtotal(l);
                     return (
                       <tr key={i} className="border-t border-border">
-                        <td className="px-3 py-2 text-xs text-muted-foreground">{i + 1}</td>
-                        <td className="px-2 py-2">
+                        <td className="px-3 py-2">
                           <div className="font-medium">{l.name}</div>
                           <div className="text-xs text-muted-foreground font-mono">{l.sku}</div>
                         </td>
-                        <td className="px-2 py-2 text-right tabular">
+                        <td className="px-2 py-2 text-right tabular whitespace-nowrap">
                           {l.qty} {l.unit}
                         </td>
                         <td className="px-2 py-2 text-right tabular">
@@ -293,39 +292,55 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
                 {sale.orderDiscount > 0 && (
                   <Row label="Order Discount" value={`− ${formatBDT(sale.orderDiscount)}`} tone="success" />
                 )}
-                {sale.tax > 0 && <Row label={`VAT (${sale.taxPct}%)`} value={formatBDT(sale.tax)} />}
+                {sale.tax > 0 && (
+                  <Row
+                    label={
+                      <>
+                        <span>VAT</span> <span className="tabular">({sale.taxPct}%)</span>
+                      </>
+                    }
+                    value={formatBDT(sale.tax)}
+                  />
+                )}
                 {sale.shipping > 0 && <Row label="Shipping" value={formatBDT(sale.shipping)} />}
                 {sale.other > 0 && <Row label="Other" value={formatBDT(sale.other)} />}
                 <div className="border-t border-border pt-2 flex items-center justify-between">
                   <span className="text-sm font-semibold">Total</span>
-                  <span className="text-lg font-bold tabular">{formatBDT(sale.total)}</span>
+                  <span className="text-xl font-bold tabular">{formatBDT(sale.total)}</span>
+                </div>
+                <div className="pt-1 text-xs text-muted-foreground">
+                  <span>By</span> <span>{sale.user}</span> · <span>{sale.branch}</span>
                 </div>
               </div>
 
               <div className="rounded-lg border border-border p-4 space-y-1.5 text-sm bg-card">
                 <Row label="Paid" value={formatBDT(sale.paid)} tone={sale.due === 0 ? 'success' : undefined} />
-                <Row
-                  label="Due"
-                  value={formatBDT(sale.due)}
-                  tone={sale.due > 0 ? 'destructive' : undefined}
-                />
+                {sale.due > 0 ? (
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-destructive">Due</span>
+                    <span className="text-xl font-bold tabular text-destructive">{formatBDT(sale.due)}</span>
+                  </div>
+                ) : (
+                  <Row label="Due" value={formatBDT(sale.due)} />
+                )}
+                {/* Visible to everyone (owner decision 1). */}
                 {sale.profit !== undefined && (
                   <Row label="Profit" value={formatBDT(sale.profit)} tone="success" />
                 )}
                 <div className="border-t border-border pt-2">
-                  <div className="text-xs font-semibold text-muted-foreground mb-1">
-                    Payments
-                  </div>
+                  <div className="text-xs font-medium text-muted-foreground mb-1">Payments</div>
                   {sale.payments.length === 0 ? (
-                    <div className="text-xs text-muted-foreground">No payments yet</div>
+                    <div className="text-sm text-muted-foreground">No payments yet</div>
                   ) : (
                     sale.payments.map((p) => (
-                      <div key={p.id} className="flex items-center justify-between text-xs">
-                        <span>
-                          {p.method}
+                      <div key={p.id} className="flex items-center justify-between gap-2 text-sm">
+                        <span className="min-w-0 truncate">
+                          <span className="text-muted-foreground tabular">{fmt.dateTime(p.paidAt)}</span>
+                          {' · '}
+                          <span>{labelFor('paymentMethod', p.method)}</span>
                           {p.reference ? <span className="text-muted-foreground"> · {p.reference}</span> : null}
                         </span>
-                        <span className="tabular">{formatBDT(p.amount)}</span>
+                        <span className="tabular shrink-0">{formatBDT(p.amount)}</span>
                       </div>
                     ))
                   )}
@@ -333,58 +348,52 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
               </div>
             </div>
 
-            {/* Audit log */}
-            <div className="rounded-lg border border-border bg-card">
-              <div className="px-3 py-2 border-b border-border bg-secondary/40 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-                <History className="size-3" /> Audit log
-              </div>
-              <div className="divide-y divide-border">
-                {sale.audit.map((a) => (
-                  <div key={a.id} className="flex items-center gap-2 px-3 py-1.5 text-sm">
-                    <Dot action={a.action} />
-                    <span className="capitalize">{a.action}</span>
-                    {a.note && <span className="text-muted-foreground">— {a.note}</span>}
-                    <span className="ml-auto text-xs text-muted-foreground tabular">
-                      {new Date(a.at).toLocaleString('en-GB')} · {a.by}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
+            {/* History — folded away; it is looked at when something is disputed. */}
+            {sale.audit.length > 0 && (
+              <details className="rounded-lg border border-border bg-card group">
+                <summary className="px-3 py-2 flex items-center gap-2 text-sm font-medium cursor-pointer select-none list-none">
+                  <History className="size-4 text-muted-foreground" />
+                  <span>History</span>
+                  <span className="text-muted-foreground tabular">({sale.audit.length})</span>
+                  <ChevronDown className="size-4 ml-auto text-muted-foreground transition group-open:rotate-180" />
+                </summary>
+                <div className="divide-y divide-border border-t border-border">
+                  {sale.audit.map((a) => (
+                    <div key={a.id} className="flex items-center gap-2 px-3 py-1.5 text-sm">
+                      <Dot action={a.action} />
+                      <span>{ACTION_LABEL[a.action] ?? a.action}</span>
+                      {a.note && <span className="text-muted-foreground">— {a.note}</span>}
+                      <span className="ml-auto text-xs text-muted-foreground tabular whitespace-nowrap">
+                        {fmt.dateTime(a.at)} · {a.by}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
           </div>
         </div>
 
-        {/* Footer actions */}
+        {/* Footer: everyday actions left, Void apart, Receive payment last on the right. */}
         <div className="border-t border-border bg-card px-4 py-3 flex flex-wrap items-center gap-2">
-          {/* Both of these had NO onClick — they looked live and did nothing.
-              One button now, doing the one thing there is to do: show the stored
-              invoice, ready to print or save as PDF. */}
-          <Button variant="outline" size="sm" onClick={() => setPrintOpen(true)}>
-            <Printer className="size-3.5" /> Print invoice
+          <Button variant="outline" onClick={() => setPrintOpen(true)}>
+            <Printer className="size-4" /> Print invoice
           </Button>
-          {sale.status === 'final' && sale.due > 0 && (
-            <Button size="sm" onClick={() => setPayOpen(true)}>
-              <Banknote className="size-3.5" /> Add Payment
+          {sale.status === 'final' && (
+            <Button variant="outline" onClick={startReturn}>
+              <Undo2 className="size-4" /> Return goods
             </Button>
           )}
-          {/* B11: only offered where the page that opened the drawer handles them. */}
-          {sale.status === 'final' && onCreateReturn && (
-            <Button variant="outline" size="sm" onClick={() => onCreateReturn(sale.id)}>
-              <Undo2 className="size-3.5" /> Create Return
+          {sale.status === 'final' && !saleShipment && (
+            <Button variant="outline" onClick={startShipment}>
+              <Truck className="size-4" /> Ship
             </Button>
           )}
-          {sale.status === 'final' && !saleShipment && onCreateShipment && (
-            <Button variant="outline" size="sm" onClick={() => onCreateShipment(sale.id)}>
-              <Truck className="size-3.5" /> Create Shipment
-            </Button>
-          )}
-          {/* Editing an invoice rewrites money that has already been taken, so
-              the button only appears for a user who holds `sales.edit` (Admin by
-              default). A voided sale is settled and can never be edited. */}
+          {/* Editing rewrites money already taken: `sales.edit` only (Admin). */}
           {canEdit && sale.status !== 'void' && (
             <Link to={`/sales/${sale.id}/edit`}>
-              <Button variant="outline" size="sm">
-                <Edit2 className="size-3.5" /> Edit
+              <Button variant="outline">
+                <Edit2 className="size-4" /> Edit
               </Button>
             </Link>
           )}
@@ -392,40 +401,37 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
           {canVoid && (sale.status === 'draft' || sale.status === 'quotation') && (
             <Button
               variant="destructive"
-              size="sm"
               onClick={async () => {
                 if (
                   await confirm({
-                    title: `Delete ${sale.status} ${sale.invoiceNo}?`,
+                    title: sale.status === 'draft' ? 'Delete this draft?' : 'Delete this quotation?',
+                    message: sale.invoiceNo,
                     variant: 'destructive',
                   })
                 ) {
                   // Close only once it is really gone; a refusal keeps it open.
                   if (await deleteSale(sale.id)) {
-                    toast.success(`${sale.invoiceNo} deleted`);
+                    toast.success('Deleted', { description: sale.invoiceNo });
                     onClose();
                   }
                 }
               }}
             >
-              <Trash2 className="size-3.5" /> Delete
+              <Trash2 className="size-4" /> Delete
             </Button>
           )}
-          {/* A sale with a return cannot be voided (the backend refuses: the void
-              would put the returned goods back twice). The rest is undone by
-              returning it, so the button is not offered. */}
+          {/* A sale with a return cannot be voided (goods would go back twice). */}
           {canVoid && sale.status === 'final' && saleReturns.length > 0 && (
-            <span className="text-xs text-muted-foreground">
+            <span className="text-sm text-muted-foreground">
               Has a return — return the rest instead of voiding.
             </span>
           )}
           {canVoid && sale.status === 'final' && saleReturns.length === 0 && (
             <Button
               variant="destructive"
-              size="sm"
               onClick={async () => {
                 const reason = await promptText({
-                  title: `Void ${sale.invoiceNo}?`,
+                  title: 'Void this sale?',
                   message: 'Voiding returns the items to stock and reverses any cash taken.',
                   label: 'Reason',
                   placeholder: 'e.g. customer cancelled',
@@ -435,21 +441,22 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
                   required: true,
                 });
                 if (reason !== null && (await voidSale(sale.id, currentUserId(), reason))) {
-                  toast.success(`${sale.invoiceNo} voided`);
+                  toast.success('Sale voided', { description: sale.invoiceNo });
                 }
               }}
             >
-              <Ban className="size-3.5" /> Void
+              <Ban className="size-4" /> Void
+            </Button>
+          )}
+          {sale.status === 'final' && sale.due > 0 && (
+            <Button size="lg" className="ml-2" onClick={() => setPayOpen(true)}>
+              <Banknote className="size-5" /> Receive payment
             </Button>
           )}
         </div>
       </Drawer>
 
-      <AddPaymentModal
-        open={payOpen}
-        onClose={() => setPayOpen(false)}
-        sale={sale}
-      />
+      <AddPaymentModal open={payOpen} onClose={() => setPayOpen(false)} sale={sale} />
 
       <InvoicePrintModal
         open={printOpen}
@@ -457,16 +464,32 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
         sale={sale}
         customer={customer}
       />
+      {!onCreateReturn && (
+        <CreateReturnModal open={returnOpen} onClose={() => setReturnOpen(false)} saleId={sale.id} />
+      )}
+      {!onCreateShipment && (
+        <CreateShipmentModal open={shipOpen} onClose={() => setShipOpen(false)} saleId={sale.id} />
+      )}
     </>
   );
 }
+
+/** Audit actions in plain words (were raw keys with CSS `capitalize`). */
+const ACTION_LABEL: Record<string, string> = {
+  created: 'Created',
+  edited: 'Corrected',
+  voided: 'Voided',
+  paid: 'Payment received',
+  returned: 'Goods returned',
+  shipped: 'Shipped',
+};
 
 function Row({
   label,
   value,
   tone,
 }: {
-  label: string;
+  label: React.ReactNode;
   value: string;
   tone?: 'success' | 'destructive' | 'warning';
 }) {
@@ -500,9 +523,5 @@ function Dot({ action }: { action: string }) {
             : action === 'shipped'
               ? 'bg-accent'
               : 'bg-muted-foreground';
-  return <span className={`size-1.5 rounded-full ${cls}`} />;
+  return <span className={`size-2 rounded-full shrink-0 ${cls}`} />;
 }
-
-// silence unused
-void CheckCircle2;
-void AlertTriangle;

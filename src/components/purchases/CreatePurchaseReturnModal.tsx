@@ -11,26 +11,22 @@ import {
   type ReturnReason,
   nextPurchaseReturnRef,
 } from '@/stores/purchases';
-import { cn, formatBDT } from '@/lib/utils';
+import { cn, formatBDT, formatNumber } from '@/lib/utils';
+import { FormField } from '@/components/ui/FormField';
+import { Select } from '@/components/ui/Select';
+import { RETURN_REASONS, REFUND_LABEL } from './labels';
 import { currentUserName } from '@/lib/actor';
 import { purchaseReturnRefund, round2, sum2 } from '@/lib/money';
 import { api } from '@/lib/api';
 import { toPurchaseRecord, type BackendPurchase } from '@/hooks/purchaseAdapter';
 
-const REASONS: { id: ReturnReason; label: string }[] = [
-  { id: 'damaged', label: 'Damaged' },
-  { id: 'wrong-item', label: 'Wrong item' },
-  { id: 'expired', label: 'Expired' },
-  { id: 'short-shipped', label: 'Short shipped' },
-  { id: 'other', label: 'Other' },
-];
-
-const REFUND: { id: ReturnRefundMethod; icon: any; label: string; hint: string }[] = [
-  { id: 'CashRefund', icon: Banknote, label: 'Cash refund', hint: 'Cashback from supplier' },
-  { id: 'CreditAdjust', icon: HandCoins, label: 'Credit adjust', hint: 'Reduce supplier due' },
-  { id: 'Bank', icon: Building2, label: 'Bank reversal', hint: 'Bank transfer back' },
-  { id: 'bKash', icon: Smartphone, label: 'bKash', hint: 'Reverse to bKash' },
-  { id: 'Nagad', icon: Smartphone, label: 'Nagad', hint: 'Reverse to Nagad' },
+// Words + hints live in ./labels (shared with the Purchase Returns list).
+const REFUND: { id: ReturnRefundMethod; icon: typeof Banknote }[] = [
+  { id: 'CreditAdjust', icon: HandCoins },
+  { id: 'CashRefund', icon: Banknote },
+  { id: 'Bank', icon: Building2 },
+  { id: 'bKash', icon: Smartphone },
+  { id: 'Nagad', icon: Smartphone },
 ];
 
 interface Props {
@@ -171,13 +167,13 @@ export function CreatePurchaseReturnModal({ open, onClose, purchaseId }: Props) 
       open={open}
       onClose={onClose}
       width="max-w-3xl"
-      title={`Create Purchase Return — ${purchase.refNo}`}
-      subtitle={`Supplier: ${purchase.supplierName}`}
+      title="Send goods back to the supplier"
+      subtitle={`${purchase.supplierName} · ${purchase.refNo}`}
       footer={
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           <div className="text-sm">
-            <span className="text-muted-foreground">Refund total: </span>
-            <span className="tabular font-semibold text-warning">{formatBDT(total)}</span>
+            <span className="text-muted-foreground">Refund total</span>{' '}
+            <span className="tabular font-semibold">{formatBDT(total)}</span>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" onClick={onClose}>
@@ -192,14 +188,13 @@ export function CreatePurchaseReturnModal({ open, onClose, purchaseId }: Props) 
     >
       <div className="p-4 space-y-4">
         <div className="rounded-lg border border-border overflow-hidden">
-          <div className="px-3 py-2 border-b border-border bg-secondary/40 text-xs font-semibold text-muted-foreground">
+          <div className="px-3 py-2 border-b border-border bg-secondary/40 text-sm font-medium">
             Pick items to return
           </div>
           <table className="w-full text-sm">
             <thead className="text-xs text-muted-foreground border-b border-border">
               <tr>
                 <th className="text-left px-3 py-2 font-medium">Item</th>
-                <th className="text-right px-2 py-2 font-medium">Bought qty</th>
                 <th className="text-right px-2 py-2 font-medium">Unit cost</th>
                 <th className="text-right px-2 py-2 font-medium">Can return</th>
                 <th className="text-right px-2 py-2 font-medium">Return qty</th>
@@ -217,30 +212,37 @@ export function CreatePurchaseReturnModal({ open, onClose, purchaseId }: Props) 
                       <div className="text-xs text-muted-foreground font-mono">{l.sku}</div>
                     </td>
                     <td className="px-2 py-2 text-right tabular">
-                      {l.qty} {l.unit}
-                    </td>
-                    <td className="px-2 py-2 text-right tabular">
                       {formatBDT(l.unitCostBeforeTax, { withSymbol: false })}
                     </td>
-                    <td
-                      className={cn(
-                        'px-2 py-2 text-right tabular',
-                        left <= 0 && 'text-muted-foreground',
-                      )}
-                    >
-                      {left}
+                    {/* "10 of 12 pc" — bought and returnable in one cell. */}
+                    <td className={cn('px-2 py-2 text-right tabular whitespace-nowrap', left <= 0 && 'text-muted-foreground')}>
+                      {formatNumber(left)} <span className="text-muted-foreground">of</span> {formatNumber(l.qty)}{' '}
+                      <span className="text-xs text-muted-foreground">{l.unit}</span>
                     </td>
-                    <td className="px-2 py-2 text-right">
-                      <NumberField
-                        value={cur}
-                        disabled={left <= 0}
-                        onChangeNumber={(v) => {
-                          const clamped = Math.max(0, Math.min(left, v));
-                          setPicked((p) => ({ ...p, [idx]: clamped }));
-                        }}
-                        placeholder="0"
-                        className="h-8 w-20 px-2 text-right text-xs ml-auto"
-                      />
+                    <td className="px-2 py-2">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <NumberField
+                          value={cur}
+                          disabled={left <= 0}
+                          aria-label="Return qty"
+                          onChangeNumber={(v) => {
+                            const clamped = Math.max(0, Math.min(left, v));
+                            setPicked((p) => ({ ...p, [idx]: clamped }));
+                          }}
+                          placeholder="0"
+                          className="h-9 w-24 px-2 text-right text-sm"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-9"
+                          disabled={left <= 0}
+                          onClick={() => setPicked((p) => ({ ...p, [idx]: left }))}
+                        >
+                          All
+                        </Button>
+                      </div>
                     </td>
                     <td className="px-3 py-2 text-right tabular font-semibold">
                       {formatBDT(refundFor(idx, cur), { withSymbol: false })}
@@ -257,57 +259,56 @@ export function CreatePurchaseReturnModal({ open, onClose, purchaseId }: Props) 
           )}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="text-xs font-semibold text-muted-foreground">Reason</label>
-            <select
-              value={reason}
-              onChange={(e) => setReason(e.target.value as ReturnReason)}
-              className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
-            >
-              {REASONS.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.label}
-                </option>
-              ))}
-            </select>
+        <div className="space-y-2">
+          <div className="text-sm font-medium">How the money comes back</div>
+          <div className="grid grid-cols-5 gap-1.5">
+            {REFUND.map((m) => {
+              const Icon = m.icon;
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  aria-pressed={refundMethod === m.id}
+                  onClick={() => setRefundMethod(m.id)}
+                  className={cn(
+                    'h-10 px-2 rounded-md border text-sm font-medium transition inline-flex items-center justify-center gap-1.5 whitespace-nowrap',
+                    refundMethod === m.id
+                      ? 'border-primary bg-primary/10 text-foreground'
+                      : 'border-border hover:bg-secondary',
+                  )}
+                >
+                  <Icon className="size-4 shrink-0" /> <span className="truncate">{REFUND_LABEL[m.id].label}</span>
+                </button>
+              );
+            })}
           </div>
-          <div>
-            <label className="text-xs font-semibold text-muted-foreground">
-              Refund method
-            </label>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 mt-1">
-              {REFUND.map((m) => {
-                const Icon = m.icon;
-                return (
-                  <button
-                    key={m.id}
-                    title={m.hint}
-                    onClick={() => setRefundMethod(m.id)}
-                    className={cn(
-                      'h-9 px-2 rounded-md border text-xs font-medium transition inline-flex items-center justify-center gap-1',
-                      refundMethod === m.id
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border hover:bg-secondary',
-                    )}
-                  >
-                    <Icon className="size-3.5" /> {m.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          <p className="text-xs text-muted-foreground">{REFUND_LABEL[refundMethod].hint}</p>
         </div>
 
-        <div>
-          <label className="text-xs font-semibold text-muted-foreground">Notes</label>
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            rows={2}
-            placeholder="Internal notes…"
-            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 resize-y"
-          />
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_2fr] gap-4">
+          <FormField label="Reason">
+            {(f) => (
+              <Select {...f} value={reason} onChange={(e) => setReason(e.target.value as ReturnReason)}>
+                {RETURN_REASONS.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.label}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </FormField>
+          <FormField label="Notes">
+            {(f) => (
+              <textarea
+                {...f}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={1}
+                placeholder="Internal notes…"
+                className="w-full min-h-10 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 resize-y"
+              />
+            )}
+          </FormField>
         </div>
       </div>
     </Modal>

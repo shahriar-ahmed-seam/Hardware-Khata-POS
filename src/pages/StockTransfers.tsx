@@ -1,12 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Plus, Search, ArrowRight, Truck, Inbox, Ban, CheckCircle2 } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Plus, Search, ArrowRight, Inbox, Ban, CheckCircle2, ArrowLeftRight } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
 import { Pagination } from '@/components/ui/Pagination';
+import { Segmented } from '@/components/ui/Segmented';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { useUserNameOf } from '@/components/stock/hooks';
+import { StockDocDrawer } from '@/components/stock/StockDocDrawer';
+import { labelFor } from '@/lib/labels';
+import { useDateFormat } from '@/lib/formatDate';
 import { toast } from '@/stores/toast';
 import { useStock, type StockTransfer, type TransferStatus } from '@/stores/stock';
 import { useBranches } from '@/stores/branches';
@@ -16,15 +22,27 @@ import { NumberField } from '@/components/ui/NumberField';
 import { SkeletonTable } from '@/components/ui/Skeleton';
 import { formatBDT, cn } from '@/lib/utils';
 
-const STATUS_VARIANT: Record<TransferStatus, 'default' | 'info' | 'success' | 'destructive'> = {
+const STATUS_VARIANT: Record<TransferStatus, 'default' | 'warning' | 'success' | 'destructive'> = {
   pending: 'default',
-  'in-transit': 'info',
+  'in-transit': 'warning',
   received: 'success',
   cancelled: 'destructive',
 };
 
+type Filter = 'all' | TransferStatus | 'inbound';
+const FILTERS: { value: Filter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'inbound', label: 'Coming here' },
+  { value: 'pending', label: 'Pending' },
+  { value: 'in-transit', label: 'In transit' },
+  { value: 'received', label: 'Received' },
+  { value: 'cancelled', label: 'Cancelled' },
+];
+
 export default function StockTransfers() {
   const nav = useNavigate();
+  const fmt = useDateFormat();
+  const userName = useUserNameOf();
   const transfers = useStock((s) => s.transfers);
   const cancelTransfer = useStock((s) => s.cancelTransfer);
   const loading = useStock((s) => s.loading);
@@ -37,8 +55,9 @@ export default function StockTransfers() {
   }, [hydrate]);
 
   const [q, setQ] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | TransferStatus | 'inbound'>('all');
+  const [statusFilter, setStatusFilter] = useState<Filter>('all');
   const [receiveOpen, setReceiveOpen] = useState<StockTransfer | null>(null);
+  const [viewing, setViewing] = useState<StockTransfer | null>(null);
 
   // Client-side paging: `transfers.list` is header-only and this list grows
   // slowly, so every row is already in memory — we slice the filtered set.
@@ -99,32 +118,44 @@ export default function StockTransfers() {
     [list, current, pageSize],
   );
 
-  // Summed over the FULL filtered set, not just this page — all rows are in
-  // memory, so there is no reason to scope these to the visible slice.
-  const totals = {
-    count: list.length,
-    units: list.reduce((s, t) => s + t.lines.reduce((u, l) => u + l.qty, 0), 0),
-    value: list.reduce((s, t) => s + t.lines.reduce((u, l) => u + l.qty * l.unitCost, 0), 0),
-  };
+  // Owner decision #5: transfers need a second branch. With one branch the page
+  // explains that; old transfers (if any) still show below.
+  const multiBranch = branches.filter((b) => b.active !== false).length > 1;
 
+  // (The count / unit-total stat row was removed: it repeated the pager and
+  // summed pc + bag + kg into one number.)
   return (
     <div>
       <PageHeader
         title="Stock Transfers"
         subtitle="Move stock between branches"
         actions={
-          <Button onClick={() => nav('/stock/transfers/new')}>
-            <Plus className="size-4" /> New Transfer
-          </Button>
+          multiBranch ? (
+            <Button onClick={() => nav('/stock/transfers/new')}>
+              <Plus className="size-4" /> New Transfer
+            </Button>
+          ) : undefined
         }
       />
 
       <div className="p-6 space-y-4">
-        <div className="grid grid-cols-3 gap-3">
-          <Stat label="Transfers" value={String(totals.count)} />
-          <Stat label="Total Units" value={String(totals.units)} />
-          <Stat label="Total Value" value={formatBDT(totals.value)} />
-        </div>
+        {!multiBranch && (
+          <Card>
+            <EmptyState
+              compact
+              icon={ArrowLeftRight}
+              title="This shop has one branch."
+              message="Transfers move stock between branches. Add a branch in Settings → Branches to use transfers."
+              action={
+                <Link to="/settings/branches">
+                  <Button variant="outline">Open branch settings</Button>
+                </Link>
+              }
+            />
+          </Card>
+        )}
+        {(multiBranch || transfers.length > 0) && (
+        <>
 
         <Card className="p-3 flex flex-wrap items-center gap-2">
           <div className="relative flex-1 min-w-[240px]">
@@ -136,24 +167,12 @@ export default function StockTransfers() {
               className="pl-9"
             />
           </div>
-          <div className="flex items-center gap-0.5 p-0.5 bg-secondary rounded-md text-xs">
-            {(['all', 'inbound', 'pending', 'in-transit', 'received', 'cancelled'] as const).map(
-              (s) => (
-                <button
-                  key={s}
-                  onClick={() => setStatusFilter(s)}
-                  className={cn(
-                    'px-3 py-1 rounded font-medium capitalize transition',
-                    statusFilter === s
-                      ? 'bg-card text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  {s.replace('-', ' ')}
-                </button>
-              ),
-            )}
-          </div>
+          <Segmented
+            ariaLabel="Transfer status"
+            value={statusFilter}
+            onChange={setStatusFilter}
+            options={FILTERS}
+          />
         </Card>
 
         <Card className="overflow-hidden">
@@ -169,7 +188,7 @@ export default function StockTransfers() {
                 <th className="text-left px-4 py-2.5 font-medium">Ref</th>
                 <th className="text-left px-2 py-2.5 font-medium">Date</th>
                 <th className="text-left px-2 py-2.5 font-medium">From</th>
-                <th className="text-left px-2 py-2.5 font-medium">→ To</th>
+                <th className="text-left px-2 py-2.5 font-medium">To</th>
                 <th className="text-right px-2 py-2.5 font-medium">Items</th>
                 <th className="text-right px-2 py-2.5 font-medium">Value</th>
                 <th className="text-left px-2 py-2.5 font-medium">By</th>
@@ -180,15 +199,19 @@ export default function StockTransfers() {
             <tbody>
               {pageRows.map((t) => {
                 const value = t.lines.reduce((s, l) => s + l.qty * l.unitCost, 0);
-                const items = t.lines.reduce((s, l) => s + l.qty, 0);
+
                 const canReceive =
                   t.toBranch === currentBranch &&
                   (t.status === 'pending' || t.status === 'in-transit');
                 return (
-                  <tr key={t.id} className="border-t border-border hover:bg-secondary/40 group">
-                    <td className="px-4 py-2.5 font-mono text-xs">{t.refNo}</td>
-                    <td className="px-2 py-2.5 text-xs text-muted-foreground">
-                      {new Date(t.date).toLocaleDateString('en-GB')}
+                  <tr
+                    key={t.id}
+                    onClick={() => setViewing(t)}
+                    className="border-t border-border hover:bg-secondary/40 cursor-pointer"
+                  >
+                    <td className="px-4 py-3 font-mono whitespace-nowrap">{t.refNo}</td>
+                    <td className="px-2 py-3 text-muted-foreground whitespace-nowrap">
+                      {fmt.date(t.date)}
                     </td>
                     <td className="px-2 py-2.5">{t.fromBranch}</td>
                     <td className="px-2 py-2.5">
@@ -197,25 +220,25 @@ export default function StockTransfers() {
                         {t.toBranch}
                       </span>
                     </td>
-                    <td className="px-2 py-2.5 text-right tabular">{items}</td>
+                    {/* Line count — summing qty across pc / bag / kg meant nothing. */}
+                    <td className="px-2 py-2.5 text-right tabular whitespace-nowrap">
+                      {t.lines.length} <span className="text-muted-foreground">items</span>
+                    </td>
                     <td className="px-2 py-2.5 text-right tabular">
                       {formatBDT(value, { withSymbol: false })}
                     </td>
-                    <td className="px-2 py-2.5 text-xs text-muted-foreground">{t.createdBy}</td>
+                    <td className="px-2 py-2.5 text-muted-foreground">{userName(t.createdBy)}</td>
                     <td className="px-2 py-2.5">
-                      <Badge variant={STATUS_VARIANT[t.status]}>{t.status.replace('-', ' ')}</Badge>
+                      <Badge variant={STATUS_VARIANT[t.status]}>{labelFor('transferStatus', t.status)}</Badge>
                     </td>
-                    <td className="px-4 py-2.5">
-                      <div className="flex items-center justify-end gap-0.5 opacity-60 group-hover:opacity-100">
+                    <td className="px-4 py-2" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center justify-end gap-1">
                         {canReceive && (
-                          <Button size="sm" onClick={() => setReceiveOpen(t)}>
-                            <Inbox className="size-3.5" /> Receive
+                          <Button size="md" onClick={() => setReceiveOpen(t)}>
+                            <Inbox className="size-4" /> Receive
                           </Button>
                         )}
-                        {/* The Eye link here went to /stock/transfers/:id, which is
-                            not a route — every click landed on "Not Found". The
-                            row already shows the transfer; Receive shows its lines. */}
-                        {/* Anything not yet received can be called back: the goods
+                        {/* Row click opens the lines (read-only drawer). Anything not yet received can be called back: the goods
                             return to the sending branch. A received transfer is
                             reversed with a new transfer the other way. */}
                         {(t.status === 'pending' || t.status === 'in-transit') && (
@@ -223,7 +246,7 @@ export default function StockTransfers() {
                             onClick={async () => {
                               if (
                                 await confirm({
-                                  title: `Cancel transfer ${t.refNo}?`,
+                                  title: 'Cancel this transfer?',
                                   message: 'The items go back into stock at the sending branch.',
                                   confirmLabel: 'Cancel transfer',
                                   cancelLabel: 'Keep it',
@@ -232,10 +255,9 @@ export default function StockTransfers() {
                               )
                                 cancelTransfer(t.id);
                             }}
-                            className="size-7 grid place-items-center rounded hover:bg-destructive/10 hover:text-destructive"
-                            title="Cancel"
+                            className="h-10 px-3 inline-flex items-center gap-1.5 rounded-md text-sm font-medium text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition focus-ring"
                           >
-                            <Ban className="size-3.5" />
+                            <Ban className="size-4" /> Cancel
                           </button>
                         )}
                       </div>
@@ -263,7 +285,26 @@ export default function StockTransfers() {
           </>
           )}
         </Card>
+        </>
+        )}
       </div>
+
+      {viewing && (
+        <StockDocDrawer
+          open
+          onClose={() => setViewing(null)}
+          title={`${viewing.fromBranch} → ${viewing.toBranch}`}
+          subtitle={viewing.refNo}
+          facts={[
+            { label: 'Date', value: fmt.dateTime(viewing.date) },
+            { label: 'Status', value: labelFor('transferStatus', viewing.status) },
+            { label: 'By', value: userName(viewing.createdBy) },
+            { label: 'Notes', value: viewing.notes },
+            { label: 'Receive note', value: viewing.receiveNote },
+          ]}
+          lines={viewing.lines}
+        />
+      )}
 
       {receiveOpen && (
         <ReceiveTransferModal
@@ -306,7 +347,7 @@ function ReceiveTransferModal({
     );
     setSaving(false);
     if (!ok) return;
-    toast.success(`${transfer.refNo} received`);
+    toast.success('Transfer received');
     onClose();
   };
 
@@ -319,25 +360,26 @@ function ReceiveTransferModal({
     <Modal
       open={open}
       onClose={onClose}
-      width="max-w-3xl"
-      title={`Receive Transfer — ${transfer.refNo}`}
-      subtitle={`From ${transfer.fromBranch} → ${transfer.toBranch}`}
+      width="max-w-2xl"
+      title="Receive stock"
+      subtitle={`${transfer.fromBranch} → ${transfer.toBranch} · ${transfer.refNo}`}
       footer={
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
+          {/* Only when counts differ — the Diff column already shows each line. */}
           <div className="text-sm">
-            <span className="text-muted-foreground">Variance: </span>
-            <span
-              className={cn(
-                'tabular font-semibold',
-                variance === 0 ? 'text-success' : variance < 0 ? 'text-destructive' : 'text-warning',
-              )}
-            >
-              {variance >= 0 ? '+' : ''}
-              {formatBDT(variance)}
-            </span>
-            <span className="text-muted-foreground ml-1">(creates auto-adjustment if not 0)</span>
+            {variance !== 0 && (
+              <>
+                <span className={cn('tabular font-semibold', variance < 0 ? 'text-destructive' : 'text-warning')}>
+                  {variance > 0 ? '+' : '−'}
+                  {formatBDT(Math.abs(variance))}
+                </span>{' '}
+                <span className="text-muted-foreground">
+                  Short or extra items are saved as a stock correction.
+                </span>
+              </>
+            )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <Button variant="outline" onClick={onClose}>
               Cancel
             </Button>
@@ -348,7 +390,13 @@ function ReceiveTransferModal({
         </div>
       }
     >
-      <div className="p-4 space-y-4">
+      <form
+        className="p-4 space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+      >
         <div className="rounded-lg border border-border overflow-hidden">
           <table className="w-full text-sm">
             <thead className="text-xs text-muted-foreground bg-secondary/40">
@@ -360,7 +408,7 @@ function ReceiveTransferModal({
               </tr>
             </thead>
             <tbody>
-              {transfer.lines.map((l) => {
+              {transfer.lines.map((l, i) => {
                 const cur = received[l.productId] ?? l.qty;
                 const diff = cur - l.qty;
                 return (
@@ -373,13 +421,18 @@ function ReceiveTransferModal({
                       {l.qty} {l.unit}
                     </td>
                     <td className="px-2 py-2 text-right">
-                      <NumberField
-                        value={cur}
-                        onChangeNumber={(v) =>
-                          setReceived((p) => ({ ...p, [l.productId]: Math.max(0, v) }))
-                        }
-                        className="h-8 w-24 px-2 text-right text-xs ml-auto"
-                      />
+                      <div className="flex items-center justify-end gap-1.5">
+                        <NumberField
+                          value={cur}
+                          autoFocus={i === 0}
+                          aria-label="Received"
+                          onChangeNumber={(v) =>
+                            setReceived((p) => ({ ...p, [l.productId]: Math.max(0, v) }))
+                          }
+                          className="h-10 w-28 px-2 text-right text-sm"
+                        />
+                        <span className="text-xs text-muted-foreground w-8 text-left">{l.unit}</span>
+                      </div>
                     </td>
                     <td
                       className={cn(
@@ -401,10 +454,11 @@ function ReceiveTransferModal({
           </table>
         </div>
         <div>
-          <label className="text-xs font-semibold text-muted-foreground">
+          <label htmlFor="receive-note" className="block text-sm font-medium mb-1.5">
             Receive note
           </label>
           <textarea
+            id="receive-note"
             value={note}
             onChange={(e) => setNote(e.target.value)}
             rows={2}
@@ -412,18 +466,9 @@ function ReceiveTransferModal({
             className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 resize-y"
           />
         </div>
-      </div>
+        {/* Enter in a count submits. */}
+        <button type="submit" className="hidden" aria-hidden tabIndex={-1} />
+      </form>
     </Modal>
   );
 }
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <Card className="p-4">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="text-lg font-bold mt-0.5 tabular">{value}</div>
-    </Card>
-  );
-}
-
-void Truck;

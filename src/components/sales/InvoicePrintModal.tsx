@@ -1,5 +1,7 @@
-﻿import { useEffect, useState } from 'react';
+﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import { Printer, FileDown } from 'lucide-react';
+import { extraA4Printer, printSheet, sheetToHtml } from '@/lib/printing';
+import { normalizePrinter, useSettings, type PrinterProfile } from '@/stores/settings';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { PrintSheet } from '@/components/ui/PrintSheet';
@@ -97,7 +99,23 @@ interface Props {
 export function InvoicePrintModal({ open, onClose, sale, customer }: Props) {
   const paper = usePaperWidth();
   const [savingPdf, setSavingPdf] = useState(false);
+  const [printing, setPrinting] = useState(false);
   const [fetched, setFetched] = useState<Customer | null>(null);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  // Re-read when Settings → Printers changes.
+  const printers = useSettings((s) => s.printers);
+  const a4Printer = useMemo(() => extraA4Printer(printers.map(normalizePrinter)), [printers]);
+
+  /** Default printer (silent), or `profile` when given; the dialog if none. */
+  const print = async (profile?: PrinterProfile) => {
+    if (printing) return;
+    setPrinting(true);
+    try {
+      await printSheet(sheetRef.current, { kind: 'receipt', profile });
+    } finally {
+      setPrinting(false);
+    }
+  };
 
   const needsCustomer = open && !customer && !!sale?.customerId;
   const wantedId = sale?.customerId ?? '';
@@ -147,7 +165,11 @@ export function InvoicePrintModal({ open, onClose, sale, customer }: Props) {
         primary?: { path: string } | null;
         saved?: { path: string; kind: string }[];
         failed?: { dir: string; error: string }[];
-      }>('invoice.savePdf', { invoiceNo: sale.invoiceNo });
+      }>('invoice.savePdf', {
+        invoiceNo: sale.invoiceNo,
+        // Rendered in a hidden window from this sheet (R75).
+        html: sheetRef.current ? sheetToHtml(sheetRef.current, 210) : undefined,
+      });
 
       if (res.ok === false || !res.saved || res.saved.length === 0) {
         toast.error(res.error ?? 'Could not save the PDF');
@@ -189,8 +211,13 @@ export function InvoicePrintModal({ open, onClose, sale, customer }: Props) {
               <Button variant="outline" onClick={() => void savePdf()} disabled={savingPdf}>
                 <FileDown className="size-4" /> {savingPdf ? 'Saving...' : 'Save as PDF'}
               </Button>
-              <Button onClick={() => window.print()}>
-                <Printer className="size-4" /> Print
+              {a4Printer && (
+                <Button variant="outline" onClick={() => void print(a4Printer)} disabled={printing}>
+                  <Printer className="size-4" /> Print on A4
+                </Button>
+              )}
+              <Button onClick={() => void print()} disabled={printing}>
+                <Printer className="size-4" /> {printing ? 'Printing…' : 'Print'}
               </Button>
             </div>
           </div>
@@ -213,7 +240,7 @@ export function InvoicePrintModal({ open, onClose, sale, customer }: Props) {
 
       {/* Invisible on screen. This is what the Print button actually sends to the
           printer, and what printToPDF captures. */}
-      <PrintSheet paper={paper}>
+      <PrintSheet paper={paper} sheetRef={sheetRef}>
         <Receipt
           invoiceNo={sale.invoiceNo}
           cart={cart}

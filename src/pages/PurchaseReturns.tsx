@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Search, Eye } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Search, ArrowLeft, Undo2 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { reasonLabel, refundLabel } from '@/components/purchases/labels';
+import { formatDate } from '@/lib/formatDate';
 import { Pagination } from '@/components/ui/Pagination';
 import { usePurchases } from '@/stores/purchases';
 import { formatBDT } from '@/lib/utils';
@@ -13,6 +18,7 @@ import { SkeletonTable } from '@/components/ui/Skeleton';
 import { ReturnDetail } from '@/components/returns/ReturnDetail';
 
 export default function PurchaseReturns() {
+  const nav = useNavigate();
   const returns = usePurchases((s) => s.returns);
   const loading = usePurchases((s) => s.loading);
   const hydrate = usePurchases((s) => s.hydrate);
@@ -54,30 +60,44 @@ export default function PurchaseReturns() {
     [list, current, pageSize],
   );
 
-  // Summed over the FULL filtered set, not just this page — all rows are in
-  // memory, so there is no reason to scope this to the visible slice.
-  const total = sum2(list.map((r) => r.total));
+  // Over the full filtered set. A credit adjustment is not cash back — split them.
+  const cashBack = sum2(list.filter((r) => r.refundMethod !== 'CreditAdjust').map((r) => r.total));
+  const offDues = sum2(list.filter((r) => r.refundMethod === 'CreditAdjust').map((r) => r.total));
 
   return (
     <div>
       <PageHeader
         title="Purchase Returns"
-        subtitle={`${list.length} returns · ${formatBDT(total)} refunded`}
+        actions={
+          <>
+            <div className="relative w-72">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+              <Input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search ref / bill / supplier…"
+                className="pl-9"
+                aria-label="Search returns"
+              />
+            </div>
+            <Button variant="outline" onClick={() => nav('/purchases')}>
+              <ArrowLeft className="size-4" /> Back to purchases
+            </Button>
+          </>
+        }
       />
 
       <div className="p-6 space-y-4">
-        <Card className="p-3">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-            <Input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search ref / original / supplier…"
-              className="pl-9"
-            />
+        {list.length > 0 && (
+          <div className="text-sm text-muted-foreground flex flex-wrap gap-x-4">
+            <span>
+              <span className="tabular text-foreground font-medium">{formatBDT(cashBack)}</span> <span>cash back</span>
+            </span>
+            <span>
+              <span className="tabular text-foreground font-medium">{formatBDT(offDues)}</span> <span>taken off dues</span>
+            </span>
           </div>
-        </Card>
-
+        )}
         <Card className="overflow-hidden">
           {backend && loading && returns.length === 0 ? (
             <div className="p-4">
@@ -90,45 +110,47 @@ export default function PurchaseReturns() {
               <tr>
                 <th className="text-left px-4 py-2.5 font-medium">Date</th>
                 <th className="text-left px-2 py-2.5 font-medium">Return #</th>
-                <th className="text-left px-2 py-2.5 font-medium">Original</th>
+                <th className="text-left px-2 py-2.5 font-medium">From bill</th>
                 <th className="text-left px-2 py-2.5 font-medium">Supplier</th>
                 <th className="text-left px-2 py-2.5 font-medium">Reason</th>
                 <th className="text-left px-2 py-2.5 font-medium">Refund via</th>
                 <th className="text-right px-2 py-2.5 font-medium">Refund</th>
-                <th className="px-4 py-2.5 w-12"></th>
               </tr>
             </thead>
             <tbody>
               {pageRows.map((r) => (
-                <tr key={r.id} className="border-t border-border hover:bg-secondary/40">
-                  <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                    {new Date(r.date).toLocaleString('en-GB')}
+                <tr
+                  key={r.id}
+                  onClick={() => setViewing(r.id)}
+                  className="border-t border-border hover:bg-secondary/40 cursor-pointer"
+                >
+                  <td className="px-4 py-3 whitespace-nowrap">{formatDate(r.date)}</td>
+                  <td className="px-2 py-3 font-mono whitespace-nowrap">{r.refNo}</td>
+                  <td className="px-2 py-3 font-mono whitespace-nowrap">{r.purchaseRefNo}</td>
+                  <td className="px-2 py-3 font-medium">{r.supplierName}</td>
+                  <td className="px-2 py-3">{r.reason ? reasonLabel(r.reason) : '—'}</td>
+                  <td className="px-2 py-3">
+                    <Badge variant="default">{refundLabel(r.refundMethod)}</Badge>
                   </td>
-                  <td className="px-2 py-2.5 font-mono text-xs">{r.refNo}</td>
-                  <td className="px-2 py-2.5 font-mono text-xs">{r.purchaseRefNo}</td>
-                  <td className="px-2 py-2.5 font-medium">{r.supplierName}</td>
-                  <td className="px-2 py-2.5 capitalize text-xs">{r.reason ?? '—'}</td>
-                  <td className="px-2 py-2.5 text-xs">
-                    <Badge variant="default">{r.refundMethod}</Badge>
-                  </td>
-                  <td className="px-2 py-2.5 text-right tabular font-semibold text-warning">
+                  <td className="px-2 py-3 text-right tabular whitespace-nowrap font-semibold">
                     {formatBDT(r.total)}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <button
-                      className="size-7 grid place-items-center rounded hover:bg-secondary"
-                      title="View"
-                      onClick={() => setViewing(r.id)}
-                    >
-                      <Eye className="size-3.5" />
-                    </button>
                   </td>
                 </tr>
               ))}
               {list.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-12 text-center text-muted-foreground text-sm">
-                    No purchase returns recorded.
+                  <td colSpan={7}>
+                    {returns.length > 0 ? (
+                      <div className="px-4 py-12 text-center text-muted-foreground text-sm">No returns match.</div>
+                    ) : (
+                      <EmptyState
+                        compact
+                        icon={Undo2}
+                        title="No purchase returns yet."
+                        message="To send goods back, open the purchase and choose Create return."
+                        action={<Button onClick={() => nav('/purchases')}>Go to purchases</Button>}
+                      />
+                    )}
                   </td>
                 </tr>
               )}

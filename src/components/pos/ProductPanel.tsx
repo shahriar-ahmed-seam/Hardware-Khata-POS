@@ -1,8 +1,11 @@
 import { useEffect, useMemo } from 'react';
-import { Search, ScanBarcode, LayoutGrid, List, SlidersHorizontal } from 'lucide-react';
+import { Search, LayoutGrid, List, SlidersHorizontal, CornerDownLeft } from 'lucide-react';
 import { Input } from '@/components/ui/Input';
-import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
+import { Select } from '@/components/ui/Select';
+import { ToggleRow } from '@/components/ui/ToggleRow';
+import { useSettings } from '@/stores/settings';
+import { keyLabel, matchesKey, usePosKeys } from './shortcuts';
 import { Popover } from '@/components/ui/Popover';
 import { ProductImage } from '@/components/products/ProductImage';
 import { cn, formatBDT } from '@/lib/utils';
@@ -31,6 +34,10 @@ interface Props {
   /** Called when user presses Enter while focused in search and there's a single best match. */
   onSubmitSearch: () => void;
   searchInputRef: React.RefObject<HTMLInputElement>;
+  /** What Enter in the search box will add, shown under it. */
+  enterAdds?: { id: string; name: string; price: number } | null;
+  /** Settings → POS big-button mode: larger product tiles. */
+  big?: boolean;
 }
 
 export function ProductPanel({
@@ -43,15 +50,17 @@ export function ProductPanel({
   onAdd,
   onSubmitSearch,
   searchInputRef,
+  enterAdds = null,
+  big = false,
 }: Props) {
-  const {
-    productView,
-    setProductView,
-    showOutOfStock,
-    setShowOutOfStock,
-    allowNegativeStock,
-    setAllowNegativeStock,
-  } = usePOS();
+  const { productView, setProductView, showOutOfStock, setShowOutOfStock } = usePOS();
+  // Shop policy from Settings → POS (R81), no longer a per-device switch in the
+  // filter popover. It lets a finished item into the cart (drafts, quotations);
+  // a SALE is still checked against stock when Pay is pressed.
+  const allowNegativeStock = useSettings((s) => !!s.pos.allowNegativeStockDefault);
+  const keys = usePosKeys();
+  const searchKey = keys.search;
+  const helpKey = keys.showHelp;
 
   // ----- Data source: backend catalog only (seed fallbacks removed) -----
   const productsQuery = useProducts(useDefaultBranchId());
@@ -77,8 +86,8 @@ export function ProductPanel({
       const tag = (active?.tagName ?? '').toLowerCase();
       const isEditable =
         ['input', 'textarea', 'select'].includes(tag) || active?.isContentEditable === true;
-      // F2 always focuses search
-      if (e.key === 'F2') {
+      // The search key (F2 by default) always focuses search.
+      if (matchesKey(e, searchKey)) {
         e.preventDefault();
         searchInputRef.current?.focus();
         searchInputRef.current?.select();
@@ -88,6 +97,8 @@ export function ProductPanel({
       // overlay. Stealing focus into this search box would yank the caret behind
       // the modal and silently type into the product search, so bail out.
       if (isOverlayOpen(active)) return;
+      // The help key ("?") belongs to POS, not to the search box.
+      if (!isEditable && matchesKey(e, helpKey)) return;
       // If user types a printable char and nothing else is focused, focus search.
       if (!isEditable && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
         searchInputRef.current?.focus();
@@ -95,7 +106,7 @@ export function ProductPanel({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [searchInputRef]);
+  }, [searchInputRef, searchKey, helpKey]);
 
   const list = useMemo(() => {
     return products.filter((p) => {
@@ -118,25 +129,15 @@ export function ProductPanel({
 
   // Anything that is not the default state counts as an active filter, so the
   // Filters button can advertise that results are being narrowed.
-  const filtersActive = activeBrand !== 'all' || !showOutOfStock || allowNegativeStock;
+  const filtersActive = activeBrand !== 'all' || !showOutOfStock;
+  const narrowed = list.length !== products.length;
 
   return (
     <div className="flex flex-col w-full h-full min-h-0 bg-background">
-      {/* Search row — Scan button on the left, smaller search on the right */}
-      <div className="p-2.5 flex items-center gap-2">
-        <Button
-          variant="outline"
-          size="md"
-          title="Focus and clear for next scan"
-          onClick={() => {
-            setSearch('');
-            searchInputRef.current?.focus();
-          }}
-        >
-          <ScanBarcode className="size-4" /> Scan
-        </Button>
-        <div className="relative flex-1 min-w-0">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+      {/* Search — the scanner's target, so it is the biggest field here. */}
+      <div className="p-2.5 pb-2">
+        <div className="relative min-w-0">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-5 text-muted-foreground" />
           <Input
             ref={searchInputRef as any}
             value={search}
@@ -147,10 +148,20 @@ export function ProductPanel({
                 onSubmitSearch();
               }
             }}
-            placeholder="Name / SKU / barcode  (F2)"
-            className="pl-9 pr-2"
+            placeholder={`Scan, or type a name or code (${keyLabel(searchKey)})`}
+            aria-label="Search products"
+            className="h-11 pl-10 pr-2 text-sm"
           />
         </div>
+        {/* What Enter will add, so a partial match is never a surprise. */}
+        {search.trim() && enterAdds && (
+          <div className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground min-w-0">
+            <CornerDownLeft className="size-3.5 shrink-0" />
+            <span className="shrink-0">Enter adds:</span>
+            <span className="font-medium text-foreground truncate">{enterAdds.name}</span>
+            <span className="tabular shrink-0">{formatBDT(enterAdds.price, { withSymbol: false })}</span>
+          </div>
+        )}
       </div>
 
       {/* View / filters row. Brand + stock switches live in the Filters popover
@@ -161,7 +172,7 @@ export function ProductPanel({
           <button
             onClick={() => setProductView('grid')}
             className={cn(
-              'h-8 px-2.5 rounded inline-flex items-center gap-1.5 transition',
+              'h-9 px-2.5 rounded inline-flex items-center gap-1.5 transition',
               productView === 'grid' ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground',
             )}
             title="Grid view"
@@ -172,7 +183,7 @@ export function ProductPanel({
           <button
             onClick={() => setProductView('list')}
             className={cn(
-              'h-8 px-2.5 rounded inline-flex items-center gap-1.5 transition',
+              'h-9 px-2.5 rounded inline-flex items-center gap-1.5 transition',
               productView === 'list' ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground',
             )}
             title="List view"
@@ -188,14 +199,15 @@ export function ProductPanel({
           setActiveBrand={setActiveBrand}
           showOutOfStock={showOutOfStock}
           setShowOutOfStock={setShowOutOfStock}
-          allowNegativeStock={allowNegativeStock}
-          setAllowNegativeStock={setAllowNegativeStock}
           active={filtersActive}
         />
 
-        <div className="ml-auto text-xs text-muted-foreground tabular whitespace-nowrap">
-          {list.length} of {products.length}
-        </div>
+        {/* The count only when something narrows the list. */}
+        {narrowed && !loading && (
+          <div className="ml-auto text-xs text-muted-foreground whitespace-nowrap">
+            <span className="tabular">{list.length}</span> <span>shown</span>
+          </div>
+        )}
       </div>
 
       {/* Categories — they wrap, up to two rows, then scroll. They used to be
@@ -248,7 +260,7 @@ export function ProductPanel({
               without one, the category emoji sits on a soft tile. */}
           <div
             className="grid gap-2"
-            style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(9.5rem, 1fr))' }}
+            style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${big ? '12rem' : '9.5rem'}, 1fr))` }}
           >
             {visible.map((p) => {
               const oos = p.stock <= 0;
@@ -266,12 +278,18 @@ export function ProductPanel({
                   title={p.name}
                   className={cn(
                     'group flex flex-col items-stretch text-left rounded-lg border border-border bg-card transition overflow-hidden focus-ring',
+                    !!search.trim() && enterAdds?.id === p.id && 'ring-2 ring-primary border-primary',
                     blocked
                       ? 'opacity-50 grayscale cursor-not-allowed'
                       : 'hover:border-primary hover:ring-1 hover:ring-primary/40',
                   )}
                 >
-                  <div className="relative h-[4.5rem] shrink-0 bg-secondary/60 grid place-items-center overflow-hidden">
+                  <div
+                    className={cn(
+                      'relative shrink-0 bg-secondary/60 grid place-items-center overflow-hidden',
+                      big ? 'h-24' : 'h-[4.5rem]',
+                    )}
+                  >
                     {photo ? (
                       <img
                         src={photo}
@@ -279,7 +297,7 @@ export function ProductPanel({
                         className="absolute inset-0 size-full object-cover transition-transform duration-200 group-hover:scale-105"
                       />
                     ) : (
-                      <ProductImage categoryId={p.categoryId} size={44} rounded="lg" />
+                      <ProductImage categoryId={p.categoryId} size={big ? 56 : 44} rounded="lg" />
                     )}
                   </div>
                   <div className="flex-1 flex flex-col p-2 gap-0.5 min-w-0">
@@ -296,7 +314,7 @@ export function ProductPanel({
                       )}
                     </div>
                     <div className="mt-auto pt-1 flex items-center justify-between gap-1.5 min-w-0">
-                      <span className="text-base font-bold tabular leading-tight truncate">
+                      <span className={cn('font-bold tabular leading-tight truncate', big ? 'text-lg' : 'text-base')}>
                         {formatBDT(p.price, { withSymbol: false })}
                       </span>
                       {oos ? (
@@ -349,6 +367,7 @@ export function ProductPanel({
                       }}
                       className={cn(
                         'border-t border-border transition',
+                        !!search.trim() && enterAdds?.id === p.id && 'bg-primary/10',
                         blocked
                           ? 'opacity-50 cursor-not-allowed'
                           : 'cursor-pointer hover:bg-secondary/40',
@@ -380,11 +399,6 @@ export function ProductPanel({
                         <Badge variant={oos ? 'destructive' : low ? 'warning' : 'success'}>
                           {p.stock} {p.unit}
                         </Badge>
-                        {oos && (
-                          <div className="mt-1 text-xs text-destructive whitespace-nowrap">
-                            No stock
-                          </div>
-                        )}
                       </td>
                     </tr>
                   );
@@ -433,8 +447,6 @@ function FiltersPopover({
   setActiveBrand,
   showOutOfStock,
   setShowOutOfStock,
-  allowNegativeStock,
-  setAllowNegativeStock,
   active,
 }: {
   brands: { id: string; name: string }[];
@@ -442,8 +454,6 @@ function FiltersPopover({
   setActiveBrand: (id: string | 'all') => void;
   showOutOfStock: boolean;
   setShowOutOfStock: (v: boolean) => void;
-  allowNegativeStock: boolean;
-  setAllowNegativeStock: (v: boolean) => void;
   active: boolean;
 }) {
   return (
@@ -470,94 +480,27 @@ function FiltersPopover({
     >
       {() => (
         <div className="p-3 space-y-3">
-          <div>
-            <div className="text-xs font-medium text-muted-foreground mb-1">Brand</div>
-            <select
-              value={activeBrand}
-              onChange={(e) => setActiveBrand(e.target.value)}
-              className="w-full h-10 px-2 text-xs rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
-            >
+          <label className="block space-y-1.5">
+            <span className="block text-sm font-medium">Brand</span>
+            <Select value={activeBrand} onChange={(e) => setActiveBrand(e.target.value)}>
               <option value="all">All Brands</option>
               {brands.map((b) => (
                 <option key={b.id} value={b.id}>
                   {b.name}
                 </option>
               ))}
-            </select>
-          </div>
+            </Select>
+          </label>
 
           <ToggleRow
             checked={showOutOfStock}
-            onChange={() => setShowOutOfStock(!showOutOfStock)}
+            onChange={setShowOutOfStock}
             label="Show finished items"
-            hint="Keeps products with no stock left in the list."
-          />
-
-          <ToggleRow
-            checked={allowNegativeStock}
-            onChange={() => setAllowNegativeStock(!allowNegativeStock)}
-            label="Allow selling without stock"
-            hint="Lets you sell items the system shows as finished."
-            danger
+            desc="Keeps products with no stock left in the list."
           />
         </div>
       )}
     </Popover>
-  );
-}
-
-function ToggleRow({
-  checked,
-  onChange,
-  label,
-  hint,
-  danger,
-}: {
-  checked: boolean;
-  onChange: () => void;
-  label: string;
-  hint: string;
-  danger?: boolean;
-}) {
-  return (
-    <button
-      onClick={onChange}
-      role="switch"
-      aria-checked={checked}
-      className={cn(
-        'w-full text-left flex items-start gap-2.5 rounded-lg border p-2.5 transition',
-        checked && danger
-          ? 'border-destructive/40 bg-destructive/10'
-          : checked
-            ? 'border-primary/40 bg-primary/5'
-            : 'border-border hover:bg-secondary',
-      )}
-    >
-      <span
-        className={cn(
-          'mt-0.5 shrink-0 w-9 h-5 rounded-full transition relative',
-          checked ? (danger ? 'bg-destructive' : 'bg-primary') : 'bg-muted',
-        )}
-      >
-        <span
-          className={cn(
-            'absolute top-0.5 size-4 rounded-full bg-background shadow transition-all',
-            checked ? 'left-[1.125rem]' : 'left-0.5',
-          )}
-        />
-      </span>
-      <span className="min-w-0">
-        <span
-          className={cn(
-            'block text-xs font-medium',
-            checked && danger ? 'text-destructive' : 'text-foreground',
-          )}
-        >
-          {label}
-        </span>
-        <span className="block text-xs text-muted-foreground leading-snug mt-0.5">{hint}</span>
-      </span>
-    </button>
   );
 }
 
@@ -576,7 +519,7 @@ function CatChip({
     <button
       onClick={onClick}
       className={cn(
-        'inline-flex items-center gap-1.5 h-8 px-3 rounded-full text-sm font-medium whitespace-nowrap transition border',
+        'inline-flex items-center gap-1.5 h-9 px-3 rounded-full text-sm font-medium whitespace-nowrap transition border',
         active
           ? 'bg-primary text-primary-foreground border-primary'
           : 'bg-secondary text-secondary-foreground border-transparent hover:bg-secondary/70',

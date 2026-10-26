@@ -194,6 +194,13 @@ export const CHANNEL_PERMISSIONS: Record<string, string> = {
   // opening an already-saved PDF are reads and stay open.
   'invoice.savePdf': 'sales.create',
 
+  // ----- printers (electron/printing.ts) -----
+  // Listing the PC's installed printers is part of setting a printer up, so it
+  // takes the same right as saving the profile (Settings → Printers writes
+  // through `settings.set`). PRINTING itself is any signed-in user — see
+  // SIGNED_IN_CHANNELS below.
+  'printers.list': 'settings.business',
+
   // ----- settings: users + roles -----
   'users.create': 'settings.users',
   'users.update': 'settings.users',
@@ -202,3 +209,21 @@ export const CHANNEL_PERMISSIONS: Record<string, string> = {
   'roles.update': 'settings.roles',
   'roles.delete': 'settings.roles',
 };
+
+/**
+ * Channels any SIGNED-IN, UNLOCKED user may call, whatever their role. They are
+ * not in CHANNEL_PERMISSIONS (that map would make them need a specific right);
+ * electron/ipc.ts refuses them with no session or a locked screen.
+ *
+ * Printing a receipt is part of every sale, so a cashier must be able to do it.
+ * `printers.rawEscpos` is further limited in ipc.ts: without 'settings.business'
+ * it may only reach a network printer saved in Settings → Printers, so it is
+ * not a way to send bytes to any machine on the shop's network.
+ */
+export const SIGNED_IN_CHANNELS: ReadonlySet<string> = new Set([
+  'printers.printHtml',
+  'printers.rawEscpos',
+]);
+
+/** The right that lets a user point raw printing at an unsaved address (test print). */
+export const PRINTER_SETUP_PERMISSION = 'settings.business';

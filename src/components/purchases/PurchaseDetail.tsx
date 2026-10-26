@@ -22,12 +22,25 @@ import { useCan } from '@/hooks/useCan';
 import { api } from '@/lib/api';
 import { toSupplier, type BackendSupplier } from '@/hooks/contactAdapter';
 import type { Supplier } from '@/types/domain';
-import { cn, formatBDT } from '@/lib/utils';
+import { cn, formatBDT, formatNumber } from '@/lib/utils';
+import { labelFor } from '@/lib/labels';
+import { useDateFormat } from '@/lib/formatDate';
+import { useIsMultiBranch } from '@/components/stock/hooks';
+import { PURCHASE_STATUS_LABEL, PURCHASE_STATUS_VARIANT, payTermLabel } from './labels';
+import { PayBillModal } from './PayBillModal';
 import { currentUserName } from '@/lib/actor';
 import { PhoneAction, isCallable } from '@/components/ui/PhoneAction';
 import { AddPurchasePaymentModal } from './AddPurchasePaymentModal';
 import { CreatePurchaseReturnModal } from './CreatePurchaseReturnModal';
 import { PurchasePrintModal } from './PurchasePrintModal';
+
+const AUDIT_LABEL: Record<string, string> = {
+  created: 'Created',
+  edited: 'Corrected',
+  cancelled: 'Cancelled',
+  paid: 'Payment added',
+  returned: 'Goods returned',
+};
 
 interface Props {
   open: boolean;
@@ -46,6 +59,9 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
   const [payOpen, setPayOpen] = useState(false);
   const [returnOpen, setReturnOpen] = useState(false);
   const [printOpen, setPrintOpen] = useState(false);
+  const [paySupplierOpen, setPaySupplierOpen] = useState(false);
+  const fmt = useDateFormat();
+  const multiBranch = useIsMultiBranch();
 
   /**
    * SUPPLIER PHONE NUMBER.
@@ -88,16 +104,8 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
   }
 
   const supplierPhone = isCallable(supplier?.phone) ? supplier.phone : null;
-
-  const StatusPill = () => {
-    if (purchase.status === 'cancelled') return <Badge variant="destructive">Cancelled</Badge>;
-    if (purchase.status === 'ordered') return <Badge variant="info">Ordered</Badge>;
-    if (purchase.status === 'in-transit') return <Badge variant="info">In Transit</Badge>;
-    return <Badge variant="success">Received</Badge>;
-  };
-  const PaymentPill = () => {
-    return <SettlementBadge paid={purchase.paid} due={purchase.due} credited={purchase.credited} />;
-  };
+  const returns = purchase.returnIds?.length ?? 0;
+  const isOpen = purchase.status === 'ordered' || purchase.status === 'in-transit';
 
   return (
     <>
@@ -105,47 +113,71 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
         open={open}
         onClose={onClose}
         width="max-w-3xl"
-        title={purchase.refNo}
-        subtitle={`${purchase.supplierName} · ${new Date(purchase.date).toLocaleString('en-GB')}`}
+        title={purchase.supplierName || 'Purchase'}
+        subtitle={`${purchase.refNo} · ${fmt.dateTime(purchase.date)}`}
       >
         <div className="flex-1 overflow-auto">
           <div className="p-5 space-y-5">
-            <div className="flex flex-wrap items-center gap-2">
-              <StatusPill />
-              <PaymentPill />
-              <Badge variant="default">{purchase.branch}</Badge>
-              <Badge variant="default">By {purchase.user}</Badge>
-              {purchase.payTerms && <Badge variant="info">{purchase.payTerms}</Badge>}
-              {purchase.returnIds && purchase.returnIds.length > 0 && (
-                <Badge variant="warning">{purchase.returnIds.length} return(s)</Badge>
-              )}
-              {/* An "Open full page" link pointed at /purchases/:id, which is not
-                  a route (App.tsx only has /purchases/:id/edit), so it landed on
-                  "Not Found". This drawer is the full purchase view. */}
+            {/* Two badges; the rest is one plain line. */}
+            <div className="space-y-1.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant={PURCHASE_STATUS_VARIANT[purchase.status]}>
+                  {PURCHASE_STATUS_LABEL[purchase.status]}
+                </Badge>
+                {purchase.status !== 'cancelled' && (
+                  <SettlementBadge paid={purchase.paid} due={purchase.due} credited={purchase.credited} />
+                )}
+                {returns > 0 && (
+                  <Badge variant="warning">
+                    <span>Returns</span> <span className="tabular">{returns}</span>
+                  </Badge>
+                )}
+              </div>
+              <div className="text-sm text-muted-foreground flex flex-wrap gap-x-1.5">
+                {multiBranch && (
+                  <>
+                    <span>{purchase.branch}</span>
+                    <span aria-hidden>·</span>
+                  </>
+                )}
+                <span>Entered by</span> <span>{purchase.user}</span>
+                {purchase.payTerms && (
+                  <>
+                    <span aria-hidden>·</span>
+                    <span>Pay term</span> <span>{payTermLabel(purchase.payTerms)}</span>
+                  </>
+                )}
+              </div>
             </div>
 
-            {/* SUPPLIER — with a phone number you can actually ring, which matters
-                most on a purchase that is still part-paid. */}
+            {/* SUPPLIER — with a phone number you can ring. */}
             <div className="rounded-lg border border-border p-3 bg-card flex flex-wrap items-center gap-3">
               <div className="flex-1 min-w-0">
-                <div className="font-semibold truncate">{purchase.supplierName || '—'}</div>
                 {purchase.supplierAddress && (
-                  <div className="text-xs text-muted-foreground">{purchase.supplierAddress}</div>
+                  <div className="text-sm text-muted-foreground">{purchase.supplierAddress}</div>
                 )}
                 <div className="mt-0.5">
                   {supplierPhone ? (
                     <span className="text-sm tabular font-semibold">{supplierPhone}</span>
                   ) : (
-                    <span className="text-xs text-muted-foreground">No phone on file</span>
+                    <span className="text-sm text-muted-foreground">No phone on file</span>
                   )}
                 </div>
+                {supplier && supplier.due > 0 && (
+                  <div className="text-sm mt-1">
+                    <span className="text-muted-foreground">Owed on all bills:</span>{' '}
+                    <span className="tabular font-medium">{formatBDT(supplier.due)}</span>{' '}
+                    <button
+                      type="button"
+                      onClick={() => setPaySupplierOpen(true)}
+                      className="text-primary hover:underline focus-ring rounded ml-1"
+                    >
+                      Pay supplier
+                    </button>
+                  </div>
+                )}
               </div>
-              {supplierPhone && (
-                <PhoneAction phone={supplierPhone} label={purchase.supplierName} />
-              )}
-              {supplier && supplier.due > 0 && (
-                <Badge variant="destructive">Total payable {formatBDT(supplier.due)}</Badge>
-              )}
+              {supplierPhone && <PhoneAction phone={supplierPhone} label={purchase.supplierName} />}
             </div>
 
             {/* Lines */}
@@ -153,8 +185,7 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
               <table className="w-full text-sm">
                 <thead className="text-xs text-muted-foreground bg-secondary/50">
                   <tr>
-                    <th className="text-left px-3 py-2 font-medium w-10">#</th>
-                    <th className="text-left px-2 py-2 font-medium">Item</th>
+                    <th className="text-left px-3 py-2 font-medium">Item</th>
                     <th className="text-right px-2 py-2 font-medium">Qty</th>
                     <th className="text-right px-2 py-2 font-medium">Cost</th>
                     <th className="text-right px-3 py-2 font-medium">Subtotal</th>
@@ -163,18 +194,17 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
                 <tbody>
                   {purchase.lines.map((l, i) => (
                     <tr key={i} className="border-t border-border">
-                      <td className="px-3 py-2 text-xs text-muted-foreground">{i + 1}</td>
-                      <td className="px-2 py-2">
+                      <td className="px-3 py-2">
                         <div className="font-medium">{l.name}</div>
                         <div className="text-xs text-muted-foreground font-mono">{l.sku}</div>
                         {l.imei && (
-                          <div className="text-xs text-muted-foreground font-mono">
-                            S/N: {l.imei}
+                          <div className="text-xs text-muted-foreground">
+                            <span>Serial</span>: <span className="font-mono">{l.imei}</span>
                           </div>
                         )}
                       </td>
-                      <td className="px-2 py-2 text-right tabular">
-                        {l.qty} {l.unit}
+                      <td className="px-2 py-2 text-right tabular whitespace-nowrap">
+                        {formatNumber(l.qty)} {l.unit}
                       </td>
                       <td className="px-2 py-2 text-right tabular">
                         {formatBDT(l.unitCostBeforeTax, { withSymbol: false })}
@@ -198,9 +228,7 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
                 {purchase.orderDiscount > 0 && (
                   <Row label="Order discount" value={`− ${formatBDT(purchase.orderDiscount)}`} tone="success" />
                 )}
-                {purchase.tax > 0 && (
-                  <Row label={`Purchase tax (${purchase.taxPct}%)`} value={formatBDT(purchase.tax)} />
-                )}
+                {purchase.tax > 0 && <Row label="Purchase tax" value={formatBDT(purchase.tax)} />}
                 {purchase.shipping > 0 && <Row label="Shipping" value={formatBDT(purchase.shipping)} />}
                 {purchase.other > 0 && <Row label="Other" value={formatBDT(purchase.other)} />}
                 <div className="border-t border-border pt-2 flex items-center justify-between">
@@ -212,16 +240,15 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
                 <Row label="Paid" value={formatBDT(purchase.paid)} tone={purchase.due === 0 ? 'success' : undefined} />
                 <Row label="Due" value={formatBDT(purchase.due)} tone={purchase.due > 0 ? 'destructive' : undefined} />
                 <div className="border-t border-border pt-2">
-                  <div className="text-xs font-semibold text-muted-foreground mb-1">
-                    Payments
-                  </div>
+                  <div className="text-sm font-medium mb-1">Payments</div>
                   {purchase.payments.length === 0 ? (
-                    <div className="text-xs text-muted-foreground">No payments yet</div>
+                    <div className="text-sm text-muted-foreground">No payments yet</div>
                   ) : (
                     purchase.payments.map((p) => (
-                      <div key={p.id} className="flex items-center justify-between text-xs">
-                        <span>
-                          {p.method}
+                      <div key={p.id} className="flex items-center justify-between gap-2 text-sm py-0.5">
+                        <span className="min-w-0">
+                          <span className="text-muted-foreground">{fmt.date(p.paidAt)}</span> ·{' '}
+                          <span>{labelFor('paymentMethod', p.method)}</span>
                           {p.reference ? <span className="text-muted-foreground"> · {p.reference}</span> : null}
                         </span>
                         <span className="tabular">{formatBDT(p.amount)}</span>
@@ -234,109 +261,76 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
 
             {purchase.notes && (
               <div className="rounded-lg border border-border p-3 bg-card text-sm">
-                <div className="text-xs font-semibold text-muted-foreground mb-1">Notes</div>
+                <div className="text-sm font-medium mb-1">Notes</div>
                 <div className="whitespace-pre-wrap">{purchase.notes}</div>
               </div>
             )}
 
-            {/* Audit log */}
-            <div className="rounded-lg border border-border bg-card">
-              <div className="px-3 py-2 border-b border-border bg-secondary/40 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-                <History className="size-3" /> Audit log
-              </div>
-              <div className="divide-y divide-border">
-                {purchase.audit.map((a) => (
-                  <div key={a.id} className="flex items-center gap-2 px-3 py-1.5 text-sm">
-                    <span
-                      className={cn(
-                        'size-1.5 rounded-full inline-block',
-                        a.action === 'created' && 'bg-primary',
-                        a.action === 'paid' && 'bg-success',
-                        a.action === 'cancelled' && 'bg-destructive',
-                        a.action === 'returned' && 'bg-warning',
-                        a.action === 'edited' && 'bg-muted-foreground',
-                      )}
-                    />
-                    <span className="capitalize">{a.action}</span>
-                    {a.note && <span className="text-muted-foreground">— {a.note}</span>}
-                    <span className="ml-auto text-xs text-muted-foreground tabular">
-                      {new Date(a.at).toLocaleString('en-GB')} · {a.by}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
+            {/* History, folded away. */}
+            {purchase.audit.length > 0 && (
+              <details className="rounded-lg border border-border bg-card group">
+                <summary className="px-3 py-2.5 cursor-pointer flex items-center gap-2 text-sm font-medium select-none">
+                  <History className="size-4 text-muted-foreground" />
+                  <span>History</span>{' '}
+                  <span className="tabular text-muted-foreground">({purchase.audit.length})</span>
+                </summary>
+                <div className="divide-y divide-border border-t border-border">
+                  {purchase.audit.map((a) => (
+                    <div key={a.id} className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
+                      <span
+                        className={cn(
+                          'size-2 rounded-full inline-block',
+                          a.action === 'created' && 'bg-primary',
+                          a.action === 'paid' && 'bg-success',
+                          a.action === 'cancelled' && 'bg-destructive',
+                          a.action === 'returned' && 'bg-warning',
+                          a.action === 'edited' && 'bg-muted-foreground',
+                        )}
+                      />
+                      <span>{AUDIT_LABEL[a.action] ?? a.action}</span>
+                      {a.note && <span className="text-muted-foreground">— {a.note}</span>}
+                      <span className="ml-auto text-muted-foreground tabular">
+                        {fmt.dateTime(a.at)} · {a.by}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
           </div>
         </div>
 
-        {/* Footer actions */}
+        {/* Footer: destructive far left behind a divider, everyday actions, Pay on the right. */}
         <div className="border-t border-border bg-card px-4 py-3 flex flex-wrap items-center gap-2">
-          {/* Both of these had NO onClick. One button now, printing the goods
-              received note. */}
-          <Button variant="outline" size="sm" onClick={() => setPrintOpen(true)}>
-            <Printer className="size-3.5" /> Print
-          </Button>
-          {purchase.status !== 'cancelled' && purchase.due > 0 && (
-            <Button size="sm" onClick={() => setPayOpen(true)}>
-              <Banknote className="size-3.5" /> Add Payment
-            </Button>
-          )}
-          {purchase.status === 'received' && (
-            <Button variant="outline" size="sm" onClick={() => setReturnOpen(true)}>
-              <Undo2 className="size-3.5" /> Create Return
-            </Button>
-          )}
-          {/* An ordered bill's goods arriving: they go into stock, as entered. */}
-          {(purchase.status === 'ordered' || purchase.status === 'in-transit') && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={async () => {
-                const ok = await confirm({
-                  title: `Mark ${purchase.refNo} as received?`,
-                  message: 'Its items go into stock now, as entered on the bill.',
-                  confirmLabel: 'Goods received',
-                });
-                if (ok) await receivePurchase(purchase.id);
-              }}
-            >
-              <PackageCheck className="size-3.5" /> Mark received
-            </Button>
-          )}
-          {/* The admin's correction (purchases.update): the bill keeps its number
-              and its payments; stock and buying prices are re-applied. */}
-          {canEdit && purchase.status !== 'cancelled' && (
-            <Link to={`/purchases/${purchase.id}/edit`} onClick={onClose}>
-              <Button variant="outline" size="sm">
-                <Pencil className="size-3.5" /> Edit
-              </Button>
-            </Link>
-          )}
-          <div className="flex-1" />
           {canEdit && (purchase.status === 'ordered' || purchase.status === 'cancelled') && (
             <Button
-              variant="destructive"
-              size="sm"
+              variant="ghost"
+              className="text-destructive hover:bg-destructive/10"
               onClick={async () => {
                 if (
-                  (await confirm({ title: `Delete ${purchase.refNo}?`, variant: 'destructive' })) &&
+                  (await confirm({
+                    title: 'Delete this purchase?',
+                    message: purchase.refNo,
+                    confirmLabel: 'Delete',
+                    variant: 'destructive',
+                  })) &&
                   (await deletePurchase(purchase.id))
                 ) {
-                  toast.success(`${purchase.refNo} deleted`);
+                  toast.success('Purchase deleted');
                   onClose();
                 }
               }}
             >
-              <Trash2 className="size-3.5" /> Delete
+              <Trash2 className="size-4" /> Delete
             </Button>
           )}
           {canEdit && purchase.status !== 'cancelled' && purchase.status !== 'ordered' && (
             <Button
-              variant="destructive"
-              size="sm"
+              variant="ghost"
+              className="text-destructive hover:bg-destructive/10"
               onClick={async () => {
                 const reason = await promptText({
-                  title: `Cancel ${purchase.refNo}?`,
+                  title: 'Cancel this purchase?',
                   message: 'Cancelling reverses the stock it brought in and the cash it paid out.',
                   label: 'Reason',
                   placeholder: 'e.g. wrong supplier',
@@ -346,17 +340,61 @@ export function PurchaseDetail({ open, onClose, purchaseId }: Props) {
                   required: true,
                 });
                 if (reason !== null && (await cancelPurchase(purchase.id, currentUserName(), reason))) {
-                  toast.success(`${purchase.refNo} cancelled`);
+                  toast.success('Purchase cancelled');
                 }
               }}
             >
-              <Ban className="size-3.5" /> Cancel
+              <Ban className="size-4" /> Cancel purchase
+            </Button>
+          )}
+          {canEdit && purchase.status !== 'cancelled' && <div className="w-px h-8 bg-border mx-1" aria-hidden />}
+          <Button variant="outline" onClick={() => setPrintOpen(true)}>
+            <Printer className="size-4" /> Print
+          </Button>
+          {canEdit && purchase.status !== 'cancelled' && (
+            <Link to={`/purchases/${purchase.id}/edit`} onClick={onClose}>
+              <Button variant="outline">
+                <Pencil className="size-4" /> Edit
+              </Button>
+            </Link>
+          )}
+          {purchase.status === 'received' && (
+            <Button variant="outline" onClick={() => setReturnOpen(true)}>
+              <Undo2 className="size-4" /> Create return
+            </Button>
+          )}
+          {/* An ordered bill's goods arriving: they go into stock, as entered. */}
+          {isOpen && (
+            <Button
+              variant="outline"
+              onClick={async () => {
+                const ok = await confirm({
+                  title: 'Mark this purchase as received?',
+                  message: 'Its items go into stock now, as entered on the bill.',
+                  confirmLabel: 'Goods received',
+                });
+                if (ok) await receivePurchase(purchase.id);
+              }}
+            >
+              <PackageCheck className="size-4" /> Mark received
+            </Button>
+          )}
+          <div className="flex-1" />
+          {purchase.status !== 'cancelled' && purchase.due > 0 && (
+            <Button onClick={() => setPayOpen(true)}>
+              <Banknote className="size-4" /> <span>Pay</span>{' '}
+              <span className="tabular">{formatBDT(purchase.due)}</span>
             </Button>
           )}
         </div>
       </Drawer>
 
       <AddPurchasePaymentModal open={payOpen} onClose={() => setPayOpen(false)} purchase={purchase} />
+      <PayBillModal
+        open={paySupplierOpen}
+        onClose={() => setPaySupplierOpen(false)}
+        initialSupplierId={purchase.supplierId}
+      />
       <CreatePurchaseReturnModal open={returnOpen} onClose={() => setReturnOpen(false)} purchaseId={purchase.id} />
       <PurchasePrintModal open={printOpen} onClose={() => setPrintOpen(false)} purchase={purchase} />
     </>

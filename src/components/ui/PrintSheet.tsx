@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode, type Ref } from 'react';
 import { createPortal } from 'react-dom';
 
 export type PaperSize = '50mm' | '58mm' | '80mm' | 'A4';
@@ -26,6 +26,11 @@ let mountedSheets = 0;
 interface Props {
   /** Physical paper the sheet is laid out for. Defaults to 80mm thermal. */
   paper?: PaperSize;
+  /**
+   * The sheet element, for `printSheet()` in src/lib/printing.ts, which sends
+   * exactly this markup to the configured printer.
+   */
+  sheetRef?: Ref<HTMLDivElement>;
   children: ReactNode;
 }
 
@@ -39,9 +44,11 @@ interface Props {
  *
  * It is deliberately invisible on screen (`hidden print:block`). This is not a
  * preview — the calling modal already shows one. Mount it alongside the modal
- * and let the existing `window.print()` button do the rest.
+ * and print it with `printSheet(sheetRef.current)` (src/lib/printing.ts): the
+ * configured printer when there is one, else the `window.print()` dialog, for
+ * which the stylesheet above shows only this sheet.
  */
-export function PrintSheet({ paper = '80mm', children }: Props) {
+export function PrintSheet({ paper = '80mm', sheetRef, children }: Props) {
   const [host] = useState(() => {
     const el = document.createElement('div');
     // `print-frame-root` is the hook the @media print block in globals.css
@@ -63,6 +70,7 @@ export function PrintSheet({ paper = '80mm', children }: Props) {
 
   return createPortal(
     <div
+      ref={sheetRef}
       className="print-frame-sheet bg-white text-black"
       // Explicit light colour-scheme: the app may be in dark mode, and a
       // dark receipt prints as a solid black rectangle on a thermal roll.
