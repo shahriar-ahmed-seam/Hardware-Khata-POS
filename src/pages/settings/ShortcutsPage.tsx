@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { Save, RotateCcw, Keyboard, Check, X } from 'lucide-react';
+import { RotateCcw, Keyboard, AlertTriangle } from 'lucide-react';
 import { SettingsHeader } from '@/components/settings/SettingsHeader';
+import { AutoSaveNote } from '@/components/settings/AutoSaveNote';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { useSettings, type ShortcutMap } from '@/stores/settings';
@@ -53,6 +54,8 @@ export default function ShortcutsPage() {
 
   const [recording, setRecording] = useState<keyof ShortcutMap | null>(null);
   const [pending, setPending] = useState<string | null>(null);
+  // The shortcut whose key was just taken by another one (shown on its row).
+  const [cleared, setCleared] = useState<keyof ShortcutMap | null>(null);
   const recordingRef = useRef(recording);
   recordingRef.current = recording;
 
@@ -88,6 +91,7 @@ export default function ShortcutsPage() {
       const patch: Partial<ShortcutMap> = { [recording]: pending } as Partial<ShortcutMap>;
       if (dup) (patch as Record<string, string>)[dup] = '';
       setSC(patch);
+      setCleared(dup ?? null);
     }
     setRecording(null);
     setPending(null);
@@ -101,21 +105,21 @@ export default function ShortcutsPage() {
     <div>
       <SettingsHeader
         title="Keyboard Shortcuts"
-        subtitle="Customize the F-keys and combos used on POS"
         actions={
           <>
+            <AutoSaveNote />
             <Button
               variant="outline"
               onClick={async () => {
                 if (await confirmDialog({ title: 'Reset all shortcuts to defaults?' })) {
                   reset();
+                  setCleared(null);
                   toast.info('Shortcuts reset to defaults');
                 }
               }}
             >
               <RotateCcw className="size-4" /> Reset to defaults
             </Button>
-            <span className="text-xs text-muted-foreground">Changes save automatically</span>
           </>
         }
       />
@@ -124,12 +128,7 @@ export default function ShortcutsPage() {
         <Card className="p-3">
           <div className="text-sm text-muted-foreground flex items-start gap-2">
             <Keyboard className="size-4 mt-0.5" />
-            <span>
-              Click any row to record a new combo. Press the new key (modifiers + key) to capture
-              it, then click <span className="font-semibold text-foreground">Save</span> to apply.
-              Press Esc to cancel. If your new combo conflicts with another shortcut, the other
-              binding will be cleared so you can re-bind it.
-            </span>
+            <span>Click a key, press the new key, then click Use this key. Esc cancels.</span>
           </div>
         </Card>
 
@@ -142,12 +141,18 @@ export default function ShortcutsPage() {
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium">{row.label}</div>
                   <div className="text-xs text-muted-foreground">{row.desc}</div>
+                  {cleared === row.id && !value && (
+                    <div className="text-xs text-warning flex items-center gap-1 mt-0.5">
+                      <AlertTriangle className="size-3.5" aria-hidden />
+                      <span>Its key is now used by another shortcut. Pick a new one.</span>
+                    </div>
+                  )}
                 </div>
                 {isRec ? (
                   <div className="flex items-center gap-2">
                     <span
                       className={cn(
-                        'h-9 min-w-[120px] px-3 inline-flex items-center justify-center rounded-md border-2 text-sm font-mono',
+                        'h-10 min-w-[120px] px-3 inline-flex items-center justify-center rounded-md border-2 text-sm font-mono',
                         pending
                           ? 'border-primary text-primary bg-primary/5'
                           : 'border-dashed border-warning text-warning animate-pulse',
@@ -155,31 +160,26 @@ export default function ShortcutsPage() {
                     >
                       {pending ?? 'Press a key…'}
                     </span>
-                    <button
-                      onClick={confirm}
-                      disabled={!pending}
-                      className="size-8 grid place-items-center rounded bg-primary text-primary-foreground disabled:opacity-50"
-                    >
-                      <Check className="size-4" />
-                    </button>
-                    <button
-                      onClick={cancel}
-                      className="size-8 grid place-items-center rounded border border-border hover:bg-secondary"
-                    >
-                      <X className="size-4" />
-                    </button>
+                    <Button onClick={confirm} disabled={!pending}>
+                      Use this key
+                    </Button>
+                    <Button variant="outline" onClick={cancel}>
+                      Cancel
+                    </Button>
                   </div>
                 ) : (
                   <button
+                    type="button"
+                    title="Change key"
                     onClick={() => startRecord(row.id)}
                     className={cn(
-                      'h-9 min-w-[120px] px-3 inline-flex items-center justify-center rounded-md border text-sm font-mono transition',
+                      'h-10 min-w-[120px] focus-ring px-3 inline-flex items-center justify-center rounded-md border text-sm font-mono transition',
                       value
                         ? 'border-border hover:border-primary hover:bg-primary/5'
                         : 'border-dashed border-muted-foreground/40 text-muted-foreground hover:border-primary',
                     )}
                   >
-                    {value || 'unassigned'}
+                    {value || 'Not set'}
                   </button>
                 )}
               </div>
@@ -188,9 +188,7 @@ export default function ShortcutsPage() {
         </Card>
 
         <div className="text-xs text-muted-foreground">
-          Note: F-keys are recommended for one-press actions. For combos, Ctrl/Alt/Shift +
-          letter/number works best. Browser-reserved keys (Ctrl+R, Ctrl+W, Ctrl+T) may not be
-          rebindable.
+          F-keys work best for one-press actions. Ctrl+R, Ctrl+W and Ctrl+T may not work.
         </div>
       </div>
     </div>

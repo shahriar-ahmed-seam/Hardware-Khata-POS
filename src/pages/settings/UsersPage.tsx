@@ -1,52 +1,25 @@
 import { useEffect, useMemo, useState } from 'react';
-import {
-  Plus,
-  Edit2,
-  Trash2,
-  Search,
-  Save,
-  Shield,
-  KeyRound,
-  Power,
-  PowerOff,
-  Clock,
-  Lock,
-} from 'lucide-react';
+import { Plus, Edit2, Trash2, Search, Save, Shield, KeyRound, Lock } from 'lucide-react';
 import { SettingsHeader } from '@/components/settings/SettingsHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
 import { Drawer } from '@/components/ui/Drawer';
+import { FormField } from '@/components/ui/FormField';
+import { Select } from '@/components/ui/Select';
+import { Segmented } from '@/components/ui/Segmented';
+import { IconButton } from '@/components/ui/IconButton';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { useDateFormat } from '@/lib/formatDate';
 import { useUsers, type User, type UserStatus } from '@/stores/users';
 import { useBranches } from '@/stores/branches';
 import { useAuth } from '@/stores/auth';
 import { confirm } from '@/stores/confirm';
-import { toast } from '@/stores/toast';
 import { cn } from '@/lib/utils';
 
-function timeAgo(iso?: string): string {
-  if (!iso) return 'Never';
-  const diff = Date.now() - new Date(iso).getTime();
-  const m = Math.floor(diff / 60000);
-  if (m < 1) return 'Just now';
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  if (d < 30) return `${d}d ago`;
-  return new Date(iso).toLocaleDateString();
-}
-
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .map((w) => w[0])
-    .filter(Boolean)
-    .slice(0, 2)
-    .join('')
-    .toUpperCase();
-}
+/** Hide search and filters for a short list: they only add clutter. */
+const FILTER_MIN = 8;
 
 export default function UsersPage() {
   const users = useUsers((s) => s.users);
@@ -56,6 +29,8 @@ export default function UsersPage() {
   const removeUser = useUsers((s) => s.removeUser);
   const hydrate = useUsers((s) => s.hydrate);
   const hydrateBranches = useBranches((s) => s.hydrate);
+  const me = useAuth((s) => s.currentUserId);
+  const { dateTime } = useDateFormat();
 
   const [q, setQ] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>('');
@@ -81,19 +56,10 @@ export default function UsersPage() {
     });
   }, [users, q, roleFilter, statusFilter]);
 
-  const counts = useMemo(() => {
-    const c = { total: users.length, active: 0, inactive: 0, suspended: 0 };
-    users.forEach((u) => {
-      c[u.status]++;
-    });
-    return c;
-  }, [users]);
-
   return (
     <div>
       <SettingsHeader
-        title="Users"
-        subtitle={`${counts.total} users · ${counts.active} active`}
+        title="Users & PINs"
         actions={
           <Button onClick={() => setEditing('new')}>
             <Plus className="size-4" /> Add User
@@ -102,7 +68,7 @@ export default function UsersPage() {
       />
 
       <div className="p-6 max-w-6xl space-y-4">
-        <SecurityCard />
+        {users.length > FILTER_MIN && (
         <Card className="p-3">
           <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-2">
             <div className="relative">
@@ -114,10 +80,11 @@ export default function UsersPage() {
                 className="pl-9"
               />
             </div>
-            <select
+            <Select
+              aria-label="Role"
               value={roleFilter}
               onChange={(e) => setRoleFilter(e.target.value)}
-              className="h-10 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+              className="w-auto"
             >
               <option value="">All roles</option>
               {roles.map((r) => (
@@ -125,39 +92,41 @@ export default function UsersPage() {
                   {r.name}
                 </option>
               ))}
-            </select>
-            <select
+            </Select>
+            <Select
+              aria-label="Status"
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as UserStatus | '')}
-              className="h-10 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+              className="w-auto"
             >
               <option value="">All status</option>
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
               <option value="suspended">Suspended</option>
-            </select>
+            </Select>
           </div>
         </Card>
+        )}
 
         <Card className="overflow-hidden">
-          <div className="grid grid-cols-[2fr_1fr_1.2fr_1fr_auto] gap-3 px-4 py-2.5 border-b border-border bg-secondary/40 text-xs font-semibold text-muted-foreground">
+          <div className="grid grid-cols-[2fr_1fr_1.2fr_1fr_auto] gap-3 px-4 py-2.5 border-b border-border bg-secondary/40 text-xs font-medium text-muted-foreground">
             <div>User</div>
             <div>Role</div>
             <div>Branches</div>
             <div>Last login</div>
-            <div className="w-[140px]" />
+            <div className="w-[8.5rem]" />
           </div>
           {list.map((u) => {
             const role = roles.find((r) => r.id === u.roleId);
+            // The owner account and the signed-in user cannot be deleted from here.
+            const protectedUser = u.id === 'u_admin' || u.id === me;
             return (
               <div
                 key={u.id}
-                className="group grid grid-cols-[2fr_1fr_1.2fr_1fr_auto] gap-3 items-center px-4 py-3 border-b border-border last:border-b-0 hover:bg-secondary/30"
+                onClick={() => setEditing(u)}
+                className="grid grid-cols-[2fr_1fr_1.2fr_1fr_auto] gap-3 items-center px-4 py-3 min-h-14 border-b border-border last:border-b-0 hover:bg-secondary/30 cursor-pointer"
               >
                 <div className="flex items-center gap-3 min-w-0">
-                  <div className="size-9 rounded-full bg-primary/15 text-primary grid place-items-center text-xs font-bold">
-                    {initials(u.name)}
-                  </div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="font-semibold truncate">{u.name}</span>
@@ -166,7 +135,7 @@ export default function UsersPage() {
                       {u.status === 'suspended' && <Badge variant="destructive">Suspended</Badge>}
                       {u.pin && (
                         <span title="PIN set" className="text-muted-foreground">
-                          <KeyRound className="size-3" />
+                          <KeyRound className="size-4" />
                         </span>
                       )}
                     </div>
@@ -179,59 +148,39 @@ export default function UsersPage() {
                 </div>
                 <div className="text-sm">
                   <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-secondary text-secondary-foreground text-xs">
-                    <Shield className="size-3" /> {role?.name ?? '—'}
+                    <Shield className="size-3.5" /> {role?.name ?? '—'}
                   </div>
                 </div>
                 <BranchList ids={u.branchIds} />
-                <div className="text-xs text-muted-foreground inline-flex items-center gap-1">
-                  <Clock className="size-3" /> {timeAgo(u.lastLoginAt)}
+                <div className="text-sm text-muted-foreground tabular" data-no-i18n={u.lastLoginAt ? true : undefined}>
+                  {u.lastLoginAt ? dateTime(u.lastLoginAt) : 'Never'}
                 </div>
-                <div className="flex items-center gap-1 opacity-60 group-hover:opacity-100">
-                  <button
-                    onClick={() =>
-                      updateUser(u.id, {
-                        status: u.status === 'active' ? 'inactive' : 'active',
-                      })
-                    }
-                    className="size-7 grid place-items-center rounded hover:bg-secondary text-muted-foreground"
-                    title={u.status === 'active' ? 'Deactivate' : 'Activate'}
-                  >
-                    {u.status === 'active' ? (
-                      <PowerOff className="size-3.5" />
-                    ) : (
-                      <Power className="size-3.5" />
-                    )}
-                  </button>
-                  <button
-                    onClick={() => setEditing(u)}
-                    className="size-7 grid place-items-center rounded hover:bg-secondary text-muted-foreground"
-                    title="Edit"
-                  >
-                    <Edit2 className="size-3.5" />
-                  </button>
-                  <button
-                    onClick={async () => {
-                      if (u.id === 'u_admin') {
-                        toast.error('Cannot delete the owner account');
-                        return;
-                      }
-                      if (await confirm({ title: `Delete user "${u.name}"?`, variant: 'destructive' }))
-                        removeUser(u.id);
-                    }}
-                    className="size-7 grid place-items-center rounded hover:bg-destructive/10 hover:text-destructive disabled:opacity-30"
-                  >
-                    <Trash2 className="size-3.5" />
-                  </button>
+                {/* Status (activate / deactivate) lives in the Edit drawer. */}
+                <div className="flex items-center justify-end gap-2 w-[8.5rem]" onClick={(e) => e.stopPropagation()}>
+                  <Button variant="outline" onClick={() => setEditing(u)}>
+                    <Edit2 className="size-4" /> Edit
+                  </Button>
+                  {!protectedUser && (
+                    <IconButton
+                      label="Delete user"
+                      tone="danger"
+                      onClick={async () => {
+                        if (await confirm({ title: 'Delete this user?', message: u.name, variant: 'destructive' }))
+                          removeUser(u.id);
+                      }}
+                    >
+                      <Trash2 className="size-4" />
+                    </IconButton>
+                  )}
                 </div>
               </div>
             );
           })}
           {list.length === 0 && (
-            <div className="px-4 py-10 text-center text-muted-foreground text-sm">
-              No users match your filters.
-            </div>
+            <EmptyState compact icon={Search} title="No users match your filters." />
           )}
         </Card>
+        <SecurityCard />
       </div>
 
       <Drawer
@@ -275,24 +224,19 @@ function SecurityCard() {
           <div className="text-xs text-muted-foreground mb-2">
             Lock the screen after a period of inactivity. Unlock with your PIN.
           </div>
-          <div className="flex items-center gap-1.5 flex-wrap">
-            {options.map((m) => (
-              <button
-                key={m}
-                onClick={() => setAutoLockMinutes(m)}
-                className={cn(
-                  'h-8 px-3 rounded-md border text-xs font-medium transition',
-                  autoLockMinutes === m
-                    ? 'border-primary bg-primary/10 text-primary'
-                    : 'border-border hover:bg-secondary',
-                )}
-              >
-                {m === 0 ? 'Never' : `${m} min`}
-              </button>
-            ))}
+          <div className="flex items-center gap-3 flex-wrap">
+            <Segmented
+              ariaLabel="Auto-lock"
+              value={String(autoLockMinutes)}
+              onChange={(v) => setAutoLockMinutes(Number(v))}
+              options={options.map((m) => ({
+                value: String(m),
+                label: m === 0 ? 'Never' : <span className="tabular">{m} min</span>,
+              }))}
+            />
             <div className="flex-1" />
-            <Button variant="outline" size="sm" onClick={lock}>
-              <Lock className="size-3.5" /> Lock now
+            <Button variant="outline" onClick={lock}>
+              <Lock className="size-4" /> Lock now
             </Button>
           </div>
         </div>
@@ -304,13 +248,13 @@ function SecurityCard() {
 function BranchList({ ids }: { ids: string[] }) {
   const branches = useBranches((s) => s.items);
   if (ids.length === 0) {
-    return <div className="text-xs text-muted-foreground italic">All branches</div>;
+    return <div className="text-sm text-muted-foreground">All branches</div>;
   }
   const names = ids.map((id) => branches.find((b) => b.id === id)?.name ?? id);
   return (
-    <div className="text-xs flex flex-wrap gap-1">
+    <div className="text-xs flex flex-wrap gap-1" data-no-i18n>
       {names.slice(0, 2).map((n, i) => (
-        <span key={i} className="inline-flex items-center px-1.5 h-5 rounded bg-secondary text-secondary-foreground">
+        <span key={i} className="inline-flex items-center px-2 h-6 rounded bg-secondary text-secondary-foreground">
           {n}
         </span>
       ))}
@@ -379,66 +323,66 @@ function UserForm({
     >
       <div className="flex-1 overflow-auto p-4 space-y-3">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Field label="Full name" required>
-            <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} />
-          </Field>
-          <Field label="Username" required>
-            <Input
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="e.g. rana"
-            />
-          </Field>
-          <Field label="Phone">
-            <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
-          </Field>
-          <Field label="Email">
-            <Input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-          </Field>
-          <Field label="PIN (4-6 digits)">
-            {/* Masked (B10): a PIN typed in plain view is a PIN the room knows.
-                Empty on an existing user = keep the current PIN. */}
-            <Input
-              type="password"
-              inputMode="numeric"
-              autoComplete="new-password"
-              value={pin}
-              onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
-              placeholder={initial ? 'Leave empty to keep the current PIN' : '4 to 6 digits'}
-              className="font-mono tracking-widest"
-            />
-          </Field>
-          <Field label="Status">
-            <select
-              value={status}
-              onChange={(e) => setStatus(e.target.value as UserStatus)}
-              className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
-            >
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-              <option value="suspended">Suspended</option>
-            </select>
-          </Field>
-          <Field label="Role" required className="md:col-span-2">
+          <FormField label="Full name" required>
+            {(f) => <Input {...f} autoFocus value={name} onChange={(e) => setName(e.target.value)} />}
+          </FormField>
+          <FormField label="Phone">
+            {(f) => <Input {...f} value={phone} onChange={(e) => setPhone(e.target.value)} />}
+          </FormField>
+          <FormField label="Username" required>
+            {(f) => (
+              <Input {...f} value={username} onChange={(e) => setUsername(e.target.value)} placeholder="e.g. rana" />
+            )}
+          </FormField>
+          <FormField
+            label="PIN (4-6 digits)"
+            required={!initial}
+            hint={initial ? 'The current PIN stays if you leave this empty.' : undefined}
+            error={pin !== '' && !pinOk ? 'PIN must be 4 to 6 digits' : undefined}
+          >
+            {/* Masked (B10): a PIN typed in plain view is a PIN the room knows. */}
+            {(f) => (
+              <Input
+                {...f}
+                type="password"
+                inputMode="numeric"
+                autoComplete="new-password"
+                value={pin}
+                onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                placeholder={initial ? 'Leave empty to keep the current PIN' : '4 to 6 digits'}
+                className="font-mono tracking-widest"
+              />
+            )}
+          </FormField>
+          <FormField label="Email">
+            {(f) => <Input {...f} type="email" value={email} onChange={(e) => setEmail(e.target.value)} />}
+          </FormField>
+          <FormField label="Status">
+            {(f) => (
+              <Select {...f} value={status} onChange={(e) => setStatus(e.target.value as UserStatus)}>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+                <option value="suspended">Suspended</option>
+              </Select>
+            )}
+          </FormField>
+          <FormField label="Role" required className="md:col-span-2">
             <div className="grid grid-cols-2 gap-2">
               {roles.map((r) => (
                 <button
                   key={r.id}
                   type="button"
                   onClick={() => setRoleId(r.id)}
+                  aria-pressed={roleId === r.id}
                   className={cn(
-                    'rounded-md border p-2 text-left transition',
+                    'rounded-md border p-2.5 text-left transition focus-ring',
                     roleId === r.id
-                      ? 'border-primary bg-primary/10'
+                      ? 'border-primary ring-1 ring-primary bg-primary/10'
                       : 'border-border hover:bg-secondary',
                   )}
                 >
                   <div className="text-sm font-semibold inline-flex items-center gap-1">
-                    <Shield className="size-3" /> {r.name}
+                    <Shield className={cn('size-4', roleId === r.id && 'text-primary')} /> {r.name}
                   </div>
                   {r.description && (
                     <div className="text-xs text-muted-foreground mt-0.5">{r.description}</div>
@@ -446,15 +390,14 @@ function UserForm({
                 </button>
               ))}
             </div>
-          </Field>
+          </FormField>
         </div>
 
         <div className="space-y-2">
-          <div className="text-xs font-semibold text-muted-foreground">
-            Branches assigned
-          </div>
-          <label className="flex items-center gap-2 text-sm cursor-pointer">
+          <div className="text-sm font-medium">Branches assigned</div>
+          <label className="flex items-center gap-2 py-1.5 text-sm cursor-pointer">
             <input
+              className="size-5"
               type="checkbox"
               checked={allBranches}
               onChange={(e) => setAllBranches(e.target.checked)}
@@ -466,9 +409,10 @@ function UserForm({
               {branches.map((b) => (
                 <label
                   key={b.id}
-                  className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-secondary text-sm cursor-pointer"
+                  className="flex items-center gap-2 px-2 py-2.5 rounded hover:bg-secondary text-sm cursor-pointer"
                 >
                   <input
+                    className="size-5"
                     type="checkbox"
                     checked={branchIds.includes(b.id)}
                     onChange={() => toggleBranch(b.id)}
@@ -489,26 +433,5 @@ function UserForm({
         </Button>
       </div>
     </form>
-  );
-}
-
-function Field({
-  label,
-  required,
-  className,
-  children,
-}: {
-  label: string;
-  required?: boolean;
-  className?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className={cn(className)}>
-      <label className="text-xs font-semibold text-muted-foreground">
-        {label} {required && <span className="text-destructive">*</span>}
-      </label>
-      {children}
-    </div>
   );
 }

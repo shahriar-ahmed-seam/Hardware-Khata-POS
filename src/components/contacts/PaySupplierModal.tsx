@@ -1,23 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
-import { Input } from '@/components/ui/Input';
-import { NumberField } from '@/components/ui/NumberField';
-import { Banknote, Smartphone, CreditCard, Building2, Save } from 'lucide-react';
+import { Save } from 'lucide-react';
 import { cn, formatBDT } from '@/lib/utils';
+import { AmountInput, MethodPicker, PaySummary, type PayMethod } from './PaymentInputs';
 import { useSuppliers } from '@/stores/contacts';
 import { api } from '@/lib/api';
 import { toSupplier, type BackendSupplier } from '@/hooks/contactAdapter';
 import type { Supplier } from '@/types/domain';
 import { toast } from '@/stores/toast';
-
-const METHODS: { id: 'Cash' | 'bKash' | 'Nagad' | 'Card' | 'Bank'; icon: any; label: string; needsRef?: boolean }[] = [
-  { id: 'Cash', icon: Banknote, label: 'Cash' },
-  { id: 'bKash', icon: Smartphone, label: 'bKash', needsRef: true },
-  { id: 'Nagad', icon: Smartphone, label: 'Nagad', needsRef: true },
-  { id: 'Card', icon: CreditCard, label: 'Card', needsRef: true },
-  { id: 'Bank', icon: Building2, label: 'Bank', needsRef: true },
-];
 
 interface Props {
   open: boolean;
@@ -58,7 +49,7 @@ export function PaySupplierModal({ open, onClose, supplierId }: Props) {
   const supplier = storeSupplier ?? fetched;
 
   const [amount, setAmount] = useState(0);
-  const [method, setMethod] = useState<(typeof METHODS)[number]['id']>('Cash');
+  const [method, setMethod] = useState<PayMethod>('Cash');
   const [reference, setReference] = useState('');
 
   useEffect(() => {
@@ -72,7 +63,16 @@ export function PaySupplierModal({ open, onClose, supplierId }: Props) {
   // Above the early return (every hook runs on every render).
   const [saving, setSaving] = useState(false);
 
-  if (!supplier) return null;
+  // A loading body instead of nothing, so a click on Pay always shows something.
+  if (!supplier) {
+    return (
+      <Modal open={open} onClose={onClose} width="max-w-md" title="Pay Supplier">
+        <div className="p-8 text-center text-sm text-muted-foreground">
+          {supplierId ? 'Loading supplier…' : 'No supplier selected.'}
+        </div>
+      </Modal>
+    );
+  }
 
   // Closes only once the backend has taken it. The backend pays the opening
   // balance first, then the oldest bills, and keeps anything more as an advance.
@@ -90,77 +90,44 @@ export function PaySupplierModal({ open, onClose, supplierId }: Props) {
     onClose();
   };
 
-  const needsRef = METHODS.find((m) => m.id === method)?.needsRef;
-
   return (
     <Modal
       open={open}
       onClose={onClose}
-      width="max-w-2xl"
-      title={`Pay Supplier — ${supplier.name}`}
-      subtitle={`Outstanding payable: ৳ ${formatBDT(supplier.due, { withSymbol: false })}`}
+      width="max-w-lg"
+      title="Pay Supplier"
+      subtitle={supplier.name}
       footer={
-        <div className="flex items-center justify-end gap-2">
-          <Button variant="outline" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button onClick={() => void submit()} disabled={amount <= 0 || saving}>
-            <Save className="size-4" /> Save Payment
-          </Button>
+        <div className="flex items-center justify-between gap-3">
+          <PaySummary amount={amount} owed={supplier.due} afterLabel="Payable after" verb="Paying" />
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" form="pay-supplier-form" disabled={amount <= 0 || saving}>
+              <Save className="size-4" /> Save Payment
+            </Button>
+          </div>
         </div>
       }
     >
-      <div className="p-4 space-y-3">
-        <div className="grid grid-cols-5 gap-1.5">
-          {METHODS.map((m) => {
-            const Icon = m.icon;
-            return (
-              <button
-                key={m.id}
-                onClick={() => setMethod(m.id)}
-                className={cn(
-                  'h-12 rounded-md border text-xs font-medium transition inline-flex flex-col items-center justify-center gap-1',
-                  method === m.id
-                    ? 'border-primary bg-primary/10 text-primary'
-                    : 'border-border hover:bg-secondary',
-                )}
-              >
-                <Icon className="size-4" />
-                {m.label}
-              </button>
-            );
-          })}
+      <form
+        id="pay-supplier-form"
+        className="p-5 space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+      >
+        <div className="flex items-baseline justify-between text-sm">
+          <span className="text-muted-foreground">Outstanding Payable</span>
+          <span className={cn('tabular text-lg font-bold', supplier.due > 0 && 'text-destructive')}>
+            {formatBDT(supplier.due)}
+          </span>
         </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <label className="text-xs font-semibold text-muted-foreground">Amount</label>
-            <NumberField value={amount} onChangeNumber={setAmount} className="text-right" />
-            <div className="flex items-center gap-1 mt-1">
-              <button
-                onClick={() => setAmount(supplier.due)}
-                className="text-xs px-2 h-6 rounded border border-border hover:bg-secondary"
-              >
-                Full payable
-              </button>
-              <button
-                onClick={() => setAmount(Math.round(supplier.due / 2))}
-                className="text-xs px-2 h-6 rounded border border-border hover:bg-secondary"
-              >
-                Half
-              </button>
-            </div>
-          </div>
-          {needsRef && (
-            <div>
-              <label className="text-xs font-semibold text-muted-foreground">
-                Reference / TxID
-              </label>
-              <Input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="TX1234567" />
-            </div>
-          )}
-        </div>
-      </div>
+        <AmountInput amount={amount} onAmount={setAmount} full={supplier.due} fullLabel="Full payable" />
+        <MethodPicker method={method} onMethod={setMethod} reference={reference} onReference={setReference} />
+      </form>
     </Modal>
   );
 }

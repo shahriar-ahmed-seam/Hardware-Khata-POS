@@ -5,12 +5,11 @@ import {
   Edit2,
   HandCoins,
   ScanBarcode,
-  Trash2,
+  Printer,
   Phone,
   Mail,
   MapPin,
   Calendar,
-  AlertTriangle,
 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
@@ -30,9 +29,20 @@ import { CustomerForm } from '@/components/contacts/CustomerForm';
 import { ReceivePaymentModal } from '@/components/contacts/ReceivePaymentModal';
 import { SaleDetail } from '@/components/sales/SaleDetail';
 import { formatBDT, cn } from '@/lib/utils';
-import { useKhata } from '@/hooks/useKhata';
+import { useKhata, type KhataRow } from '@/hooks/useKhata';
+import { useDateFormat } from '@/lib/formatDate';
+import { labelFor } from '@/lib/labels';
+import { KhataTable, type KhataPeriod } from '@/components/contacts/KhataTable';
+import { StatementPrintModal } from '@/components/contacts/StatementPrintModal';
+import { groupLabel, groupVariant, MoneyStat, NotesBox, TH } from '@/components/contacts/shared';
 
-type Tab = 'overview' | 'ledger' | 'sales' | 'returns' | 'notes';
+type Tab = 'khata' | 'sales' | 'returns' | 'notes';
+const TAB_LABEL: Record<Tab, string> = {
+  khata: 'Khata',
+  sales: 'Sales History',
+  returns: 'Returns',
+  notes: 'Notes',
+};
 
 export default function CustomerDetail() {
   const { id } = useParams<{ id: string }>();
@@ -107,7 +117,11 @@ export default function CustomerDetail() {
     return ok;
   };
 
-  const [tab, setTab] = useState<Tab>('overview');
+  // The khata is what the owner opens a customer for, so it is the first tab.
+  const [tab, setTab] = useState<Tab>('khata');
+  const [period, setPeriod] = useState<KhataPeriod>('3m');
+  const [statementOpen, setStatementOpen] = useState(false);
+  const fmt = useDateFormat();
   const [editOpen, setEditOpen] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
   const [saleId, setSaleId] = useState<string | null>(null);
@@ -164,15 +178,10 @@ export default function CustomerDetail() {
   // It used to be rebuilt here from the loaded sales and returns, which left
   // out held credits and money paid on account.
   const khata = useKhata('customer', id, `${reloadKey}:${customer?.due ?? ''}:${customer?.totalPaid ?? ''}`);
-  const ledger = useMemo(
-    () =>
-      khata.rows.map((e) => ({
-        ...e,
-        // Rows that belong to an invoice open it when clicked.
-        saleId: e.type === 'sale' || e.type === 'payment' || e.type === 'return' ? e.docId : undefined,
-      })),
-    [khata.rows],
-  );
+  const ledger = khata.rows;
+  // Rows that belong to an invoice open it when clicked.
+  const saleIdOf = (e: KhataRow) =>
+    e.type === 'sale' || e.type === 'payment' || e.type === 'return' ? e.docId : undefined;
 
   if (!customer) {
     // Loading and "not found" are DISTINCT states: the fetch above resolves
@@ -201,23 +210,25 @@ export default function CustomerDetail() {
     <div>
       <PageHeader
         title={customer.name}
-        subtitle={`${customer.group} · joined ${customer.joined}`}
         actions={
           <>
             <Button variant="ghost" onClick={() => nav('/contacts/customers')}>
               <ArrowLeft className="size-4" /> Back
             </Button>
             {/* "Send SMS" removed with the SMS feature — it had no handler. */}
-            {/* "Print Statement" is hidden until a statement template exists (R105). */}
-            <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+            <Button variant="outline" onClick={() => setStatementOpen(true)}>
+              <Printer className="size-4" /> Print Statement
+            </Button>
+            <Button variant="outline" onClick={() => setEditOpen(true)}>
               <Edit2 className="size-4" /> Edit
             </Button>
-            <Link to="/pos">
-              <Button variant="outline" size="sm">
+            <Link to="/pos" tabIndex={-1}>
+              <Button variant="outline">
                 <ScanBarcode className="size-4" /> New Sale
               </Button>
             </Link>
-            <Button onClick={() => setPayOpen(true)} disabled={customer.due === 0}>
+            {/* Enabled at zero due too: extra money is kept as an advance. */}
+            <Button onClick={() => setPayOpen(true)}>
               <HandCoins className="size-4" /> Receive Payment
             </Button>
           </>
@@ -232,55 +243,55 @@ export default function CustomerDetail() {
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <div className="text-lg font-semibold">{customer.name}</div>
-                <Badge
-                  variant={
-                    customer.group === 'Wholesale'
-                      ? 'info'
-                      : customer.group === 'Contractor'
-                        ? 'warning'
-                        : 'default'
-                  }
-                >
-                  {customer.group}
-                </Badge>
+                <Badge variant={groupVariant(customer.group)}>{groupLabel(customer.group)}</Badge>
                 {(customer.tags ?? []).map((t) => (
                   <span
                     key={t}
-                    className="text-xs px-1.5 py-0 rounded bg-primary/10 text-primary font-medium"
+                    className="text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium"
                   >
                     {t}
                   </span>
                 ))}
               </div>
-              <div className="flex flex-wrap items-center gap-4 mt-1.5 text-xs text-muted-foreground">
-                <span className="flex items-center gap-1">
-                  <Phone className="size-3" /> {customer.phone}
+              <div className="flex flex-wrap items-center gap-4 mt-1.5 text-sm text-muted-foreground">
+                <span className="flex items-center gap-1 whitespace-nowrap">
+                  <Phone className="size-3.5" /> {customer.phone}
                 </span>
                 {customer.email && (
                   <span className="flex items-center gap-1">
-                    <Mail className="size-3" /> {customer.email}
+                    <Mail className="size-3.5" /> {customer.email}
                   </span>
                 )}
                 {customer.address && (
                   <span className="flex items-center gap-1">
-                    <MapPin className="size-3" /> {customer.address}
+                    <MapPin className="size-3.5" /> {customer.address}
                   </span>
                 )}
                 {customer.dob && (
                   <span className="flex items-center gap-1">
-                    <Calendar className="size-3" /> DOB {customer.dob}
+                    <Calendar className="size-3.5" /> <span>DOB</span> {fmt.date(customer.dob)}
                   </span>
                 )}
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <Stat label="Total Purchase" value={formatBDT(customer.totalPurchase)} />
-              <Stat label="Total Paid" value={formatBDT(customer.totalPaid ?? 0)} tone="success" />
-              <Stat label="Outstanding Due" value={formatBDT(customer.due)} tone={customer.due > 0 ? 'destructive' : undefined} />
-              <Stat
-                label="Credit Limit"
-                value={customer.creditLimit ? formatBDT(customer.creditLimit) : '—'}
+            {/* Outstanding due is the hero; the rest are supporting figures. */}
+            <div className="flex items-end gap-6 flex-wrap">
+              <MoneyStat
+                card={false}
+                hero
+                label="Outstanding Due"
+                value={formatBDT(customer.due)}
+                tone={customer.due > 0 ? 'destructive' : undefined}
               />
+              <div className="grid grid-cols-3 gap-4">
+                <MoneyStat card={false} label="Total Purchase" value={formatBDT(customer.totalPurchase)} />
+                <MoneyStat card={false} label="Total Paid" value={formatBDT(customer.totalPaid ?? 0)} tone="success" />
+                <MoneyStat
+                  card={false}
+                  label="Credit Limit"
+                  value={customer.creditLimit ? formatBDT(customer.creditLimit) : '—'}
+                />
+              </div>
             </div>
           </div>
 
@@ -288,7 +299,7 @@ export default function CustomerDetail() {
             <div className="mt-4">
               <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
                 <span>
-                  Credit usage{overLimit && <span className="text-destructive font-medium ml-2">over limit!</span>}
+                  Credit usage{overLimit && <span className="text-destructive font-medium ml-2">Over limit</span>}
                 </span>
                 <span className="tabular">
                   {formatBDT(customer.due, { withSymbol: false })} / {formatBDT(customer.creditLimit, { withSymbol: false })} ({usagePct}%)
@@ -308,19 +319,21 @@ export default function CustomerDetail() {
         </Card>
 
         {/* Tabs */}
-        <div className="flex items-center gap-1 border-b border-border">
-          {(['overview', 'ledger', 'sales', 'returns', 'notes'] as Tab[]).map((t) => (
+        <div role="tablist" className="flex items-center gap-1 border-b border-border">
+          {(['khata', 'sales', 'returns', 'notes'] as Tab[]).map((t) => (
             <button
               key={t}
+              role="tab"
+              aria-selected={tab === t}
               onClick={() => setTab(t)}
               className={cn(
-                'px-4 h-10 text-sm font-medium border-b-2 -mb-px transition capitalize',
+                'px-4 h-10 text-sm font-medium border-b-2 -mb-px transition',
                 tab === t
                   ? 'border-primary text-foreground'
                   : 'border-transparent text-muted-foreground hover:text-foreground',
               )}
             >
-              {t === 'sales' ? 'Sales History' : t}
+              {TAB_LABEL[t]}
               {t === 'sales' && customerSales.length > 0 && (
                 <span className="ml-1.5 text-xs tabular text-muted-foreground">
                   ({customerSales.length})
@@ -335,115 +348,32 @@ export default function CustomerDetail() {
           ))}
         </div>
 
-        {tab === 'overview' && (
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-            <Card className="p-4 xl:col-span-2">
-              <div className="text-sm font-semibold mb-3">Recent activity</div>
-              {ledger.slice(-8).reverse().length === 0 ? (
-                <div className="text-sm text-muted-foreground">No activity yet.</div>
-              ) : (
-                <div className="space-y-2">
-                  {ledger.slice(-8).reverse().map((e) => (
-                    <div key={e.id} className="flex items-center gap-3 text-sm">
-                      <Dot type={e.type} />
-                      <div className="flex-1 min-w-0 truncate">
-                        <span className="capitalize">{e.type}</span>
-                        <span className="text-muted-foreground"> — {e.reference}</span>
-                      </div>
-                      <span
-                        className={cn(
-                          'tabular',
-                          e.debit > 0 ? 'text-destructive' : 'text-success',
-                        )}
-                      >
-                        {e.debit > 0
-                          ? '+' + formatBDT(e.debit, { withSymbol: false })
-                          : '−' + formatBDT(e.credit, { withSymbol: false })}
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        {new Date(e.date).toLocaleDateString('en-GB')}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </Card>
-            <Card className="p-4 space-y-2 text-sm">
-              <div className="text-sm font-semibold">Notes</div>
-              <div className="text-muted-foreground whitespace-pre-wrap">
-                {customer.notes || '—'}
-              </div>
-            </Card>
-          </div>
-        )}
-
-        {tab === 'ledger' && (
-          <Card className="overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="text-xs text-muted-foreground bg-secondary/50">
-                <tr>
-                  <th className="text-left px-4 py-2.5 font-medium">Date</th>
-                  <th className="text-left px-2 py-2.5 font-medium">Type</th>
-                  <th className="text-left px-2 py-2.5 font-medium">Reference</th>
-                  <th className="text-right px-2 py-2.5 font-medium">Owes (+)</th>
-                  <th className="text-right px-2 py-2.5 font-medium">Paid (−)</th>
-                  <th className="text-right px-4 py-2.5 font-medium">Balance</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ledger.length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="px-4 py-12 text-center text-muted-foreground text-sm">
-                      No ledger entries yet.
-                    </td>
-                  </tr>
-                )}
-                {ledger.map((e) => (
-                  <tr
-                    key={e.id}
-                    className={cn(
-                      'border-t border-border',
-                      e.saleId && 'cursor-pointer hover:bg-secondary/40',
-                    )}
-                    onClick={() => e.saleId && setSaleId(e.saleId)}
-                  >
-                    <td className="px-4 py-2 text-xs text-muted-foreground">
-                      {new Date(e.date).toLocaleDateString('en-GB')}
-                    </td>
-                    <td className="px-2 py-2">
-                      <span className="inline-flex items-center gap-1.5 capitalize">
-                        <Dot type={e.type} />
-                        {e.type}
-                      </span>
-                    </td>
-                    <td className="px-2 py-2 text-xs">{e.reference}</td>
-                    <td className="px-2 py-2 text-right tabular text-destructive">
-                      {e.debit > 0 ? formatBDT(e.debit, { withSymbol: false }) : '—'}
-                    </td>
-                    <td className="px-2 py-2 text-right tabular text-success">
-                      {e.credit > 0 ? formatBDT(e.credit, { withSymbol: false }) : '—'}
-                    </td>
-                    <td className="px-4 py-2 text-right tabular font-semibold">
-                      {formatBDT(e.balance, { withSymbol: false })}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Card>
+        {tab === 'khata' && (
+          <KhataTable
+            kind="customer"
+            rows={ledger}
+            loading={khata.loading}
+            period={period}
+            onPeriodChange={setPeriod}
+            canOpen={(e) => !!saleIdOf(e)}
+            onOpen={(e) => {
+              const sid = saleIdOf(e);
+              if (sid) setSaleId(sid);
+            }}
+          />
         )}
 
         {tab === 'sales' && (
           <Card className="overflow-hidden">
             <table className="w-full text-sm">
-              <thead className="text-xs text-muted-foreground bg-secondary/50">
+              <thead className="bg-secondary/50">
                 <tr>
-                  <th className="text-left px-4 py-2.5 font-medium">Date</th>
-                  <th className="text-left px-2 py-2.5 font-medium">Invoice</th>
-                  <th className="text-right px-2 py-2.5 font-medium">Total</th>
-                  <th className="text-right px-2 py-2.5 font-medium">Paid</th>
-                  <th className="text-right px-2 py-2.5 font-medium">Due</th>
-                  <th className="text-left px-2 py-2.5 font-medium">Status</th>
+                  <th className={cn(TH, 'text-left pl-4')}>Date</th>
+                  <th className={cn(TH, 'text-left')}>Invoice</th>
+                  <th className={cn(TH, 'text-right')}>Total</th>
+                  <th className={cn(TH, 'text-right')}>Paid</th>
+                  <th className={cn(TH, 'text-right')}>Due</th>
+                  <th className={cn(TH, 'text-left')}>Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -463,17 +393,17 @@ export default function CustomerDetail() {
                         onClick={() => setSaleId(s.id)}
                         className="border-t border-border cursor-pointer hover:bg-secondary/40"
                       >
-                        <td className="px-4 py-2 text-xs text-muted-foreground">
-                          {new Date(s.date).toLocaleDateString('en-GB')}
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          {fmt.date(s.date)}
                         </td>
-                        <td className="px-2 py-2 font-mono text-xs">{s.invoiceNo}</td>
-                        <td className="px-2 py-2 text-right tabular font-semibold">
+                        <td className="px-3 py-3 whitespace-nowrap">{s.invoiceNo}</td>
+                        <td className="px-3 py-3 text-right tabular font-semibold">
                           {formatBDT(s.total, { withSymbol: false })}
                         </td>
-                        <td className="px-2 py-2 text-right tabular text-success">
+                        <td className="px-3 py-3 text-right tabular text-success">
                           {formatBDT(s.paid, { withSymbol: false })}
                         </td>
-                        <td className="px-2 py-2 text-right tabular">
+                        <td className="px-3 py-3 text-right tabular">
                           {s.due > 0 ? (
                             <span className="text-destructive">
                               {formatBDT(s.due, { withSymbol: false })}
@@ -482,7 +412,7 @@ export default function CustomerDetail() {
                             <span className="text-muted-foreground">—</span>
                           )}
                         </td>
-                        <td className="px-2 py-2">
+                        <td className="px-3 py-3">
                           <SettlementBadge
                             paid={s.paid}
                             due={s.due}
@@ -501,13 +431,13 @@ export default function CustomerDetail() {
         {tab === 'returns' && (
           <Card className="overflow-hidden">
             <table className="w-full text-sm">
-              <thead className="text-xs text-muted-foreground bg-secondary/50">
+              <thead className="bg-secondary/50">
                 <tr>
-                  <th className="text-left px-4 py-2.5 font-medium">Date</th>
-                  <th className="text-left px-2 py-2.5 font-medium">Return #</th>
-                  <th className="text-left px-2 py-2.5 font-medium">Original</th>
-                  <th className="text-right px-2 py-2.5 font-medium">Refund</th>
-                  <th className="text-left px-2 py-2.5 font-medium">Reason</th>
+                  <th className={cn(TH, 'text-left pl-4')}>Date</th>
+                  <th className={cn(TH, 'text-left')}>Return #</th>
+                  <th className={cn(TH, 'text-left')}>Original</th>
+                  <th className={cn(TH, 'text-right')}>Refund</th>
+                  <th className={cn(TH, 'text-left')}>Reason</th>
                 </tr>
               </thead>
               <tbody>
@@ -520,15 +450,15 @@ export default function CustomerDetail() {
                 ) : (
                   customerReturns.map((r) => (
                     <tr key={r.id} className="border-t border-border">
-                      <td className="px-4 py-2 text-xs text-muted-foreground">
-                        {new Date(r.date).toLocaleDateString('en-GB')}
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        {fmt.date(r.date)}
                       </td>
-                      <td className="px-2 py-2 font-mono text-xs">{r.refNo}</td>
-                      <td className="px-2 py-2 font-mono text-xs">{r.saleInvoiceNo}</td>
-                      <td className="px-2 py-2 text-right tabular text-warning">
+                      <td className="px-3 py-3 whitespace-nowrap">{r.refNo}</td>
+                      <td className="px-3 py-3 whitespace-nowrap">{r.saleInvoiceNo}</td>
+                      <td className="px-3 py-3 text-right tabular text-warning">
                         {formatBDT(r.total)}
                       </td>
-                      <td className="px-2 py-2 text-xs capitalize">{r.reason}</td>
+                      <td className="px-3 py-3">{labelFor('returnReason', r.reason)}</td>
                     </tr>
                   ))
                 )}
@@ -539,12 +469,11 @@ export default function CustomerDetail() {
 
         {tab === 'notes' && (
           <Card className="p-4">
-            <textarea
+            <NotesBox
+              key={customer.id}
               value={customer.notes ?? ''}
-              onChange={(e) => savePatch({ notes: e.target.value })}
-              rows={6}
-              placeholder="Internal notes about this customer (saved automatically)…"
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 resize-y"
+              placeholder="Internal notes about this customer…"
+              onSave={(notes) => savePatch({ notes })}
             />
           </Card>
         )}
@@ -553,7 +482,7 @@ export default function CustomerDetail() {
       <Drawer
         open={editOpen}
         onClose={() => setEditOpen(false)}
-        width="max-w-3xl"
+        width="max-w-xl"
         title="Edit Customer"
         subtitle={customer.name}
       >
@@ -582,46 +511,17 @@ export default function CustomerDetail() {
       />
 
       <SaleDetail open={!!saleId} onClose={() => setSaleId(null)} saleId={saleId} />
+
+      {statementOpen && (
+        <StatementPrintModal
+          open
+          onClose={() => setStatementOpen(false)}
+          kind="customer"
+          contact={{ name: customer.name, phone: customer.phone, address: customer.address }}
+          rows={ledger}
+          initialPeriod={period}
+        />
+      )}
     </div>
   );
 }
-
-function Stat({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone?: 'success' | 'destructive';
-}) {
-  return (
-    <div>
-      <div className="text-xs text-muted-foreground font-medium">{label}</div>
-      <div
-        className={cn(
-          'text-base font-bold mt-0.5 tabular',
-          tone === 'success' && 'text-success',
-          tone === 'destructive' && 'text-destructive',
-        )}
-      >
-        {value}
-      </div>
-    </div>
-  );
-}
-
-function Dot({ type }: { type: string }) {
-  const cls =
-    type === 'sale'
-      ? 'bg-destructive'
-      : type === 'payment'
-        ? 'bg-success'
-        : type === 'return'
-          ? 'bg-warning'
-          : 'bg-primary';
-  return <span className={`size-2 rounded-full inline-block ${cls}`} />;
-}
-
-void AlertTriangle;
-void Trash2;

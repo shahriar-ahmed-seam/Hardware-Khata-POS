@@ -49,7 +49,7 @@ export function NewProductDrawer({
   lockStock,
   // No branchId → the backend records opening stock at the default branch.
   branchId,
-  title = 'Add New Product',
+  title = 'Add new product',
   subtitle,
 }: Props) {
   const createProduct = useCreateProduct();
@@ -78,7 +78,7 @@ export function NewProductDrawer({
       });
       const id = (res as { id?: string })?.id;
       if (!id) throw new Error('The product was saved but returned no id');
-      toast.success(`"${p.name}" added to your catalogue`);
+      toast.success('Product added to your catalogue', { description: p.name });
       onCreated({ ...p, id, stock: lockStock ? 0 : p.stock });
       onClose();
     } catch (e) {
@@ -96,7 +96,7 @@ export function NewProductDrawer({
     <Drawer
       open={open}
       onClose={onClose}
-      width="max-w-4xl"
+      width="max-w-2xl"
       title={title}
       subtitle={
         subtitle ??
@@ -108,8 +108,8 @@ export function NewProductDrawer({
       <ProductForm
         asDrawer
         lockStock={lockStock}
-        saveLabel={saving ? 'Saving…' : 'Save & Add'}
-        onSave={(p) => void handleSave(p)}
+        saveLabel="Save & add"
+        onSave={handleSave}
         onCancel={onClose}
       />
     </Drawer>

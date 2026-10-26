@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Save, Trash2 } from 'lucide-react';
+import { ChevronRight, Save, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { NumberField } from '@/components/ui/NumberField';
-import { Avatar } from './Avatar';
+import { FormField } from '@/components/ui/FormField';
+import { Select } from '@/components/ui/Select';
 import type { Supplier } from '@/types/domain';
 import { cn } from '@/lib/utils';
 import { useCan } from '@/hooks/useCan';
@@ -17,6 +18,14 @@ interface Props {
 }
 
 const TERMS: NonNullable<Supplier['paymentTerms']>[] = ['Cash', 'Net7', 'Net15', 'Net30', 'Net60'];
+/** Stored codes stay as they are; the owner reads days. */
+const TERM_LABEL: Record<(typeof TERMS)[number], string> = {
+  Cash: 'Cash',
+  Net7: '7 days',
+  Net15: '15 days',
+  Net30: '30 days',
+  Net60: '60 days',
+};
 
 const EMPTY: Supplier = {
   id: '',
@@ -43,116 +52,128 @@ export function SupplierForm({ initial, asDrawer, onSave, onDelete, onCancel }: 
     });
   };
 
+  const [tried, setTried] = useState(false);
+  const nameErr = tried && !s.name.trim() ? 'Name is required' : undefined;
+  const phoneErr = tried && !s.phone.trim() ? 'Phone is required' : undefined;
+  const hasMore = !!(s.contactPerson || s.altPhone || s.email || s.taxId || s.bankAccount || s.leadTimeDays || s.notes);
+  const area =
+    'w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 resize-y';
+
   return (
     // One scroll container, chosen by mode — see the note in CustomerForm.
-    <div className={cn('flex flex-col', asDrawer ? 'flex-1 min-h-0' : 'min-h-full')}>
+    <form
+      className={cn('flex flex-col', asDrawer ? 'flex-1 min-h-0' : 'min-h-full')}
+      onSubmit={(e) => {
+        e.preventDefault();
+        setTried(true);
+        submit();
+      }}
+    >
       <div className={cn(asDrawer && 'flex-1 min-h-0 overflow-auto')}>
-        <div className={cn('mx-auto max-w-3xl', asDrawer ? 'p-4 space-y-4' : 'p-6 space-y-4')}>
-          <div className="flex items-center gap-3 rounded-xl border border-border p-4 bg-card">
-            <Avatar name={s.name || '?'} size={56} variant="muted" />
-            <div>
-              <div className="text-base font-semibold">{s.name || 'New supplier'}</div>
-              <div className="text-xs text-muted-foreground">
-                {s.company ?? 'No company'} · {s.paymentTerms ?? 'Cash'}
-              </div>
-            </div>
+        <div className={cn('mx-auto max-w-xl', asDrawer ? 'p-5 space-y-5' : 'p-6 space-y-5')}>
+          {/* Name and phone first (both required), then where they are. */}
+          <div className="space-y-4">
+            <FormField label="Supplier name" required error={nameErr}>
+              {(f) => <Input {...f} autoFocus value={s.name} onChange={(e) => set('name', e.target.value)} />}
+            </FormField>
+            <FormField label="Phone" required error={phoneErr}>
+              {(f) => <Input {...f} value={s.phone} onChange={(e) => set('phone', e.target.value)} />}
+            </FormField>
+            <FormField label="Company">
+              {(f) => <Input {...f} value={s.company ?? ''} onChange={(e) => set('company', e.target.value)} />}
+            </FormField>
+            <FormField label="Address">
+              {(f) => (
+                <textarea {...f} value={s.address ?? ''} onChange={(e) => set('address', e.target.value)} rows={2} className={area} />
+              )}
+            </FormField>
           </div>
 
-          <Section title="Basic" required>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <Field label="Supplier name" required>
-                <Input value={s.name} onChange={(e) => set('name', e.target.value)} />
-              </Field>
-              <Field label="Company">
-                <Input value={s.company ?? ''} onChange={(e) => set('company', e.target.value)} />
-              </Field>
-              <Field label="Contact person">
-                <Input
-                  value={s.contactPerson ?? ''}
-                  onChange={(e) => set('contactPerson', e.target.value)}
-                />
-              </Field>
-              <Field label="Phone" required>
-                <Input value={s.phone} onChange={(e) => set('phone', e.target.value)} />
-              </Field>
-              <Field label="Alternate phone">
-                <Input
-                  value={s.altPhone ?? ''}
-                  onChange={(e) => set('altPhone', e.target.value)}
-                />
-              </Field>
-              <Field label="Email">
-                <Input value={s.email ?? ''} onChange={(e) => set('email', e.target.value)} />
-              </Field>
-              <Field label="Address" className="md:col-span-2">
-                <textarea
-                  value={s.address ?? ''}
-                  onChange={(e) => set('address', e.target.value)}
-                  rows={2}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 resize-y"
-                />
-              </Field>
-            </div>
-          </Section>
-
-          <Section title="Trade & finance">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <Field label="Tax ID (BIN/TIN)">
-                <Input value={s.taxId ?? ''} onChange={(e) => set('taxId', e.target.value)} />
-              </Field>
-              <Field label="Bank account">
-                <Input
-                  value={s.bankAccount ?? ''}
-                  onChange={(e) => set('bankAccount', e.target.value)}
-                />
-              </Field>
-              <Field label="Lead time (days)">
+          <div className="grid grid-cols-2 gap-3 border-t border-border pt-4">
+            <FormField
+              label="Opening balance (৳)"
+              hint={canEditMoney ? 'Migration balance owed to this supplier' : 'Only the owner or a manager can change this'}
+            >
+              {(f) => (
                 <NumberField
-                  value={s.leadTimeDays ?? 0}
-                  onChangeNumber={(v) => set('leadTimeDays', v || undefined)}
-                />
-              </Field>
-              <Field label="Payment terms">
-                <select
-                  value={s.paymentTerms ?? 'Cash'}
-                  onChange={(e) => set('paymentTerms', e.target.value as Supplier['paymentTerms'])}
-                  className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
-                >
-                  {TERMS.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field
-                label="Opening balance (৳)"
-                hint={canEditMoney ? 'Migration balance owed to this supplier' : 'Only the owner or a manager can change this'}
-              >
-                <NumberField
+                  {...f}
                   value={s.openingBalance ?? 0}
                   onChangeNumber={(v) => set('openingBalance', v || undefined)}
                   disabled={!canEditMoney}
                 />
-              </Field>
-            </div>
-          </Section>
+              )}
+            </FormField>
+            <FormField label="Payment terms">
+              {(f) => (
+                <Select
+                  {...f}
+                  value={s.paymentTerms ?? 'Cash'}
+                  onChange={(e) => set('paymentTerms', e.target.value as Supplier['paymentTerms'])}
+                >
+                  {TERMS.map((t) => (
+                    <option key={t} value={t}>
+                      {TERM_LABEL[t]}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </FormField>
+          </div>
 
-          <Section title="Notes">
-            <textarea
-              value={s.notes ?? ''}
-              onChange={(e) => set('notes', e.target.value)}
-              rows={3}
-              placeholder="Internal notes…"
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 resize-y"
-            />
-          </Section>
+          <details open={hasMore} className="group border-t border-border pt-4">
+            <summary className="cursor-pointer select-none text-sm font-semibold inline-flex items-center gap-1.5 h-9">
+              <ChevronRight className="size-4 transition group-open:rotate-90" />
+              More details
+            </summary>
+            <div className="space-y-4 mt-3">
+              <div className="grid grid-cols-2 gap-3">
+                <FormField label="Contact person">
+                  {(f) => (
+                    <Input {...f} value={s.contactPerson ?? ''} onChange={(e) => set('contactPerson', e.target.value)} />
+                  )}
+                </FormField>
+                <FormField label="Alternate phone">
+                  {(f) => <Input {...f} value={s.altPhone ?? ''} onChange={(e) => set('altPhone', e.target.value)} />}
+                </FormField>
+                <FormField label="Email">
+                  {(f) => <Input {...f} value={s.email ?? ''} onChange={(e) => set('email', e.target.value)} />}
+                </FormField>
+                <FormField label="Lead time (days)">
+                  {(f) => (
+                    <NumberField
+                      {...f}
+                      value={s.leadTimeDays ?? 0}
+                      onChangeNumber={(v) => set('leadTimeDays', v || undefined)}
+                    />
+                  )}
+                </FormField>
+                <FormField label="Tax ID (BIN/TIN)">
+                  {(f) => <Input {...f} value={s.taxId ?? ''} onChange={(e) => set('taxId', e.target.value)} />}
+                </FormField>
+                <FormField label="Bank account">
+                  {(f) => <Input {...f} value={s.bankAccount ?? ''} onChange={(e) => set('bankAccount', e.target.value)} />}
+                </FormField>
+              </div>
+              <FormField label="Notes">
+                {(f) => (
+                  <textarea
+                    {...f}
+                    value={s.notes ?? ''}
+                    onChange={(e) => set('notes', e.target.value)}
+                    rows={3}
+                    placeholder="Internal notes…"
+                    className={area}
+                  />
+                )}
+              </FormField>
+            </div>
+          </details>
         </div>
       </div>
 
-      <div className={cn('border-t border-border bg-card px-4 py-3 flex items-center justify-between')}>
+      <div className="border-t border-border bg-card px-4 py-3 flex items-center justify-between">
         {onDelete && initial ? (
-          <Button variant="outline" onClick={onDelete}>
+          <Button type="button" variant="outline" className="text-destructive" onClick={onDelete}>
             <Trash2 className="size-4" /> Delete
           </Button>
         ) : (
@@ -160,58 +181,15 @@ export function SupplierForm({ initial, asDrawer, onSave, onDelete, onCancel }: 
         )}
         <div className="flex items-center gap-2">
           {onCancel && (
-            <Button variant="outline" onClick={onCancel}>
+            <Button type="button" variant="outline" onClick={onCancel}>
               Cancel
             </Button>
           )}
-          <Button onClick={submit} disabled={!isValid}>
+          <Button type="submit">
             <Save className="size-4" /> {initial ? 'Save Changes' : 'Save Supplier'}
           </Button>
         </div>
       </div>
-    </div>
-  );
-}
-
-function Section({
-  title,
-  required,
-  children,
-}: {
-  title: string;
-  required?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-xl border border-border bg-card edge-top p-4 space-y-3">
-      <div className="text-sm font-semibold">
-        {title} {required && <span className="text-destructive">*</span>}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function Field({
-  label,
-  required,
-  hint,
-  className,
-  children,
-}: {
-  label: string;
-  required?: boolean;
-  hint?: string;
-  className?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className={className}>
-      <label className="text-xs font-semibold text-muted-foreground">
-        {label} {required && <span className="text-destructive">*</span>}
-      </label>
-      {children}
-      {hint && <div className="text-xs text-muted-foreground mt-0.5">{hint}</div>}
-    </div>
+    </form>
   );
 }

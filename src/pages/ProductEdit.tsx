@@ -91,10 +91,11 @@ export default function ProductEdit() {
         toast.error('Only a manager or admin can retire a product');
         return;
       }
-      const kinds = [...new Set(usage.documents.map((d) => d.label))].join(', ');
+      // Static copy (no names inside) so the Bangla layer can translate it.
       const ok = await confirm({
-        title: `Archive "${initial.name}" instead?`,
-        message: `It appears in your ${kinds}, so deleting it would rewrite past records. Archiving hides it from the catalogue and the POS, keeps every past invoice intact, and can be undone.`,
+        title: 'Archive this product instead?',
+        message:
+          'It appears in past sales or purchases, so deleting would rewrite past records. Archiving hides it from the catalogue and the POS, keeps every past invoice intact, and can be undone.',
         confirmLabel: 'Archive',
       });
       if (!ok) return;
@@ -112,13 +113,12 @@ export default function ProductEdit() {
       toast.error('Only an admin can delete a product');
       return;
     }
-    const stockNote =
-      Math.abs(usage.stock) > 0.001
-        ? ` It still has ${usage.stock} in stock, which will be discarded.`
-        : '';
     const ok = await confirm({
-      title: `Delete "${initial.name}" for good?`,
-      message: `This cannot be undone.${stockNote}`,
+      title: 'Delete this product for good?',
+      message:
+        Math.abs(usage.stock) > 0.001
+          ? 'This cannot be undone. It still has stock on hand, which will be discarded.'
+          : 'This cannot be undone.',
       variant: 'destructive',
     });
     if (!ok) return;
@@ -135,7 +135,7 @@ export default function ProductEdit() {
   const handleRestore = async () => {
     if (!initial) return;
     const ok = await confirm({
-      title: `Restore "${initial.name}" to the catalogue?`,
+      title: 'Restore this product to the catalogue?',
       message:
         'It goes back into the product list, the POS and search. Its past invoices are unchanged.',
       confirmLabel: 'Restore',
@@ -198,9 +198,7 @@ export default function ProductEdit() {
       <ProductForm
         key={initial?.id ?? 'new'}
         initial={initial}
-        onSave={(p) => {
-          void handleSave(p);
-        }}
+        onSave={handleSave}
         onDelete={
           initial && !isArchived && (canDelete || canArchive) ? () => void handleDelete() : undefined
         }

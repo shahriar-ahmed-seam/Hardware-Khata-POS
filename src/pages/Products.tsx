@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Search,
   Plus,
-  Filter,
   Download,
   Barcode,
   Edit2,
@@ -14,10 +13,10 @@ import {
   Copy,
   Eye,
   MoreHorizontal,
-  ChevronDown,
   Tags,
   Archive,
   ArchiveRestore,
+  Package,
 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
@@ -27,8 +26,13 @@ import { Card } from '@/components/ui/Card';
 import { Popover } from '@/components/ui/Popover';
 import { Drawer } from '@/components/ui/Drawer';
 import { Pagination } from '@/components/ui/Pagination';
+import { Select as UISelect } from '@/components/ui/Select';
+import { Segmented } from '@/components/ui/Segmented';
+import { IconButton } from '@/components/ui/IconButton';
+import { Switch } from '@/components/ui/Switch';
+import { EmptyState } from '@/components/ui/EmptyState';
 import type { Product } from '@/types/domain';
-import { formatBDT, formatNumber, cn, relativeTime } from '@/lib/utils';
+import { formatBDT, cn, relativeTime } from '@/lib/utils';
 import {
   COLUMN_META,
   useProductsUI,
@@ -83,15 +87,12 @@ export default function Products() {
   const categoryName = (id: string) => categories.find((c) => c.id === id)?.name ?? '—';
   const brandName = (id: string) => brands.find((b) => b.id === id)?.name ?? '—';
 
-  // Filters. Category / brand / stock state / text all go to the SERVER; only the
-  // price range has no backend field (see `filtered` below).
+  // Filters. Category / brand / stock state / text all go to the SERVER.
   const [searchParams] = useSearchParams();
   const [q, setQ] = useState(() => searchParams.get('q') ?? '');
   const [cat, setCat] = useState<string | 'all'>('all');
   const [brand, setBrand] = useState<string | 'all'>('all');
   const [stockFilter, setStockFilter] = useState<'all' | 'in' | 'low' | 'out'>('all');
-  const [priceMin, setPriceMin] = useState<number | ''>('');
-  const [priceMax, setPriceMax] = useState<number | ''>('');
   /**
    * ARCHIVED VIEW.
    *
@@ -156,30 +157,26 @@ export default function Products() {
     setSelected(new Set());
   }, [showArchived]);
 
-  /**
-   * Server already narrowed by text / category / brand / stock state. The price
-   * range has no server-side field, so it stays CLIENT-side over this page's rows.
-   */
-  const filtered = useMemo(() => {
-    if (priceMin === '' && priceMax === '') return list;
-    return list.filter((p) => {
-      if (priceMin !== '' && p.price < Number(priceMin)) return false;
-      if (priceMax !== '' && p.price > Number(priceMax)) return false;
-      return true;
-    });
-  }, [list, priceMin, priceMax]);
+  // The server already narrowed by text / category / brand / stock state.
+  const filtered = list;
+  const hasFilters = !!debouncedQ || cat !== 'all' || brand !== 'all' || stockFilter !== 'all';
+  const clearFilters = () => {
+    setQ('');
+    setCat('all');
+    setBrand('all');
+    setStockFilter('all');
+  };
 
-  // Stock/retail value sums cover the LOADED PAGE only — the rest of the
-  // catalogue was never fetched. Labelled "this page"; Reports has the full
-  // figures. Only the product COUNT is a real total (it comes from the query).
+  // Value sums cover the LOADED PAGE only. When the page holds every match,
+  // they are the real totals and the "this page" note is dropped.
+  const pageScoped = total > pageSize;
   const totals = useMemo(
     () => ({
-      products: total,
       stockValue: filtered.reduce((s, p) => s + p.stock * p.cost, 0),
       retailValue: filtered.reduce((s, p) => s + p.stock * p.price, 0),
       low: filtered.filter((p) => p.stock <= p.reorderLevel).length,
     }),
-    [filtered, total],
+    [filtered],
   );
 
   const allSelectedOnPage = filtered.length > 0 && filtered.every((p) => selected.has(p.id));
@@ -245,16 +242,16 @@ export default function Products() {
           description: 'Ask the owner to sign in, or mark the product “not for sale”.',
         });
       } else {
-        const stockNote =
-          withStock.length > 0
-            ? ` ${withStock.length} of them still ${withStock.length === 1 ? 'has' : 'have'} stock on hand, which will be discarded.`
-            : '';
+        // Static sentences (no names or counts inside) so Bangla can translate them.
+        const one = deletable.length === 1;
         const ok = await confirm({
-          title:
-            deletable.length === 1
-              ? `Delete "${nameOf(deletable[0].id)}" for good?`
-              : `Delete ${deletable.length} products for good?`,
-          message: `This cannot be undone.${stockNote}`,
+          title: one ? 'Delete this product for good?' : 'Delete the selected products for good?',
+          message:
+            withStock.length === 0
+              ? 'This cannot be undone.'
+              : one
+                ? 'This cannot be undone. It still has stock on hand, which will be discarded.'
+                : 'This cannot be undone. Some of them still have stock on hand, which will be discarded.',
           confirmLabel: 'Delete',
           variant: 'destructive',
         });
@@ -265,8 +262,8 @@ export default function Products() {
               await deleteProduct.mutateAsync({ id: u.id, force: true });
               deleted++;
             } catch (e) {
-              toast.error(`Could not delete "${nameOf(u.id)}"`, {
-                description: e instanceof Error ? e.message : undefined,
+              toast.error('Could not delete a product', {
+                description: `${nameOf(u.id)}${e instanceof Error ? ': ' + e.message : ''}`,
               });
             }
           }
@@ -275,20 +272,17 @@ export default function Products() {
     }
 
     if (mustArchive.length > 0) {
-      const first = mustArchive[0];
-      const what = mustArchive.map((u) => u.usage.documents.map((d) => d.label)).flat();
-      const kinds = [...new Set(what)].join(', ');
+      const one = mustArchive.length === 1;
       if (!canArchive) {
         toast.error('Only a manager or admin can retire a product', {
-          description: `${mustArchive.length} product(s) have ${kinds} and cannot be deleted.`,
+          description: 'It appears in past sales or purchases, so it cannot be deleted.',
         });
       } else {
         const ok = await confirm({
-          title:
-            mustArchive.length === 1
-              ? `Archive "${nameOf(first.id)}" instead?`
-              : `Archive ${mustArchive.length} products instead?`,
-          message: `${mustArchive.length === 1 ? 'It appears' : 'They appear'} in your ${kinds}, so deleting would rewrite past records. Archiving hides ${mustArchive.length === 1 ? 'it' : 'them'} from the catalogue and the POS, keeps every past invoice intact, and can be undone.`,
+          title: one ? 'Archive this product instead?' : 'Archive the selected products instead?',
+          message: one
+            ? 'It appears in past sales or purchases, so deleting would rewrite past records. Archiving hides it from the catalogue and the POS, keeps every past invoice intact, and can be undone.'
+            : 'They appear in past sales or purchases, so deleting would rewrite past records. Archiving hides them from the catalogue and the POS, keeps every past invoice intact, and can be undone.',
           confirmLabel: 'Archive',
         });
         if (ok) {
@@ -297,8 +291,8 @@ export default function Products() {
               await archiveProduct.mutateAsync({ id: u.id });
               archived++;
             } catch (e) {
-              toast.error(`Could not archive "${nameOf(u.id)}"`, {
-                description: e instanceof Error ? e.message : undefined,
+              toast.error('Could not archive a product', {
+                description: `${nameOf(u.id)}${e instanceof Error ? ': ' + e.message : ''}`,
               });
             }
           }
@@ -306,10 +300,8 @@ export default function Products() {
       }
     }
 
-    const done: string[] = [];
-    if (deleted > 0) done.push(`${deleted} deleted`);
-    if (archived > 0) done.push(`${archived} archived`);
-    if (done.length > 0) toast.success(done.join(' · '));
+    if (deleted > 0) toast.success(deleted === 1 ? 'Product deleted' : 'Products deleted');
+    if (archived > 0) toast.success(archived === 1 ? 'Product archived' : 'Products archived');
 
     setSelected(new Set());
   };
@@ -333,8 +325,8 @@ export default function Products() {
     const ok = await confirm({
       title:
         ids.length === 1
-          ? `Restore "${nameOf(ids[0])}" to the catalogue?`
-          : `Restore ${ids.length} products to the catalogue?`,
+          ? 'Restore this product to the catalogue?'
+          : 'Restore the selected products to the catalogue?',
       message:
         ids.length === 1
           ? 'It goes back into the product list, the POS and search. Its past invoices are unchanged.'
@@ -349,12 +341,12 @@ export default function Products() {
         await unarchiveProduct.mutateAsync({ id });
         restored++;
       } catch (e) {
-        toast.error(`Could not restore "${nameOf(id)}"`, {
-          description: e instanceof Error ? e.message : undefined,
+        toast.error('Could not restore a product', {
+          description: `${nameOf(id)}${e instanceof Error ? ': ' + e.message : ''}`,
         });
       }
     }
-    if (restored > 0) toast.success(`${restored} restored`);
+    if (restored > 0) toast.success(restored === 1 ? 'Product restored' : 'Products restored');
     setSelected(new Set());
   };
 
@@ -376,29 +368,65 @@ export default function Products() {
     }
   };
 
-  const upsert = async (p: Product) => {
+  /** Resolves true on success, so the drawer closes only after a real save. */
+  const upsert = async (p: Product): Promise<boolean> => {
     try {
       const exists = list.some((x) => x.id === p.id);
       if (exists) await updateProduct.mutateAsync(p);
       else await createProduct.mutateAsync(p);
       toast.success('Product saved');
+      return true;
     } catch (e) {
       toast.error('Save failed', { description: e instanceof Error ? e.message : undefined });
+      return false;
     }
   };
+  const selectedIds = () => Array.from(selected).join(',');
 
   const editing = quickEditId ? list.find((p) => p.id === quickEditId) : undefined;
   const quickUpdating = quickUpdateId ? list.find((p) => p.id === quickUpdateId) : undefined;
 
+  // Drop any stored column this build no longer knows (e.g. the old 'warranty').
+  const shownColumns = columns.filter((c) => c in COLUMN_META);
+
+  const emptyBody = showArchived ? (
+    <EmptyState
+      compact
+      icon={Archive}
+      title="No archived products"
+      message="Nothing has been retired from the catalogue."
+    />
+  ) : hasFilters ? (
+    <EmptyState
+      compact
+      icon={Search}
+      title="No products match these filters"
+      action={
+        <Button variant="outline" onClick={clearFilters}>
+          Clear filters
+        </Button>
+      }
+    />
+  ) : (
+    <EmptyState
+      compact
+      icon={Package}
+      title="No products yet"
+      message="Add your first product to start selling."
+      action={
+        canCreate ? (
+          <Button onClick={() => nav('/products/new')}>
+            <Plus className="size-4" /> Add product
+          </Button>
+        ) : undefined
+      }
+    />
+  );
+
   return (
     <div>
       <PageHeader
-        title="Products"
-        subtitle={
-          showArchived
-            ? `${formatNumber(totals.products)} archived products`
-            : `${formatNumber(totals.products)} products`
-        }
+        title={showArchived ? 'Archived products' : 'Products'}
         actions={
           <>
             <IconBtn title="Customize columns" onClick={() => setColumnsOpen(true)}>
@@ -408,21 +436,19 @@ export default function Products() {
             {/* Import is switched off until real importers exist (see /import). */}
             <Button
               variant="outline"
-              size="sm"
               disabled={exportBusy}
               onClick={() => void exportCsv('products')}
               title="Write every product to a CSV file in your backup folder"
             >
               <Download className="size-4" /> Export all
             </Button>
-            <Button variant="outline" size="sm" onClick={() => nav('/products/barcodes')}>
+            <Button variant="outline" onClick={() => nav('/products/barcodes')}>
               <Barcode className="size-4" /> Barcode
             </Button>
-            {/* Entering new stock is a stock-keeper's job, so this stays visible
-                for them; a cashier has `products.view` only and never sees it. */}
+            {/* Entering new stock is a stock-keeper's job; a cashier never sees it. */}
             {canCreate && (
               <Button onClick={() => nav('/products/new')}>
-                <Plus className="size-4" /> Add Product
+                <Plus className="size-4" /> Add product
               </Button>
             )}
           </>
@@ -430,10 +456,8 @@ export default function Products() {
       />
 
       <div className="p-6 space-y-4">
-        {/* Product count is the real filtered total; the value sums are
-            PAGE-SCOPED, since only this page is in memory. */}
         {showArchived && (
-          <div className="rounded-lg border border-border bg-secondary/40 px-3 py-2.5 text-xs text-muted-foreground flex items-start gap-2">
+          <div className="rounded-lg border border-border bg-secondary/40 px-3 py-2.5 text-sm text-muted-foreground flex items-start gap-2">
             <Archive className="size-4 mt-0.5 shrink-0" />
             <span>
               These products are retired: they are out of the product list, out of the POS and out
@@ -443,178 +467,128 @@ export default function Products() {
           </div>
         )}
 
-        <div>
-          <div className="text-xs text-muted-foreground mb-1.5">
-            Totals for this page only. Use Reports for full-range figures.
+        {/* Value sums are PAGE-SCOPED (only this page is in memory); the note
+            shows only when the page does not hold every match. */}
+        {!showArchived && (
+          <div>
+            {pageScoped && (
+              <div className="text-xs text-muted-foreground mb-1.5">
+                Totals for this page only. Use Reports for full-range figures.
+              </div>
+            )}
+            <div className="grid grid-cols-3 gap-3">
+              <Stat label="Stock value (buying price)" value={formatBDT(totals.stockValue)} />
+              <Stat label="Retail value" value={formatBDT(totals.retailValue)} tone="primary" />
+              <button
+                type="button"
+                onClick={() => setStockFilter('low')}
+                title="Show low-stock products"
+                className="text-left rounded-xl focus-ring"
+              >
+                <Stat
+                  label="Low stock"
+                  value={String(totals.low)}
+                  tone="warning"
+                  interactive
+                />
+              </button>
+            </div>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Stat
-              label={showArchived ? 'Archived Products' : 'Total Products'}
-              value={formatNumber(totals.products)}
-            />
-            <Stat label="Stock Value (Cost, this page)" value={formatBDT(totals.stockValue)} />
-            <Stat
-              label="Retail Value (this page)"
-              value={formatBDT(totals.retailValue)}
-              tone="primary"
-            />
-            <Stat label="Low Stock (this page)" value={String(totals.low)} tone="warning" />
-          </div>
-        </div>
+        )}
 
         {/* Filters */}
         <Card className="p-3 flex flex-wrap items-center gap-2">
-          <div className="relative flex-1 min-w-[240px]">
+          <div className="relative flex-1 min-w-[220px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
             <Input
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search name, SKU, barcode…"
               className="pl-9"
+              aria-label="Search products"
             />
           </div>
-          <Select value={cat} onChange={setCat}>
+          <UISelect
+            value={cat}
+            onChange={(e) => setCat(e.target.value)}
+            className="w-auto max-w-[12rem]"
+            aria-label="Category"
+          >
             <option value="all">All Categories</option>
             {categories.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
               </option>
             ))}
-          </Select>
-          <Select value={brand} onChange={setBrand}>
+          </UISelect>
+          <UISelect
+            value={brand}
+            onChange={(e) => setBrand(e.target.value)}
+            className="w-auto max-w-[12rem]"
+            aria-label="Brand"
+          >
             <option value="all">All Brands</option>
             {brands.map((b) => (
               <option key={b.id} value={b.id}>
                 {b.name}
               </option>
             ))}
-          </Select>
-          <div className="flex items-center gap-0.5 p-0.5 bg-secondary rounded-md text-xs">
-            {(['all', 'in', 'low', 'out'] as const).map((s) => (
-              <button
-                key={s}
-                onClick={() => setStockFilter(s)}
-                className={cn(
-                  'px-3 py-1 rounded capitalize font-medium transition',
-                  stockFilter === s
-                    ? 'bg-card text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground',
-                )}
-              >
-                {s === 'all' ? 'All' : s === 'in' ? 'In' : s === 'low' ? 'Low' : 'Out'}
-              </button>
-            ))}
-          </div>
-          {/* Catalogue vs archive. A plain toggle rather than a fourth dropdown:
-              it changes WHICH SET of products the whole screen is about, not one
-              more attribute to narrow by. */}
-          <div className="flex items-center gap-0.5 p-0.5 bg-secondary rounded-md text-xs">
-            <button
-              onClick={() => setShowArchived(false)}
-              className={cn(
-                'px-3 py-1 rounded font-medium transition inline-flex items-center gap-1.5',
-                !showArchived
-                  ? 'bg-card text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              Active
-            </button>
-            <button
-              onClick={() => setShowArchived(true)}
-              title="Products retired from the catalogue"
-              className={cn(
-                'px-3 py-1 rounded font-medium transition inline-flex items-center gap-1.5',
-                showArchived
-                  ? 'bg-card text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              <Archive className="size-3.5" /> Archived
-            </button>
-          </div>
-          <Popover
-            width="w-72"
-            align="right"
-            trigger={(_o, set) => (
-              <Button variant="outline" size="sm" onClick={() => set(true)}>
-                <Filter className="size-3.5" /> More
-                <ChevronDown className="size-3" />
-              </Button>
-            )}
-          >
-            {() => (
-              <div className="p-3 space-y-3">
-                <div>
-                  <div className="text-xs text-muted-foreground font-semibold mb-1">
-                    Price range (৳)
-                  </div>
-                  <div className="text-xs text-muted-foreground mb-1.5">
-                    Price filters this page
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <Input
-                      type="number"
-                      value={priceMin}
-                      onChange={(e) =>
-                        setPriceMin(e.target.value === '' ? '' : Number(e.target.value))
-                      }
-                      placeholder="Min"
-                    />
-                    <Input
-                      type="number"
-                      value={priceMax}
-                      onChange={(e) =>
-                        setPriceMax(e.target.value === '' ? '' : Number(e.target.value))
-                      }
-                      placeholder="Max"
-                    />
-                  </div>
-                </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="w-full"
-                  onClick={() => {
-                    setPriceMin('');
-                    setPriceMax('');
-                  }}
-                >
-                  Clear
-                </Button>
-              </div>
-            )}
-          </Popover>
+          </UISelect>
+          <Segmented
+            ariaLabel="Stock"
+            value={stockFilter}
+            onChange={setStockFilter}
+            options={[
+              { value: 'all', label: 'All' },
+              { value: 'in', label: 'In stock' },
+              { value: 'low', label: 'Low' },
+              { value: 'out', label: 'Out of stock' },
+            ]}
+          />
+          {/* Catalogue vs archive: it changes WHICH products the screen is about,
+              so it is a toggle at the end, not another filter. */}
+          <label className="ml-auto flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <span>Show archived</span>
+            <Switch
+              checked={showArchived}
+              onChange={setShowArchived}
+              label="Show archived"
+              showState={false}
+            />
+          </label>
         </Card>
 
         {/* Bulk action bar */}
         {selected.size > 0 && (
-          <div className="rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 flex items-center gap-2">
-            <Badge variant="info">{selected.size} selected</Badge>
+          <div className="rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold tabular">{selected.size}</span>
+            <span className="text-sm">selected</span>
             <div className="flex-1" />
-            <Button variant="outline" size="sm" onClick={() => nav('/products/barcodes')}>
-              <Barcode className="size-3.5" /> Print Barcode
+            <Button
+              variant="outline"
+              onClick={() => nav(`/products/barcodes?ids=${encodeURIComponent(selectedIds())}`)}
+            >
+              <Barcode className="size-4" /> Print barcodes
             </Button>
-            <Button variant="outline" size="sm" onClick={() => nav('/products/price-update')}>
-              Bulk Update
+            <Button
+              variant="outline"
+              onClick={() => nav(`/products/price-update?ids=${encodeURIComponent(selectedIds())}`)}
+            >
+              <Tags className="size-4" /> Bulk price update
             </Button>
-            {/* In the archive the only sensible bulk action is putting them back.
-                Delete is not offered here: an archived product is archived
-                precisely because a document references it, so a delete would be
-                refused — offering it would be a button that always fails. */}
+            {/* In the archive the only bulk action is putting them back: an
+                archived product is referenced by a document, so delete would fail. */}
             {showArchived ? (
               <Button
-                size="sm"
                 disabled={!canArchive}
                 title={canArchive ? undefined : 'Only a manager or admin can restore a product'}
                 onClick={() => restoreProducts(Array.from(selected))}
               >
-                <ArchiveRestore className="size-3.5" /> Restore
+                <ArchiveRestore className="size-4" /> Restore
               </Button>
             ) : (
               <Button
                 variant="destructive"
-                size="sm"
                 disabled={!canDelete && !canArchive}
                 title={
                   canDelete || canArchive
@@ -623,10 +597,10 @@ export default function Products() {
                 }
                 onClick={() => removeProducts(Array.from(selected))}
               >
-                <Trash2 className="size-3.5" /> Delete
+                <Trash2 className="size-4" /> Delete
               </Button>
             )}
-            <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
+            <Button variant="ghost" onClick={() => setSelected(new Set())}>
               Clear
             </Button>
           </div>
@@ -644,11 +618,13 @@ export default function Products() {
                     <th className="w-10 px-3 py-2.5">
                       <input
                         type="checkbox"
+                        className="size-4"
                         checked={allSelectedOnPage}
                         onChange={toggleSelectAll}
+                        aria-label="Select all on this page"
                       />
                     </th>
-                    {columns.map((col) => (
+                    {shownColumns.map((col) => (
                       <ColumnHeader key={col} col={col} />
                     ))}
                     <th className="w-20"></th>
@@ -663,21 +639,28 @@ export default function Products() {
                         selected.has(p.id) && 'bg-primary/5',
                       )}
                     >
-                      <td className="px-3 py-2.5">
+                      <td className="px-3 py-2">
                         <input
                           type="checkbox"
+                          className="size-4"
                           checked={selected.has(p.id)}
                           onChange={() => toggleSelect(p.id)}
+                          aria-label="Select"
                         />
                       </td>
-                      {columns.map((col) => (
-                        <Cell key={col} col={col} p={p} catName={categoryName} brandNameFn={brandName} />
+                      {shownColumns.map((col) => (
+                        <Cell
+                          key={col}
+                          col={col}
+                          p={p}
+                          catName={categoryName}
+                          brandNameFn={brandName}
+                          skuUnderName={!shownColumns.includes('sku')}
+                        />
                       ))}
-                      <td className="px-2 py-2.5">
+                      <td className="px-2 py-2">
                         <RowActions
-                          // In the archive, Restore replaces "Update price &
-                          // stock" as the primary action: re-pricing something
-                          // that is out of the catalogue is not the job here.
+                          // In the archive, Restore is the primary row action.
                           onRestore={
                             showArchived && canArchive ? () => restoreProducts([p.id]) : undefined
                           }
@@ -687,8 +670,7 @@ export default function Products() {
                           onEdit={canEdit ? () => setQuickEditId(p.id) : undefined}
                           onView={() => nav(`/products/${p.id}`)}
                           onDuplicate={canCreate ? () => duplicate(p.id) : undefined}
-                          // Hidden rather than disabled for a cashier: a row of
-                          // greyed-out buttons they can never use is just noise.
+                          // Hidden rather than disabled for a cashier.
                           onDelete={
                             !showArchived && (canDelete || canArchive)
                               ? () => removeProducts([p.id])
@@ -700,11 +682,7 @@ export default function Products() {
                   ))}
                   {filtered.length === 0 && (
                     <tr>
-                      <td colSpan={columns.length + 2} className="px-4 py-12 text-center text-muted-foreground">
-                        {showArchived
-                          ? 'No archived products. Nothing has been retired from the catalogue.'
-                          : 'No products match these filters.'}
-                      </td>
+                      <td colSpan={shownColumns.length + 2}>{emptyBody}</td>
                     </tr>
                   )}
                 </tbody>
@@ -722,76 +700,66 @@ export default function Products() {
           </Card>
         ) : (
           <div className="space-y-3">
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-            {filtered.map((p) => {
-              const oos = p.stock <= 0;
-              const low = p.stock > 0 && p.stock <= p.reorderLevel;
-              return (
-                <button
-                  key={p.id}
-                  // Tapping a card opens the small price/stock popup, not the
-                  // 25-field form — that is what a tap on a product means here.
-                  // In the archive it restores instead: re-pricing a retired
-                  // product is not a thing anyone came here to do.
-                  onClick={() =>
-                    showArchived ? void restoreProducts([p.id]) : setQuickUpdateId(p.id)
-                  }
-                  title={showArchived ? 'Restore to the catalogue' : 'Update price & stock'}
-                  className="group text-left rounded-xl border border-border bg-card hover:border-primary hover:shadow-md transition overflow-hidden"
-                >
-                  <div className="aspect-[4/3] bg-gradient-to-br from-secondary to-muted grid place-items-center relative">
-                    <ProductImage url={p.image} categoryId={p.categoryId} size={64} rounded="lg" />
-                    <div className="absolute top-2 right-2">
-                      {showArchived ? (
-                        <Badge>Archived</Badge>
-                      ) : (
-                        <Badge variant={oos ? 'destructive' : low ? 'warning' : 'success'}>
-                          {p.stock} {p.unit}
-                        </Badge>
-                      )}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+              {filtered.map((p) => {
+                const oos = p.stock <= 0;
+                const low = p.stock > 0 && p.stock <= p.reorderLevel;
+                return (
+                  <button
+                    key={p.id}
+                    // A tap opens the small price/stock popup; in the archive it restores.
+                    onClick={() =>
+                      showArchived ? void restoreProducts([p.id]) : setQuickUpdateId(p.id)
+                    }
+                    title={showArchived ? 'Restore to the catalogue' : 'Update price & stock'}
+                    className="group text-left rounded-xl border border-border bg-card hover:border-primary hover:shadow-md transition overflow-hidden"
+                  >
+                    <div className="aspect-[4/3] bg-gradient-to-br from-secondary to-muted grid place-items-center relative">
+                      <ProductImage url={p.image} categoryId={p.categoryId} size={64} rounded="lg" />
+                      <div className="absolute top-2 right-2">
+                        {showArchived ? (
+                          <Badge>Archived</Badge>
+                        ) : (
+                          <Badge variant={oos ? 'destructive' : low ? 'warning' : 'success'}>
+                            {p.stock} {p.unit}
+                          </Badge>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  <div className="p-2.5">
-                    <div className="text-xs text-muted-foreground font-mono truncate">{p.sku}</div>
-                    <div className="text-sm font-medium leading-tight line-clamp-2 mt-0.5 min-h-[2.2em]">
-                      {p.name}
-                    </div>
-                    <div className="text-xs text-muted-foreground mt-0.5 truncate">
-                      {brandName(p.brandId)} · {categoryName(p.categoryId)}
-                    </div>
-                    <div className="flex items-center justify-between mt-2">
-                      <div className="text-sm font-bold tabular">
+                    <div className="p-2.5">
+                      <div className="text-xs text-muted-foreground font-mono truncate" data-no-i18n>
+                        {p.sku}
+                      </div>
+                      <div className="text-sm font-medium leading-tight line-clamp-2 mt-0.5 min-h-[2.2em]">
+                        {p.name}
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-0.5 truncate">
+                        {brandName(p.brandId)} · {categoryName(p.categoryId)}
+                      </div>
+                      <div className="text-sm font-bold tabular mt-2">
                         ৳ {formatBDT(p.price, { withSymbol: false })}
                       </div>
-                      {p.cost > 0 && (
-                        <div className="text-xs text-muted-foreground tabular">
-                          cost ৳ {p.cost}
-                        </div>
-                      )}
                     </div>
-                  </div>
-                </button>
-              );
-            })}
-            {filtered.length === 0 && (
-              <Card className="p-12 text-center text-muted-foreground col-span-2 md:col-span-3 lg:col-span-4 xl:col-span-5">
-                {showArchived
-                  ? 'No archived products. Nothing has been retired from the catalogue.'
-                  : 'No products match these filters.'}
-              </Card>
-            )}
-          </div>
-          <Card className="overflow-hidden">
-            <Pagination
-              page={page}
-              pageSize={pageSize}
-              total={total}
-              onPageChange={setPage}
-              onPageSizeChange={setPageSize}
-              label="products"
-              busy={productsQuery.isFetching}
-            />
-          </Card>
+                  </button>
+                );
+              })}
+              {filtered.length === 0 && (
+                <Card className="col-span-2 md:col-span-3 lg:col-span-4 xl:col-span-5">
+                  {emptyBody}
+                </Card>
+              )}
+            </div>
+            <Card className="overflow-hidden">
+              <Pagination
+                page={page}
+                pageSize={pageSize}
+                total={total}
+                onPageChange={setPage}
+                onPageSizeChange={setPageSize}
+                label="products"
+                busy={productsQuery.isFetching}
+              />
+            </Card>
           </div>
         )}
       </div>
@@ -805,17 +773,17 @@ export default function Products() {
       <Drawer
         open={!!quickEditId}
         onClose={() => setQuickEditId(null)}
-        width="max-w-3xl"
-        title="Edit Product"
+        width="max-w-2xl"
+        title="Edit product"
         subtitle={editing?.name}
       >
         {editing && (
           <ProductForm
             asDrawer
             initial={editing}
-            onSave={(p) => {
-              upsert(p);
-              setQuickEditId(null);
+            onSave={async (p) => {
+              // Close only after the save lands, so typed changes survive a failure.
+              if (await upsert(p)) setQuickEditId(null);
             }}
             onCancel={() => setQuickEditId(null)}
             onDelete={() => {
@@ -832,35 +800,17 @@ export default function Products() {
 function ViewToggle() {
   const { view, setView } = useProductsUI();
   return (
-    <div className="flex items-center gap-0.5 p-0.5 bg-secondary rounded-md text-xs">
-      <button
-        onClick={() => setView('table')}
-        title="Table view"
-        className={cn(
-          'h-7 px-2 rounded inline-flex items-center gap-1 transition',
-          view === 'table'
-            ? 'bg-card shadow-sm'
-            : 'text-muted-foreground hover:text-foreground',
-        )}
-      >
-        <List className="size-3.5" />
-      </button>
-      <button
-        onClick={() => setView('grid')}
-        title="Grid view"
-        className={cn(
-          'h-7 px-2 rounded inline-flex items-center gap-1 transition',
-          view === 'grid'
-            ? 'bg-card shadow-sm'
-            : 'text-muted-foreground hover:text-foreground',
-        )}
-      >
-        <LayoutGrid className="size-3.5" />
-      </button>
-    </div>
+    <Segmented
+      ariaLabel="View"
+      value={view}
+      onChange={setView}
+      options={[
+        { value: 'table', label: <List className="size-4" />, title: 'Table view' },
+        { value: 'grid', label: <LayoutGrid className="size-4" />, title: 'Grid view' },
+      ]}
+    />
   );
 }
-
 function ColumnHeader({ col }: { col: ProductColumn }) {
   const meta = COLUMN_META[col];
   return (
@@ -881,11 +831,14 @@ function Cell({
   p,
   catName,
   brandNameFn,
+  skuUnderName,
 }: {
   col: ProductColumn;
   p: Product;
   catName: (id: string) => string;
   brandNameFn: (id: string) => string;
+  /** SKU under the name, unless the SKU column is also showing. */
+  skuUnderName: boolean;
 }) {
   const meta = COLUMN_META[col];
   const align = meta.align === 'right' ? 'text-right tabular' : '';
@@ -899,25 +852,33 @@ function Cell({
       );
     case 'sku':
       return (
-        <td className="px-2 py-2.5 text-xs text-muted-foreground font-mono">{p.sku}</td>
+        <td className="px-2 py-2.5 text-xs text-muted-foreground font-mono whitespace-nowrap" data-no-i18n>
+          {p.sku}
+        </td>
       );
     case 'barcode':
       return (
-        <td className="px-2 py-2.5 text-xs text-muted-foreground font-mono">{p.barcode}</td>
+        <td className="px-2 py-2.5 text-xs text-muted-foreground font-mono whitespace-nowrap" data-no-i18n>
+          {p.barcode}
+        </td>
       );
     case 'name':
       return (
         <td className="px-2 py-2.5">
           <div className="font-medium">{p.name}</div>
-          <div className="text-xs text-muted-foreground font-mono">{p.sku}</div>
+          {skuUnderName && p.sku && (
+            <div className="text-xs text-muted-foreground font-mono" data-no-i18n>
+              {p.sku}
+            </div>
+          )}
         </td>
       );
     case 'category':
-      return <td className="px-2 py-2.5">{catName(p.categoryId)}</td>;
+      return <td className="px-2 py-2.5 whitespace-nowrap">{catName(p.categoryId)}</td>;
     case 'brand':
-      return <td className="px-2 py-2.5">{brandNameFn(p.brandId)}</td>;
+      return <td className="px-2 py-2.5 whitespace-nowrap">{brandNameFn(p.brandId)}</td>;
     case 'unit':
-      return <td className="px-2 py-2.5 text-xs">{p.unit}</td>;
+      return <td className="px-2 py-2.5">{p.unit}</td>;
     case 'cost':
       return (
         <td className={`px-2 py-2.5 ${align} tabular`}>
@@ -950,23 +911,37 @@ function Cell({
           {p.contractorPrice ? formatBDT(p.contractorPrice, { withSymbol: false }) : '—'}
         </td>
       );
-    case 'stock':
+    // Plain number when stock is fine; a Low / Out of stock badge only on the
+    // rows that need attention (replaces the old always-green Status column).
+    case 'stock': {
+      const tracked = p.manageStock !== false && !p.archivedAt;
+      const oos = tracked && p.stock <= 0;
+      const low = tracked && !oos && p.stock <= p.reorderLevel;
       return (
-        <td className={`px-2 py-2.5 ${align}`}>
+        <td className={`px-2 py-2.5 ${align} whitespace-nowrap`}>
+          {oos && (
+            <Badge variant="destructive" className="mr-2">
+              Out of stock
+            </Badge>
+          )}
+          {low && (
+            <Badge variant="warning" className="mr-2">
+              Low
+            </Badge>
+          )}
           {p.stock} <span className="text-muted-foreground text-xs">{p.unit}</span>
         </td>
       );
+    }
     case 'reorderLevel':
       return (
         <td className={`px-2 py-2.5 ${align} text-muted-foreground`}>{p.reorderLevel}</td>
       );
     case 'tax':
       return <td className={`px-2 py-2.5 ${align}`}>{p.tax ?? 0}%</td>;
-    case 'warranty':
-      return <td className="px-2 py-2.5 text-muted-foreground text-xs">—</td>;
     case 'updatedAt':
       return (
-        <td className="px-2 py-2.5 text-muted-foreground text-xs">
+        <td className="px-2 py-2.5 text-muted-foreground whitespace-nowrap">
           {p.updatedAt ? relativeTime(p.updatedAt) : '—'}
         </td>
       );
@@ -986,11 +961,11 @@ function Cell({
       return (
         <td className="px-2 py-2.5">
           {oos ? (
-            <Badge variant="destructive">Out</Badge>
+            <Badge variant="destructive">Out of stock</Badge>
           ) : low ? (
             <Badge variant="warning">Low</Badge>
           ) : (
-            <Badge variant="success">In</Badge>
+            <Badge variant="success">In stock</Badge>
           )}
         </td>
       );
@@ -1030,34 +1005,30 @@ function RowActions({
       {onRestore && (
         <button
           onClick={onRestore}
-          className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-border bg-card text-xs font-medium hover:bg-secondary hover:border-primary/50 transition"
+          className="h-9 px-3 inline-flex items-center gap-1.5 rounded-md border border-border bg-card text-sm font-medium hover:bg-secondary hover:border-primary/50 transition focus-ring"
           title="Restore to the catalogue"
         >
-          <ArchiveRestore className="size-3.5" />
-          <span className="hidden xl:inline">Restore</span>
+          <ArchiveRestore className="size-4" />
+          <span className="hidden lg:inline">Restore</span>
         </button>
       )}
       {onQuickUpdate && (
         <button
           onClick={onQuickUpdate}
-          className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-border bg-card text-xs font-medium hover:bg-secondary hover:border-primary/50 transition"
+          className="h-9 px-3 inline-flex items-center gap-1.5 rounded-md border border-border bg-card text-sm font-medium hover:bg-secondary hover:border-primary/50 transition focus-ring"
           title="Update price & stock"
         >
-          <Tags className="size-3.5" />
-          <span className="hidden xl:inline">Update</span>
+          <Tags className="size-4" />
+          <span className="hidden lg:inline">Update</span>
         </button>
       )}
       <Popover
         align="right"
         width="w-52"
         trigger={(_o, set) => (
-          <button
-            onClick={() => set(true)}
-            className="size-7 grid place-items-center rounded hover:bg-secondary text-muted-foreground hover:text-foreground"
-            title="More"
-          >
-            <MoreHorizontal className="size-3.5" />
-          </button>
+          <IconButton size="sm" label="More actions" onClick={() => set(true)}>
+            <MoreHorizontal className="size-4" />
+          </IconButton>
         )}
       >
         {(close) => (
@@ -1126,11 +1097,11 @@ function MenuItem({
     <button
       onClick={onClick}
       className={cn(
-        'w-full flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-secondary',
+        'w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-secondary',
         danger && 'text-destructive hover:bg-destructive/10',
       )}
     >
-      <Icon className="size-3.5" /> {label}
+      <Icon className="size-4" /> {label}
     </button>
   );
 }
@@ -1139,13 +1110,15 @@ function Stat({
   label,
   value,
   tone,
+  interactive,
 }: {
   label: string;
   value: string;
   tone?: 'primary' | 'warning';
+  interactive?: boolean;
 }) {
   return (
-    <Card className="p-4">
+    <Card className={cn('p-3', interactive && 'hover:border-warning/60 transition')}>
       <div className="text-xs text-muted-foreground">{label}</div>
       <div
         className={cn(
@@ -1157,26 +1130,6 @@ function Stat({
         {value}
       </div>
     </Card>
-  );
-}
-
-function Select<T extends string>({
-  value,
-  onChange,
-  children,
-}: {
-  value: T;
-  onChange: (v: T) => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value as T)}
-      className="h-10 px-3 text-sm rounded-md border border-input bg-background outline-none focus:ring-2 focus:ring-ring/50"
-    >
-      {children}
-    </select>
   );
 }
 
@@ -1200,5 +1153,3 @@ function IconBtn({
   );
 }
 
-// suppress unused
-void Link;

@@ -1,22 +1,21 @@
 import { useMemo, useRef, useState, useEffect } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useBackup } from '@/stores/backup';
 import {
   Search,
   Plus,
   Settings2,
   Download,
-  LayoutGrid,
-  List,
   Edit2,
-  Trash2,
   HandCoins,
-  Eye,
   Phone,
   Mail,
 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
+import { IconButton } from '@/components/ui/IconButton';
+import { Segmented } from '@/components/ui/Segmented';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
@@ -36,7 +35,12 @@ import type { Supplier } from '@/types/domain';
 import { Avatar } from '@/components/contacts/Avatar';
 import { SupplierForm } from '@/components/contacts/SupplierForm';
 import { PaySupplierModal } from '@/components/contacts/PaySupplierModal';
-import { formatBDT, formatNumber, cn } from '@/lib/utils';
+import { formatBDT, cn } from '@/lib/utils';
+import { formatDate } from '@/lib/formatDate';
+import { MoneyStat, PageScopeNote, TermsText, TH, ViewToggle } from '@/components/contacts/shared';
+
+/** The avatar column only repeats the name. */
+const PICKABLE_COLS = ALL_SUPPLIER_COLUMNS.filter((c) => c !== 'avatar');
 
 export default function Suppliers() {
   const nav = useNavigate();
@@ -50,17 +54,19 @@ export default function Suppliers() {
   const {
     supplierView,
     setSupplierView,
-    supplierCols,
+    supplierCols: savedCols,
     toggleSupplierCol,
     moveSupplierCol,
     resetSupplierCols,
   } = useContactsUI();
+  const supplierCols = savedCols.filter((c) => c !== 'avatar');
 
   const [searchParams] = useSearchParams();
   const [q, setQ] = useState(() => searchParams.get('q') ?? '');
   const [colsOpen, setColsOpen] = useState(false);
   const [drawerId, setDrawerId] = useState<string | 'new' | null>(null);
   const [payFor, setPayFor] = useState<string | null>(null);
+  const [dueFilter, setDueFilter] = useState<'all' | 'has' | 'none'>('all');
 
   // Load ONE page on mount (replaces the old full-table hydrate). An initial ?q=
   // is folded into the same call so mounting costs a single round-trip.
@@ -83,18 +89,23 @@ export default function Suppliers() {
     return () => clearTimeout(handle);
   }, [q, loadPage]);
 
-  // The server already applied the search, so this page's rows ARE the result.
-  const filtered = items;
+  // The server already applied the search; "Has payable" narrows this page.
+  const filtered = useMemo(
+    () =>
+      items.filter((x) =>
+        dueFilter === 'has' ? x.due > 0 : dueFilter === 'none' ? x.due === 0 : true,
+      ),
+    [items, dueFilter],
+  );
 
   // These sums cover the LOADED PAGE only — the rest was never fetched.
   const totals = useMemo(
     () => ({
-      suppliers: items.length,
-      purchase: items.reduce((s, x) => s + x.totalPurchase, 0),
-      paid: items.reduce((s, x) => s + (x.totalPaid ?? 0), 0),
-      payable: items.reduce((s, x) => s + x.due, 0),
+      purchase: filtered.reduce((s, x) => s + x.totalPurchase, 0),
+      paid: filtered.reduce((s, x) => s + (x.totalPaid ?? 0), 0),
+      payable: filtered.reduce((s, x) => s + x.due, 0),
     }),
-    [items],
+    [filtered],
   );
 
   const editing = drawerId === 'new' ? undefined : drawerId ? items.find((x) => x.id === drawerId) : undefined;
@@ -103,17 +114,15 @@ export default function Suppliers() {
     <div>
       <PageHeader
         title="Suppliers"
-        subtitle={`${formatNumber(total)} suppliers`}
         actions={
           <>
-            <IconBtn title="Customize columns" onClick={() => setColsOpen(true)}>
+            <IconButton variant="outline" label="Customize columns" onClick={() => setColsOpen(true)}>
               <Settings2 className="size-4" />
-            </IconBtn>
+            </IconButton>
             <ViewToggle value={supplierView} onChange={setSupplierView} />
             {/* Import is switched off until real importers exist (see /import). */}
             <Button
               variant="outline"
-              size="sm"
               disabled={exportBusy}
               onClick={() => void exportCsv('suppliers')}
               title="Write every supplier to a CSV file in your backup folder"
@@ -128,29 +137,41 @@ export default function Suppliers() {
       />
 
       <div className="p-6 space-y-4">
-        {/* KPI strip — PAGE-SCOPED. Only the current page is in memory. */}
+        {/* KPI strip — page-scoped; the note says so only when it matters. */}
         <div>
-          <div className="text-xs text-muted-foreground mb-1.5">
-            Totals for this page only. Use Reports for full-range figures.
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Stat label="Suppliers (this page)" value={String(totals.suppliers)} />
-            <Stat label="Total Purchase (this page)" value={formatBDT(totals.purchase)} />
-            <Stat label="Total Paid (this page)" value={formatBDT(totals.paid)} tone="success" />
-            <Stat label="Payable (this page)" value={formatBDT(totals.payable)} tone="destructive" />
+          <PageScopeNote total={total} pageSize={query.pageSize} />
+          <div className="grid grid-cols-3 gap-3">
+            <MoneyStat
+              label="Payable"
+              value={formatBDT(totals.payable)}
+              tone={totals.payable > 0 ? 'destructive' : undefined}
+            />
+            <MoneyStat label="Total Purchase" value={formatBDT(totals.purchase)} />
+            <MoneyStat label="Total Paid" value={formatBDT(totals.paid)} tone="success" />
           </div>
         </div>
 
-        <Card className="p-3">
-          <div className="relative">
+        <Card className="p-3 flex flex-wrap items-center gap-2">
+          <div className="relative flex-1 min-w-[240px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
             <Input
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search name, company, phone…"
               className="pl-9"
+              aria-label="Search suppliers"
             />
           </div>
+          <Segmented
+            ariaLabel="Payable"
+            value={dueFilter}
+            onChange={setDueFilter}
+            options={[
+              { value: 'all', label: 'All' },
+              { value: 'has', label: 'Has payable' },
+              { value: 'none', label: 'Nothing owed' },
+            ]}
+          />
         </Card>
 
         {/* Skeleton while the backend list loads; empty state handles no rows. */}
@@ -160,64 +181,52 @@ export default function Suppliers() {
           <Card className="overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="text-xs text-muted-foreground bg-secondary/50 sticky top-0">
+                <thead className="bg-secondary/50 sticky top-0">
                   <tr>
                     {supplierCols.map((c) => (
                       <th
                         key={c}
                         className={cn(
-                          'font-medium px-3 py-2.5 whitespace-nowrap',
+                          TH,
                           SUPPLIER_COLUMN_META[c].align === 'right' ? 'text-right' : 'text-left',
                         )}
                       >
                         {SUPPLIER_COLUMN_META[c].label}
                       </th>
                     ))}
-                    <th className="w-32"></th>
+                    <th className={cn(TH, 'w-28')}>
+                      <span className="sr-only">Actions</span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {filtered.map((s) => (
-                    <tr key={s.id} className="border-t border-border hover:bg-secondary/40 group">
+                    <tr
+                      key={s.id}
+                      // The whole row opens the supplier's khata.
+                      onClick={() => nav(`/contacts/suppliers/${s.id}`)}
+                      className="border-t border-border hover:bg-secondary/40 cursor-pointer"
+                    >
                       {supplierCols.map((col) => (
                         <SupplierCell key={col} col={col} s={s} />
                       ))}
-                      <td className="px-2 py-2.5">
-                        <div className="flex items-center justify-end gap-0.5 opacity-60 group-hover:opacity-100">
-                          <Link
-                            to={`/contacts/suppliers/${s.id}`}
-                            className="size-7 grid place-items-center rounded hover:bg-secondary"
-                            title="Open"
-                          >
-                            <Eye className="size-3.5" />
-                          </Link>
-                          <button
-                            onClick={() => setDrawerId(s.id)}
-                            className="size-7 grid place-items-center rounded hover:bg-secondary"
-                            title="Quick edit"
-                          >
-                            <Edit2 className="size-3.5" />
-                          </button>
-                          {s.due > 0 && (
-                            <button
-                              onClick={() => setPayFor(s.id)}
-                              className="size-7 grid place-items-center rounded hover:bg-success/10 text-success"
-                              title="Pay supplier"
-                            >
-                              <HandCoins className="size-3.5" />
-                            </button>
-                          )}
-                        </div>
+                      <td className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
+                        {/* Invisible at zero payable so the column keeps its place. */}
+                        <Button
+                          variant="outline"
+                          onClick={() => setPayFor(s.id)}
+                          className={cn(s.due > 0 ? '' : 'invisible')}
+                          tabIndex={s.due > 0 ? 0 : -1}
+                        >
+                          <HandCoins className="size-4 text-success" /> Pay
+                        </Button>
                       </td>
                     </tr>
                   ))}
                   {filtered.length === 0 && (
                     <tr>
-                      <td
-                        colSpan={supplierCols.length + 1}
-                        className="px-4 py-12 text-center text-muted-foreground"
-                      >
-                        No suppliers match.
+                      <td colSpan={supplierCols.length + 1}>
+                        <EmptyState compact title="No suppliers match." message="Clear the search, or add a new supplier." />
                       </td>
                     </tr>
                   )}
@@ -248,18 +257,22 @@ export default function Suppliers() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <div className="font-semibold truncate">{s.name}</div>
-                      {s.paymentTerms && <Badge variant="info">{s.paymentTerms}</Badge>}
+                      {s.paymentTerms && (
+                        <Badge variant="info">
+                          <TermsText terms={s.paymentTerms} />
+                        </Badge>
+                      )}
                     </div>
                     {s.company && (
-                      <div className="text-xs text-muted-foreground">{s.company}</div>
+                      <div className="text-sm text-muted-foreground">{s.company}</div>
                     )}
-                    <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1">
-                        <Phone className="size-3" /> {s.phone}
+                    <div className="flex items-center gap-3 mt-1 text-sm text-muted-foreground">
+                      <span className="flex items-center gap-1 whitespace-nowrap">
+                        <Phone className="size-3.5" /> {s.phone}
                       </span>
                       {s.email && (
                         <span className="flex items-center gap-1 truncate">
-                          <Mail className="size-3" /> {s.email}
+                          <Mail className="size-3.5" /> {s.email}
                         </span>
                       )}
                     </div>
@@ -285,18 +298,18 @@ export default function Suppliers() {
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 mt-3" onClick={(e) => e.stopPropagation()}>
-                  <Button variant="outline" size="sm" onClick={() => setDrawerId(s.id)}>
-                    <Edit2 className="size-3.5" /> Edit
+                  <Button variant="outline" onClick={() => setDrawerId(s.id)}>
+                    <Edit2 className="size-4" /> Edit
                   </Button>
-                  <Button size="sm" disabled={s.due === 0} onClick={() => setPayFor(s.id)}>
-                    <HandCoins className="size-3.5" /> Pay
+                  <Button disabled={s.due === 0} onClick={() => setPayFor(s.id)}>
+                    <HandCoins className="size-4" /> Pay
                   </Button>
                 </div>
               </Card>
             ))}
             {filtered.length === 0 && (
-              <Card className="p-12 text-center text-muted-foreground md:col-span-2 xl:col-span-3">
-                No suppliers match.
+              <Card className="md:col-span-2 xl:col-span-3">
+                <EmptyState compact title="No suppliers match." message="Clear the search, or add a new supplier." />
               </Card>
             )}
           </div>
@@ -317,7 +330,7 @@ export default function Suppliers() {
 
       {colsOpen && (
         <ColumnsPanel
-          all={ALL_SUPPLIER_COLUMNS}
+          all={PICKABLE_COLS}
           visible={supplierCols}
           meta={SUPPLIER_COLUMN_META}
           onToggle={toggleSupplierCol}
@@ -330,9 +343,9 @@ export default function Suppliers() {
       <Drawer
         open={drawerId !== null}
         onClose={() => setDrawerId(null)}
-        width="max-w-3xl"
+        width="max-w-xl"
         title={drawerId === 'new' ? 'Add Supplier' : 'Edit Supplier'}
-        subtitle={drawerId === 'new' ? 'New trade contact' : editing?.name}
+        subtitle={drawerId === 'new' ? undefined : editing?.name}
       >
         <SupplierForm
           asDrawer
@@ -365,43 +378,55 @@ function SupplierCell({ col, s }: { col: SupplierColumn; s: Supplier }) {
   switch (col) {
     case 'avatar':
       return (
-        <td className="px-3 py-2.5">
+        <td className="px-3 py-3">
           <Avatar name={s.name} size={32} variant="muted" />
         </td>
       );
     case 'name':
-      return <td className="px-3 py-2.5 font-semibold">{s.name}</td>;
+      return <td className="px-3 py-3 font-semibold">{s.name}</td>;
     case 'company':
-      return <td className="px-3 py-2.5 text-muted-foreground text-sm">{s.company ?? '—'}</td>;
+      return <td className="px-3 py-3 text-muted-foreground text-sm">{s.company ?? '—'}</td>;
     case 'contactPerson':
-      return <td className="px-3 py-2.5 text-muted-foreground text-sm">{s.contactPerson ?? '—'}</td>;
+      return <td className="px-3 py-3 text-muted-foreground text-sm">{s.contactPerson ?? '—'}</td>;
     case 'phone':
-      return <td className="px-3 py-2.5 text-muted-foreground font-mono text-xs">{s.phone}</td>;
+      return <td className="px-3 py-3 text-muted-foreground whitespace-nowrap">{s.phone}</td>;
     case 'email':
-      return <td className="px-3 py-2.5 text-muted-foreground text-xs truncate max-w-[180px]">{s.email ?? '—'}</td>;
+      return <td className="px-3 py-3 text-muted-foreground text-xs truncate max-w-[180px]">{s.email ?? '—'}</td>;
     case 'paymentTerms':
       return (
-        <td className="px-3 py-2.5">
-          {s.paymentTerms ? <Badge variant="info">{s.paymentTerms}</Badge> : <span className="text-muted-foreground text-xs">—</span>}
+        <td className="px-3 py-3">
+          {s.paymentTerms ? (
+            <Badge variant="info">
+              <TermsText terms={s.paymentTerms} />
+            </Badge>
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          )}
         </td>
       );
     case 'leadTime':
       return (
-        <td className={cn('px-3 py-2.5 text-muted-foreground', align)}>
-          {s.leadTimeDays ? `${s.leadTimeDays}d` : '—'}
+        <td className={cn('px-3 py-3 text-muted-foreground', align)}>
+          {s.leadTimeDays ? (
+            <>
+              <span>{s.leadTimeDays}</span> <span>days</span>
+            </>
+          ) : (
+            '—'
+          )}
         </td>
       );
     case 'totalPurchase':
-      return <td className={cn('px-3 py-2.5', align)}>{formatBDT(s.totalPurchase, { withSymbol: false })}</td>;
+      return <td className={cn('px-3 py-3', align)}>{formatBDT(s.totalPurchase, { withSymbol: false })}</td>;
     case 'totalPaid':
       return (
-        <td className={cn('px-3 py-2.5 text-success', align)}>
+        <td className={cn('px-3 py-3 text-success', align)}>
           {formatBDT(s.totalPaid ?? 0, { withSymbol: false })}
         </td>
       );
     case 'due':
       return (
-        <td className={cn('px-3 py-2.5', align)}>
+        <td className={cn('px-3 py-3', align)}>
           {s.due > 0 ? (
             <span className="text-destructive">{formatBDT(s.due, { withSymbol: false })}</span>
           ) : (
@@ -410,10 +435,10 @@ function SupplierCell({ col, s }: { col: SupplierColumn; s: Supplier }) {
         </td>
       );
     case 'lastPurchase':
-      return <td className="px-3 py-2.5 text-xs text-muted-foreground">{s.lastPurchaseAt ?? '—'}</td>;
+      return <td className="px-3 py-3 text-muted-foreground whitespace-nowrap">{formatDate(s.lastPurchaseAt)}</td>;
     case 'tags':
       return (
-        <td className="px-3 py-2.5">
+        <td className="px-3 py-3">
           <div className="flex flex-wrap gap-1">
             {(s.tags ?? []).map((t) => (
               <span
@@ -428,83 +453,3 @@ function SupplierCell({ col, s }: { col: SupplierColumn; s: Supplier }) {
       );
   }
 }
-
-function ViewToggle({
-  value,
-  onChange,
-}: {
-  value: 'table' | 'grid';
-  onChange: (v: 'table' | 'grid') => void;
-}) {
-  return (
-    <div className="flex items-center gap-0.5 p-0.5 bg-secondary rounded-md text-xs">
-      <button
-        onClick={() => onChange('table')}
-        title="Table"
-        className={cn(
-          'h-7 px-2 rounded inline-flex items-center gap-1 transition',
-          value === 'table' ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground',
-        )}
-      >
-        <List className="size-3.5" />
-      </button>
-      <button
-        onClick={() => onChange('grid')}
-        title="Grid"
-        className={cn(
-          'h-7 px-2 rounded inline-flex items-center gap-1 transition',
-          value === 'grid' ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground',
-        )}
-      >
-        <LayoutGrid className="size-3.5" />
-      </button>
-    </div>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone?: 'success' | 'destructive';
-}) {
-  return (
-    <Card className="p-4">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div
-        className={cn(
-          'text-xl font-bold mt-0.5 tabular',
-          tone === 'success' && 'text-success',
-          tone === 'destructive' && 'text-destructive',
-        )}
-      >
-        {value}
-      </div>
-    </Card>
-  );
-}
-
-function IconBtn({
-  children,
-  title,
-  onClick,
-}: {
-  children: React.ReactNode;
-  title: string;
-  onClick?: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      title={title}
-      className="h-10 w-10 grid place-items-center rounded-md border border-border hover:bg-secondary text-muted-foreground hover:text-foreground transition"
-    >
-      {children}
-    </button>
-  );
-}
-
-void Trash2;

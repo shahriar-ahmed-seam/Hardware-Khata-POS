@@ -1,266 +1,176 @@
-import { useEffect } from 'react';
-import { Save, Palette, Sun, Moon, Monitor, RotateCcw } from 'lucide-react';
+import { Sun, Moon, Monitor, RotateCcw, Check } from 'lucide-react';
 import { SettingsHeader } from '@/components/settings/SettingsHeader';
+import { AutoSaveNote } from '@/components/settings/AutoSaveNote';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { FONT_SCALE_STEPS, snapFontScale, useSettings } from '@/stores/settings';
-import { useBranches } from '@/stores/branches';
+import { FONT_SCALE_STEPS, snapFontScale, useSettings, type FontScale } from '@/stores/settings';
 import { useTheme } from '@/stores/theme';
-import { useUI } from '@/stores/ui';
-import { toast } from '@/stores/toast';
+import { confirm } from '@/stores/confirm';
 import { cn } from '@/lib/utils';
-import { labelFor } from '@/lib/labels';
 
+/**
+ * TEXT SIZE & THEME
+ *
+ * Text size first: it is the control an older owner comes here for. Every
+ * choice saves at once (writePref) and App.tsx applies hue and size live.
+ * Density is gone from this page: nothing in the app reads it any more.
+ */
+
+// Hues that clash with the success / warning / danger colours are not offered.
 const PRESET_HUES = [
   { name: 'Indigo', hue: 243 },
   { name: 'Blue', hue: 217 },
   { name: 'Sky', hue: 199 },
   { name: 'Teal', hue: 173 },
-  { name: 'Emerald', hue: 152 },
-  { name: 'Amber', hue: 38 },
-  { name: 'Rose', hue: 350 },
   { name: 'Violet', hue: 270 },
 ];
 
-/**
- * Applies the accent hue to the global CSS custom property by overriding
- * --primary, --ring, and --sidebar-accent at the :root level. Lightness/
- * saturation are kept constant to match the original indigo palette.
- */
-function applyAccentHue(hue: number) {
-  const root = document.documentElement;
-  root.style.setProperty('--primary', `${hue} 75% 58%`);
-  root.style.setProperty('--ring', `${hue} 75% 58%`);
-  root.style.setProperty('--sidebar-accent', `${hue} 75% 58%`);
-}
+const SIZE_LABEL: Record<FontScale, string> = {
+  1: 'Normal',
+  1.15: 'Large',
+  1.3: 'Larger',
+  1.45: 'Largest',
+};
 
-function applyFontScale(scale: number) {
-  document.documentElement.style.fontSize = `${snapFontScale(scale) * 16}px`;
-}
+const THEMES = [
+  { v: 'dark', label: 'Dark', Icon: Moon },
+  { v: 'light', label: 'Light', Icon: Sun },
+  { v: 'system', label: 'System', Icon: Monitor },
+] as const;
+
+/** Selected = filled accent + a tick, so the state is not shown by colour alone. */
+const choice = (on: boolean) =>
+  cn(
+    'rounded-md border flex flex-col items-center justify-center gap-1 transition focus-ring',
+    on ? 'border-primary bg-primary text-primary-foreground' : 'border-border hover:bg-secondary',
+  );
 
 export default function AppearancePage() {
   const a = useSettings((s) => s.appearance);
   const set = useSettings((s) => s.setAppearance);
   const fontScale = snapFontScale(a.fontScale);
-  // For the preview card: the shop's real identity, so the sample looks like
-  // this shop rather than the demo fixture's.
-  const business = useSettings((s) => s.business);
-  const branches = useBranches((s) => s.items);
-  const hydrateBranches = useBranches((s) => s.hydrate);
-  useEffect(() => {
-    void hydrateBranches();
-  }, [hydrateBranches]);
-  const previewBranch =
-    (branches.find((b) => b.isDefault) ?? branches[0])?.name ?? business.defaultBranch ?? '';
-  const reset = () =>
-    set({ themeMode: 'system', accentHue: 243, density: 'comfortable', fontScale: 1 });
-
   const themeMode = useTheme((s) => s.mode);
   const setMode = useTheme((s) => s.setMode);
-  const setDensity = useUI((s) => s.setDensity);
 
-  // Keep visible side-effects in sync with persisted appearance state
-  useEffect(() => {
-    applyAccentHue(a.accentHue);
-  }, [a.accentHue]);
-  useEffect(() => {
-    applyFontScale(a.fontScale);
-  }, [a.fontScale]);
-  useEffect(() => {
-    setDensity(a.density);
-  }, [a.density, setDensity]);
+  const reset = async () => {
+    const ok = await confirm({
+      title: 'Reset text size and colours to normal?',
+      confirmLabel: 'Reset',
+    });
+    if (!ok) return;
+    // Same defaults as before (owner decision 3: Reset unchanged).
+    set({ themeMode: 'system', accentHue: 243, density: 'comfortable', fontScale: 1 });
+    setMode('system');
+  };
 
   return (
     <div>
       <SettingsHeader
-        title="Theme & Appearance"
-        subtitle="Mode, accent color, density, and font size"
+        title="Text size & theme"
         actions={
           <>
-            <Button variant="outline" onClick={() => { reset(); toast.info('Appearance reset to defaults'); }}>
+            <AutoSaveNote />
+            <Button variant="outline" onClick={() => void reset()}>
               <RotateCcw className="size-4" /> Reset
             </Button>
-            <span className="text-xs text-muted-foreground">Changes save automatically</span>
           </>
         }
       />
 
-      <div className="p-6 grid grid-cols-1 xl:grid-cols-2 gap-6 max-w-5xl">
-        {/* LEFT — controls */}
-        <div className="space-y-4">
-          <Card className="p-4 space-y-3">
-            <div className="text-sm font-semibold">Theme mode</div>
-            <div className="grid grid-cols-3 gap-2">
-              {(
-                [
-                  { v: 'light', label: 'Light', Icon: Sun },
-                  { v: 'dark', label: 'Dark', Icon: Moon },
-                  { v: 'system', label: 'System', Icon: Monitor },
-                ] as const
-              ).map(({ v, label, Icon }) => (
+      <div className="p-6 space-y-4 max-w-4xl">
+        <Card className="p-5 space-y-3">
+          <div>
+            <div className="text-base font-semibold">Text size</div>
+            <div className="text-xs text-muted-foreground">
+              The app is designed at Normal size. Larger sizes are optional; they also work from the A− / A+
+              buttons at the top of the screen.
+            </div>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2" role="radiogroup" aria-label="Text size">
+            {FONT_SCALE_STEPS.map((s) => {
+              const on = fontScale === s;
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  onClick={() => set({ fontScale: s })}
+                  className={cn(choice(on), 'h-24 px-2')}
+                >
+                  {/* Sample at its own size, in px so it ignores the current scale. */}
+                  <span className="font-semibold leading-tight" style={{ fontSize: `${s * 16}px` }}>
+                    আমার দোকান Aa
+                  </span>
+                  <span className="text-sm font-medium inline-flex items-center gap-1">
+                    {on && <Check className="size-4" />}
+                    <span>{SIZE_LABEL[s]}</span>
+                    <span className="tabular opacity-80">{Math.round(s * 100)}%</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </Card>
+
+        <Card className="p-5 space-y-3">
+          <div className="text-base font-semibold">Theme</div>
+          <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Theme">
+            {THEMES.map(({ v, label, Icon }) => {
+              const on = themeMode === v;
+              return (
                 <button
                   key={v}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
                   onClick={() => {
                     set({ themeMode: v });
                     setMode(v);
                   }}
-                  className={cn(
-                    'h-16 rounded-md border flex flex-col items-center justify-center gap-1 transition',
-                    themeMode === v
-                      ? 'border-primary bg-primary/10 text-primary'
-                      : 'border-border hover:bg-secondary',
-                  )}
+                  className={cn(choice(on), 'h-16')}
                 >
-                  <Icon className="size-4" />
-                  <span className="text-xs font-medium">{label}</span>
+                  <Icon className="size-5" />
+                  <span className="text-sm font-medium inline-flex items-center gap-1">
+                    {on && <Check className="size-4" />}
+                    {label}
+                  </span>
                 </button>
-              ))}
-            </div>
-          </Card>
+              );
+            })}
+          </div>
+          <div className="text-xs text-muted-foreground">System follows the Windows setting.</div>
+        </Card>
 
-          <Card className="p-4 space-y-3">
-            <div className="text-sm font-semibold">Accent color</div>
-            <div className="grid grid-cols-4 gap-2">
-              {PRESET_HUES.map((p) => (
+        <Card className="p-5 space-y-3">
+          <div className="text-base font-semibold">Accent color</div>
+          <div className="grid grid-cols-3 md:grid-cols-5 gap-2" role="radiogroup" aria-label="Accent color">
+            {PRESET_HUES.map((p) => {
+              const on = a.accentHue === p.hue;
+              return (
                 <button
                   key={p.hue}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
                   onClick={() => set({ accentHue: p.hue })}
                   className={cn(
-                    'h-12 rounded-md border flex flex-col items-center justify-center gap-1 transition text-xs font-medium',
-                    a.accentHue === p.hue
-                      ? 'border-foreground/40 ring-2 ring-ring/50'
-                      : 'border-border hover:bg-secondary',
+                    'h-12 rounded-md border flex items-center justify-center gap-2 transition text-sm font-medium focus-ring',
+                    on ? 'border-foreground/60 ring-2 ring-ring/60' : 'border-border hover:bg-secondary',
                   )}
                 >
                   <span
-                    className="size-5 rounded-full"
+                    className="size-5 rounded-full grid place-items-center text-white"
                     style={{ backgroundColor: `hsl(${p.hue} 75% 58%)` }}
-                  />
+                  >
+                    {on && <Check className="size-3.5" />}
+                  </span>
                   {p.name}
                 </button>
-              ))}
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-muted-foreground">
-                Custom hue ({a.accentHue}°)
-              </label>
-              <input
-                type="range"
-                min={0}
-                max={360}
-                value={a.accentHue}
-                onChange={(e) => set({ accentHue: Number(e.target.value) })}
-                className="w-full"
-                style={{
-                  background:
-                    'linear-gradient(to right, hsl(0 75% 58%), hsl(60 75% 58%), hsl(120 75% 58%), hsl(180 75% 58%), hsl(240 75% 58%), hsl(300 75% 58%), hsl(360 75% 58%))',
-                  borderRadius: 999,
-                  height: 8,
-                  appearance: 'none',
-                }}
-              />
-            </div>
-          </Card>
-
-          <Card className="p-4 space-y-3">
-            <div className="text-sm font-semibold">Density</div>
-            <div className="grid grid-cols-2 gap-2">
-              {(['compact', 'comfortable'] as const).map((d) => (
-                <button
-                  key={d}
-                  onClick={() => set({ density: d })}
-                  className={cn(
-                    'h-12 rounded-md border text-sm font-medium transition',
-                    a.density === d
-                      ? 'border-primary bg-primary/10 text-primary'
-                      : 'border-border hover:bg-secondary',
-                  )}
-                >
-                  {labelFor('density', d)}
-                </button>
-              ))}
-            </div>
-            <div className="text-xs text-muted-foreground">
-              Compact reduces row heights and paddings across lists. Useful on smaller screens.
-            </div>
-          </Card>
-
-          <Card className="p-4 space-y-3">
-            <div className="text-sm font-semibold">Font size</div>
-            <div className="grid grid-cols-4 gap-2">
-              {FONT_SCALE_STEPS.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  aria-pressed={fontScale === s}
-                  onClick={() => set({ fontScale: s })}
-                  className={cn(
-                    'h-12 rounded-md border font-medium transition',
-                    fontScale === s
-                      ? 'border-primary bg-primary/10 text-primary'
-                      : 'border-border hover:bg-secondary',
-                  )}
-                  style={{ fontSize: `${s * 14}px` }}
-                >
-                  {s === 1 ? 'Normal' : `${Math.round(s * 100)}%`}
-                </button>
-              ))}
-            </div>
-            <div className="text-xs text-muted-foreground">
-              Applies to the whole app. Also on the A− / A+ buttons at the top of the screen.
-            </div>
-          </Card>
-        </div>
-
-        {/* RIGHT — preview */}
-        <div>
-          <div className="text-xs font-semibold text-muted-foreground mb-2">
-            Preview
+              );
+            })}
           </div>
-          <Card className="p-5 space-y-4">
-            <div className="flex items-center gap-3">
-              <div className="size-10 rounded-lg bg-primary text-primary-foreground grid place-items-center">
-                <Palette className="size-5" />
-              </div>
-              {/* The shop's own name and branch, not sample text. This card is a
-                  preview of the app's chrome, so showing 'Hardware POS' /
-                  'Mirpur Branch' (the demo fixture) made it look like the
-                  appearance settings belonged to some other shop. */}
-              <div>
-                <div className="font-semibold text-sm">
-                  {business.name || 'Your shop'}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  {previewBranch || 'Your branch'}
-                </div>
-              </div>
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              <Button>Primary</Button>
-              <Button variant="outline">Outline</Button>
-              <Button variant="secondary">Secondary</Button>
-            </div>
-            <div className="rounded-md border border-border bg-card divide-y divide-border">
-              {['Cement OPC 50kg', 'Claw Hammer 16oz', 'PVC Pipe 1in 6m'].map((n, i) => (
-                <div
-                  key={n}
-                  className={cn(
-                    'flex items-center justify-between',
-                    a.density === 'compact' ? 'px-3 py-1.5' : 'px-4 py-3',
-                  )}
-                >
-                  <div>
-                    <div className="text-sm font-medium">{n}</div>
-                    <div className="text-xs text-muted-foreground">In stock</div>
-                  </div>
-                  <div className="text-sm tabular font-semibold text-primary">
-                    ৳ {(540 + i * 10).toFixed(2)}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Card>
-        </div>
+        </Card>
       </div>
     </div>
   );

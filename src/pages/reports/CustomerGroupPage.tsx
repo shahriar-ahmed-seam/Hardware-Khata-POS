@@ -1,24 +1,16 @@
 import { useMemo, useState } from 'react';
 import { Users } from 'lucide-react';
-import {
-  ReportToolbar,
-  DEFAULT_RANGE,
-  type DateRange,
-} from '@/components/reports/ReportToolbar';
-import { Card } from '@/components/ui/Card';
-import { useReport, useBranchId } from '@/hooks/useReport';
-import { hasBackend } from '@/lib/api';
-import { formatBDT, formatNumber } from '@/lib/utils';
-import { cn } from '@/lib/utils';
+import { ReportToolbar, DEFAULT_RANGE, type DateRange } from '@/components/reports/ReportToolbar';
+import { ReportKpi, ReportKpis } from '@/components/reports/ReportKpi';
+import { ReportTable, moneyCol, numCol, tableSection, type ReportColumn } from '@/components/reports/ReportTable';
+import { useReportQuery } from '@/components/reports/useReportQuery';
+import { useBranchId } from '@/hooks/useReport';
+import { labelFor } from '@/lib/labels';
+import { formatBDT, formatNumber, cn } from '@/lib/utils';
 
 /**
- * One `reports.customerGroup` row — every figure now comes from the backend
- * aggregation.
- *
- * This page used to merge `customerCount` / `totalDue` in from the customers
- * store. That store became paginated (one 50-row page), which silently capped
- * this report at 50 customers, so both figures moved into SQL. See
- * `customerGroup()` in backend/services/reports.ts.
+ * One `reports.customerGroup` row; every figure comes from the backend
+ * (customer counts and dues in SQL, not from the paginated customers store).
  */
 interface GroupRow {
   group: string;
@@ -35,13 +27,8 @@ export default function CustomerGroupPage() {
   const [branch, setBranch] = useState('');
 
   const branchId = useBranchId(branch);
-  const { data: beRows, loading, error } = useReport<GroupRow[]>(
-    'reports.customerGroup',
-    hasBackend() ? { range, branchId } : null,
-    [range, branchId],
-  );
-
-  const rows: GroupRow[] = useMemo(() => beRows ?? [], [beRows]);
+  const res = useReportQuery<GroupRow[]>('reports.customerGroup', { range, branchId }, [range, branchId]);
+  const rows = useMemo(() => res.data ?? [], [res.data]);
 
   const totals = useMemo(
     () => ({
@@ -54,133 +41,54 @@ export default function CustomerGroupPage() {
     [rows],
   );
 
-  const groupColor = (g: string) => {
-    if (g === 'Wholesale') return 'bg-blue-500/10 text-blue-600 border-blue-500/30';
-    if (g === 'Contractor') return 'bg-amber-500/10 text-amber-600 border-amber-500/30';
-    return 'bg-success/10 text-success border-success/30';
-  };
+  const columns: ReportColumn<GroupRow>[] = [
+    { key: 'group', header: 'Group', word: true, text: (r) => labelFor('priceGroup', r.group), className: 'font-medium' },
+    numCol('customers', 'Customers', (r) => r.customerCount, { totalValue: totals.customers }),
+    numCol('sales', 'Invoices', (r) => r.saleCount, { totalValue: totals.saleCount }),
+    moneyCol('gross', 'Gross sales', (r) => r.grossSales, { totalValue: totals.grossSales }),
+    moneyCol('net', 'Net sales', (r) => r.netSales, { totalValue: totals.netSales, strong: true }),
+    moneyCol('avg', 'Average sale', (r) => r.avgTicket),
+    // Dues are lifetime balances, not this period — said in the header.
+    moneyCol('due', 'Due (all time)', (r) => r.totalDue, {
+      totalValue: totals.due,
+      cell: (r) => <span className={cn(r.totalDue > 0 && 'text-destructive')}>{formatBDT(r.totalDue)}</span>,
+    }),
+  ];
 
   return (
     <div>
       <ReportToolbar
-        title="Customer Group Report"
-        subtitle={`${formatNumber(totals.customers)} customers · ${formatBDT(totals.netSales)} net sales`}
+        title="Customer groups"
         range={range}
         onRangeChange={setRange}
         branch={branch}
         onBranchChange={setBranch}
+        exportDoc={() => ({
+          kpis: [
+            { label: 'Net sales', value: formatBDT(totals.netSales) },
+            { label: 'Invoices', value: formatNumber(totals.saleCount) },
+          ],
+          sections: [tableSection(columns, rows)],
+        })}
       />
 
-      <div className="p-6 space-y-4 max-w-5xl">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <Kpi label="Customers" value={formatNumber(totals.customers)} />
-          <Kpi label="Transactions" value={formatNumber(totals.saleCount)} />
-          <Kpi label="Net sales" value={formatBDT(totals.netSales)} tone="primary" />
-          <Kpi label="Outstanding due" value={formatBDT(totals.due)} tone="warning" />
-        </div>
+      <div className="px-6 py-4 space-y-4">
+        <ReportKpis className="lg:grid-cols-3">
+          <ReportKpi hero label="Net sales" value={formatBDT(totals.netSales)} loading={res.loading && !res.data} />
+          <ReportKpi label="Invoices" value={formatNumber(totals.saleCount)} loading={res.loading && !res.data} />
+          <ReportKpi label="Customers" value={formatNumber(totals.customers)} loading={res.loading && !res.data} />
+        </ReportKpis>
 
-        <div className="text-xs text-muted-foreground">
-          Sales figures cover the selected date range. Customer counts and outstanding due are
-          lifetime balances across all branches.
-        </div>
-
-        {/* Cards per group */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {rows.map((r) => {
-            const pct = totals.netSales > 0 ? (r.netSales / totals.netSales) * 100 : 0;
-            return (
-              <Card key={r.group} className={cn('p-4 border-l-4', groupColor(r.group))}>
-                <div className="flex items-center justify-between">
-                  <div className="font-semibold">{r.group}</div>
-                  <div className="text-xs tabular text-muted-foreground">{pct.toFixed(0)}%</div>
-                </div>
-                <div className="tabular font-bold text-xl mt-1">{formatBDT(r.netSales)}</div>
-                <div className="text-xs text-muted-foreground">
-                  {formatNumber(r.saleCount)} sales · avg {formatBDT(r.avgTicket)}
-                </div>
-                <div className="mt-2 h-1 rounded-full bg-secondary overflow-hidden">
-                  <div className="h-full bg-current opacity-60" style={{ width: `${pct}%` }} />
-                </div>
-              </Card>
-            );
-          })}
-        </div>
-
-        <Card className="overflow-hidden">
-          <div className="grid grid-cols-[1.4fr_0.8fr_0.8fr_1fr_1fr_1fr_1fr] gap-2 px-4 py-2.5 border-b border-border bg-secondary/40 text-xs font-semibold text-muted-foreground">
-            <div>Group</div>
-            <div className="text-right">Customers</div>
-            <div className="text-right">Sales</div>
-            <div className="text-right">Gross</div>
-            <div className="text-right">Net</div>
-            <div className="text-right">Avg ticket</div>
-            <div className="text-right">Due</div>
-          </div>
-          {rows.length === 0 && (
-            <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-              <Users className="size-6 mx-auto mb-2 opacity-50" />
-              {loading
-                ? 'Loading…'
-                : error
-                  ? 'Couldn’t load — backend error. Check connection and retry.'
-                  : 'No data in this range.'}
-            </div>
-          )}
-          {rows.map((r) => (
-            <div
-              key={r.group}
-              className="grid grid-cols-[1.4fr_0.8fr_0.8fr_1fr_1fr_1fr_1fr] gap-2 px-4 py-3 border-b border-border last:border-b-0 hover:bg-secondary/30 text-sm"
-            >
-              <div className="font-medium">{r.group}</div>
-              <div className="tabular text-right">{formatNumber(r.customerCount)}</div>
-              <div className="tabular text-right">{formatNumber(r.saleCount)}</div>
-              <div className="tabular text-right">{formatBDT(r.grossSales)}</div>
-              <div className="tabular text-right font-medium">{formatBDT(r.netSales)}</div>
-              <div className="tabular text-right">{formatBDT(r.avgTicket)}</div>
-              <div className="tabular text-right text-warning">{formatBDT(r.totalDue)}</div>
-            </div>
-          ))}
-          {rows.length > 0 && (
-            <div className="grid grid-cols-[1.4fr_0.8fr_0.8fr_1fr_1fr_1fr_1fr] gap-2 px-4 py-2.5 border-t-2 border-border bg-secondary/40 text-sm font-semibold">
-              <div>Total</div>
-              <div className="tabular text-right">{formatNumber(totals.customers)}</div>
-              <div className="tabular text-right">{formatNumber(totals.saleCount)}</div>
-              <div className="tabular text-right">{formatBDT(totals.grossSales)}</div>
-              <div className="tabular text-right">{formatBDT(totals.netSales)}</div>
-              <div />
-              <div className="tabular text-right text-warning">{formatBDT(totals.due)}</div>
-            </div>
-          )}
-        </Card>
+        <ReportTable
+          columns={columns}
+          rows={rows}
+          rowKey={(r) => r.group}
+          loading={res.loading}
+          error={res.error}
+          onRetry={res.reload}
+          empty={{ icon: Users, title: 'No sales in this period.', message: 'Try another date range.' }}
+        />
       </div>
     </div>
-  );
-}
-
-function Kpi({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone?: 'primary' | 'success' | 'warning';
-}) {
-  return (
-    <Card className="p-4">
-      <div className="text-xs font-semibold text-muted-foreground">
-        {label}
-      </div>
-      <div
-        className={cn(
-          'tabular font-bold text-lg mt-1',
-          tone === 'primary' && 'text-primary',
-          tone === 'success' && 'text-success',
-          tone === 'warning' && 'text-warning',
-        )}
-      >
-        {value}
-      </div>
-    </Card>
   );
 }

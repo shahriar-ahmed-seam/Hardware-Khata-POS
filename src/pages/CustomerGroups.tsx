@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Edit2, Trash2, Tag, Star, Users, Percent } from 'lucide-react';
+import { Plus, Edit2, Trash2, Star, Users, Percent } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -14,6 +14,7 @@ import { api } from '@/lib/api';
 import { toCustomer, type BackendCustomer } from '@/hooks/contactAdapter';
 import type { Customer } from '@/types/domain';
 import { formatBDT } from '@/lib/utils';
+import { groupLabel } from '@/components/contacts/shared';
 
 /**
  * B13: pricing knows exactly three lists (the product's price / wholesale /
@@ -81,24 +82,28 @@ export default function CustomerGroups() {
         {items.map((g) => (
           <Card key={g.id} className="p-4">
             <div className="flex items-start gap-4">
-              <div className="size-10 rounded-md bg-secondary grid place-items-center text-muted-foreground">
-                <Tag className="size-4" />
-              </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-base font-semibold">{g.name}</span>
+                  <span className="text-base font-semibold">{groupLabel(g.name)}</span>
                   {g.isDefault && (
                     <Badge variant="info">
                       <Star className="size-3" /> Default
                     </Badge>
                   )}
-                  <span className="text-xs text-muted-foreground inline-flex items-center gap-1">
-                    <Users className="size-3" />{' '}
-                    {loadingCounts ? 'counting customers…' : `${customerCount(g.name)} customers`}
+                  <span className="text-sm text-muted-foreground inline-flex items-center gap-1">
+                    <Users className="size-3.5" />
+                    {loadingCounts ? (
+                      'counting customers…'
+                    ) : (
+                      // Number and word in separate nodes so the word translates.
+                      <>
+                        <span className="tabular">{customerCount(g.name)}</span> <span>customers</span>
+                      </>
+                    )}
                   </span>
                 </div>
-                {g.notes && <div className="text-xs text-muted-foreground mt-0.5">{g.notes}</div>}
-                <div className="flex items-center gap-3 mt-2 text-xs">
+                {g.notes && <div className="text-sm text-muted-foreground mt-0.5">{g.notes}</div>}
+                <div className="flex items-center gap-3 mt-2 text-sm">
                   {g.defaultCreditLimit ? (
                     <span className="text-muted-foreground">
                       Default credit: <span className="text-foreground tabular">{formatBDT(g.defaultCreditLimit)}</span>

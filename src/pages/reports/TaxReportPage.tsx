@@ -1,26 +1,21 @@
 import { useMemo, useState } from 'react';
-import { Percent, ArrowUpRight, ArrowDownRight, Calculator } from 'lucide-react';
-import {
-  ReportToolbar,
-  DEFAULT_RANGE,
-  type DateRange,
-} from '@/components/reports/ReportToolbar';
+import { Percent } from 'lucide-react';
+import { ReportToolbar, DEFAULT_RANGE, type DateRange } from '@/components/reports/ReportToolbar';
+import { ReportKpi, ReportKpis } from '@/components/reports/ReportKpi';
+import { ReportTable, ReportError, moneyCol, numCol, tableSection, type ReportColumn } from '@/components/reports/ReportTable';
+import { useReportQuery } from '@/components/reports/useReportQuery';
 import { Card } from '@/components/ui/Card';
-import { useReport, useBranchId } from '@/hooks/useReport';
-import { hasBackend } from '@/lib/api';
+import { useBranchId } from '@/hooks/useReport';
 import { formatBDT, formatNumber } from '@/lib/utils';
-import { cn } from '@/lib/utils';
-
-type Mode = 'sales' | 'purchase' | 'combined';
 
 interface TaxRow {
-  rate: number; // percentage
-  invoices: number;
-  taxableAmount: number;
-  taxCollected: number;
+  rate: number;
+  count: number;
+  taxable: number;
+  tax: number;
 }
 
-/** Shape returned by the `reports.tax` channel. */
+/** `reports.tax`. */
 interface BackendTax {
   salesByRate: { rate: number; invoices: number; taxable: number; tax: number }[];
   purchaseByRate: { rate: number; bills: number; taxable: number; tax: number }[];
@@ -29,258 +24,127 @@ interface BackendTax {
   net: number;
 }
 
+const cols = (countHeader: string, taxHeader: string, rows: TaxRow[], total: number): ReportColumn<TaxRow>[] => [
+  { key: 'rate', header: 'Rate', text: (r) => `${r.rate.toFixed(1)}%`, csv: (r) => r.rate, className: 'font-medium tabular' },
+  numCol('count', countHeader, (r) => r.count, { totalValue: rows.reduce((a, r) => a + r.count, 0) }),
+  moneyCol('taxable', 'Taxable amount', (r) => r.taxable, { totalValue: rows.reduce((a, r) => a + r.taxable, 0) }),
+  moneyCol('tax', taxHeader, (r) => r.tax, { totalValue: total, strong: true }),
+];
+
+/** VAT report: sales VAT and purchase VAT, both always shown (one row per rate). */
 export default function TaxReportPage() {
   const [range, setRange] = useState<DateRange>(DEFAULT_RANGE);
   const [branch, setBranch] = useState('');
-  const [mode, setMode] = useState<Mode>('sales');
 
-  // Backend wiring: pass DateRange + resolved branch id straight through.
   const branchId = useBranchId(branch);
-  const { data: beTax, loading, error } = useReport<BackendTax>(
-    'reports.tax',
-    hasBackend() ? { range, branchId } : null,
-    [range, branchId],
-  );
+  const res = useReportQuery<BackendTax>('reports.tax', { range, branchId }, [range, branchId]);
+  const be = res.data;
+  const waiting = res.loading && !be;
 
-  // Backend-only. Zeroed (not mocked) until the query resolves or if it fails.
-  const data = useMemo(() => {
-    if (!beTax) {
-      return {
-        salesRows: [] as TaxRow[],
-        purchaseRows: [] as TaxRow[],
-        salesTotal: 0,
-        purchaseTotal: 0,
-        net: 0,
-        salesInvoices: 0,
-        purchaseInvoices: 0,
-      };
-    }
-    const salesRows: TaxRow[] = beTax.salesByRate.map((r) => ({
-      rate: r.rate,
-      invoices: r.invoices,
-      taxableAmount: r.taxable,
-      taxCollected: r.tax,
-    }));
-    const purchaseRows: TaxRow[] = beTax.purchaseByRate.map((r) => ({
-      rate: r.rate,
-      invoices: r.bills,
-      taxableAmount: r.taxable,
-      taxCollected: r.tax,
-    }));
-    return {
-      salesRows,
-      purchaseRows,
-      salesTotal: beTax.salesTotal,
-      purchaseTotal: beTax.purchaseTotal,
-      net: beTax.net,
-      salesInvoices: salesRows.reduce((a, r) => a + r.invoices, 0),
-      purchaseInvoices: purchaseRows.reduce((a, r) => a + r.invoices, 0),
-    };
-  }, [beTax]);
+  const sales: TaxRow[] = useMemo(
+    () => (be?.salesByRate ?? []).map((r) => ({ rate: r.rate, count: r.invoices, taxable: r.taxable, tax: r.tax })),
+    [be],
+  );
+  const purchases: TaxRow[] = useMemo(
+    () => (be?.purchaseByRate ?? []).map((r) => ({ rate: r.rate, count: r.bills, taxable: r.taxable, tax: r.tax })),
+    [be],
+  );
+  const salesCols = cols('Invoices', 'VAT collected', sales, be?.salesTotal ?? 0);
+  const purchaseCols = cols('Bills', 'VAT paid', purchases, be?.purchaseTotal ?? 0);
+  const net = be?.net ?? 0;
 
   return (
     <div>
       <ReportToolbar
-        title="Tax Report"
-        subtitle="Sales VAT collected, purchase VAT paid, and net position"
+        title="VAT report"
         range={range}
         onRangeChange={setRange}
         branch={branch}
         onBranchChange={setBranch}
+        exportDoc={
+          be
+            ? () => ({
+                kpis: [
+                  { label: 'Net VAT', value: formatBDT(net) },
+                  { label: 'Sales VAT collected', value: formatBDT(be.salesTotal) },
+                  { label: 'Purchase VAT paid', value: formatBDT(be.purchaseTotal) },
+                ],
+                sections: [
+                  tableSection(salesCols, sales, { heading: 'Sales VAT by rate' }),
+                  tableSection(purchaseCols, purchases, { heading: 'Purchase VAT by rate' }),
+                ],
+              })
+            : undefined
+        }
       />
 
-      <div className="p-6 space-y-4 max-w-5xl">
-        {loading && !beTax && <div className="text-sm text-muted-foreground">Loading…</div>}
-        {error && (
-          <div className="text-sm text-muted-foreground">
-            Couldn’t load — backend error. Check connection and retry.
-          </div>
-        )}
-        {/* Hero KPIs */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <Card className="p-4 border-l-4 border-success">
-            <div className="flex items-center justify-between">
-              <div className="text-xs font-semibold text-muted-foreground">
-                Sales VAT collected
-              </div>
-              <ArrowUpRight className="size-3.5 text-success" />
-            </div>
-            <div className="tabular font-bold text-xl mt-1.5 text-success">
-              {formatBDT(data.salesTotal)}
-            </div>
-            <div className="text-xs text-muted-foreground mt-0.5">
-              from {formatNumber(data.salesInvoices)} invoices
-            </div>
+      <div className="px-6 py-4 space-y-4">
+        {res.error ? (
+          <Card>
+            <ReportError onRetry={res.reload} />
           </Card>
-          <Card className="p-4 border-l-4 border-warning">
-            <div className="flex items-center justify-between">
-              <div className="text-xs font-semibold text-muted-foreground">
-                Purchase VAT paid
-              </div>
-              <ArrowDownRight className="size-3.5 text-warning" />
-            </div>
-            <div className="tabular font-bold text-xl mt-1.5 text-warning">
-              {formatBDT(data.purchaseTotal)}
-            </div>
-            <div className="text-xs text-muted-foreground mt-0.5">
-              from {formatNumber(data.purchaseInvoices)} bills
-            </div>
-          </Card>
-          <Card
-            className={cn(
-              'p-4 border-l-4',
-              data.net >= 0 ? 'border-primary' : 'border-destructive',
-            )}
-          >
-            <div className="flex items-center justify-between">
-              <div className="text-xs font-semibold text-muted-foreground">
-                Net VAT position
-              </div>
-              <Calculator className="size-3.5 text-primary" />
-            </div>
-            <div
-              className={cn(
-                'tabular font-bold text-xl mt-1.5',
-                data.net >= 0 ? 'text-primary' : 'text-destructive',
-              )}
-            >
-              {formatBDT(data.net)}
-            </div>
-            <div className="text-xs text-muted-foreground mt-0.5">
-              {data.net >= 0 ? 'Owed to government' : 'Refundable'}
-            </div>
-          </Card>
-        </div>
+        ) : (
+          <>
+            <ReportKpis className="lg:grid-cols-3">
+              <ReportKpi
+                hero
+                label="Net VAT"
+                value={formatBDT(net)}
+                tone={net < 0 ? 'good' : 'default'}
+                loading={waiting}
+                sub={net >= 0 ? 'Owed to government' : 'Refundable'}
+              />
+              <ReportKpi
+                label="Sales VAT collected"
+                value={formatBDT(be?.salesTotal ?? 0)}
+                loading={waiting}
+                sub={
+                  <span className="tabular">
+                    <span>Invoices:</span> {formatNumber(sales.reduce((a, r) => a + r.count, 0))}
+                  </span>
+                }
+              />
+              <ReportKpi
+                label="Purchase VAT paid"
+                value={formatBDT(be?.purchaseTotal ?? 0)}
+                loading={waiting}
+                sub={
+                  <span className="tabular">
+                    <span>Bills:</span> {formatNumber(purchases.reduce((a, r) => a + r.count, 0))}
+                  </span>
+                }
+              />
+            </ReportKpis>
 
-        {/* Mode toggle */}
-        <div className="flex items-center gap-1 bg-secondary/40 p-1 rounded-md w-fit">
-          {(['sales', 'purchase', 'combined'] as Mode[]).map((m) => (
-            <button
-              key={m}
-              onClick={() => setMode(m)}
-              className={cn(
-                'h-8 px-3 rounded text-sm font-medium capitalize transition',
-                mode === m
-                  ? 'bg-card shadow-sm text-foreground'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {m === 'sales' ? 'Sales VAT' : m === 'purchase' ? 'Purchase VAT' : 'Combined'}
-            </button>
-          ))}
-        </div>
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              <ReportTable
+                heading="Sales VAT by rate"
+                columns={salesCols}
+                rows={sales}
+                rowKey={(r) => String(r.rate)}
+                loading={res.loading}
+                empty={{ icon: Percent, title: 'No VAT on sales in this period.' }}
+              />
+              <ReportTable
+                heading="Purchase VAT by rate"
+                columns={purchaseCols}
+                rows={purchases}
+                rowKey={(r) => String(r.rate)}
+                loading={res.loading}
+                empty={{ icon: Percent, title: 'No VAT on purchases in this period.' }}
+              />
+            </div>
 
-        {(mode === 'sales' || mode === 'combined') && (
-          <Section
-            title="Sales VAT — by tax rate"
-            tone="success"
-            rows={data.salesRows}
-            total={data.salesTotal}
-            totalLabel="Tax collected"
-            invoiceLabel="Invoices"
-            loading={loading}
-            error={error}
-          />
+            <details className="rounded-xl border border-border bg-card px-4 py-3 text-sm">
+              <summary className="cursor-pointer font-medium focus-ring rounded">About these numbers</summary>
+              <p className="mt-2 text-muted-foreground">
+                Use Sales VAT collected as your output VAT, and Purchase VAT paid as your input VAT. Net VAT is what you
+                owe (or can claim back) before any credits or rebates. Check with your accountant before filing with NBR.
+              </p>
+            </details>
+          </>
         )}
-        {(mode === 'purchase' || mode === 'combined') && (
-          <Section
-            title="Purchase VAT — by tax rate"
-            tone="warning"
-            rows={data.purchaseRows}
-            total={data.purchaseTotal}
-            totalLabel="Tax paid"
-            invoiceLabel="Bills"
-            loading={loading}
-            error={error}
-          />
-        )}
-
-        <Card className="p-4 bg-secondary/30">
-          <div className="flex items-start gap-2 text-sm text-muted-foreground">
-            <Percent className="size-4 mt-0.5 shrink-0" />
-            <div>
-              <div className="font-semibold text-foreground mb-0.5">For VAT filing</div>
-              Use Sales VAT collected as your output VAT, and Purchase VAT paid as your input VAT.
-              The Net VAT position is what you owe (or are refundable) before any tax credits or
-              rebates. Verify with your accountant before submitting to NBR.
-            </div>
-          </div>
-        </Card>
       </div>
     </div>
-  );
-}
-
-function Section({
-  title,
-  tone,
-  rows,
-  total,
-  totalLabel,
-  invoiceLabel,
-  loading,
-  error,
-}: {
-  title: string;
-  tone: 'success' | 'warning';
-  rows: TaxRow[];
-  total: number;
-  totalLabel: string;
-  invoiceLabel: string;
-  loading: boolean;
-  error: boolean;
-}) {
-  return (
-    <Card className="overflow-hidden">
-      <div
-        className={cn(
-          'px-4 py-2.5 border-b border-border',
-          tone === 'success' ? 'bg-success/5' : 'bg-warning/5',
-        )}
-      >
-        <div className="font-semibold text-sm">{title}</div>
-      </div>
-      <div className="grid grid-cols-[0.8fr_1fr_1.2fr_1.2fr] gap-2 px-4 py-2 border-b border-border bg-secondary/40 text-xs font-semibold text-muted-foreground">
-        <div>Rate</div>
-        <div className="text-right">{invoiceLabel}</div>
-        <div className="text-right">Taxable amount</div>
-        <div className="text-right">{totalLabel}</div>
-      </div>
-      {rows.length === 0 && (
-        <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-          {loading
-            ? 'Loading…'
-            : error
-              ? 'Couldn’t load — backend error. Check connection and retry.'
-              : 'No data in this range.'}
-        </div>
-      )}
-      {rows.map((r) => (
-        <div
-          key={r.rate}
-          className="grid grid-cols-[0.8fr_1fr_1.2fr_1.2fr] gap-2 px-4 py-2.5 border-b border-border last:border-b-0 hover:bg-secondary/30"
-        >
-          <div className="text-sm font-semibold tabular">{r.rate.toFixed(1)}%</div>
-          <div className="text-sm tabular text-right">{formatNumber(r.invoices)}</div>
-          <div className="text-sm tabular text-right">{formatBDT(r.taxableAmount)}</div>
-          <div
-            className={cn(
-              'text-sm tabular text-right font-semibold',
-              tone === 'success' ? 'text-success' : 'text-warning',
-            )}
-          >
-            {formatBDT(r.taxCollected)}
-          </div>
-        </div>
-      ))}
-      {rows.length > 0 && (
-        <div className="grid grid-cols-[0.8fr_1fr_1.2fr_1.2fr] gap-2 px-4 py-2.5 border-t-2 border-border bg-secondary/40 text-sm font-semibold">
-          <div>Total</div>
-          <div />
-          <div />
-          <div className="tabular text-right">{formatBDT(total)}</div>
-        </div>
-      )}
-    </Card>
   );
 }

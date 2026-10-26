@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
-import { Search, HandCoins, AlertTriangle, ArrowRight } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Search, HandCoins, AlertTriangle } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
@@ -11,13 +11,15 @@ import { toCustomer, type BackendCustomer } from '@/hooks/contactAdapter';
 import { toSaleRecord, type BackendSale } from '@/hooks/saleAdapter';
 import type { Customer } from '@/types/domain';
 import type { SaleRecord } from '@/stores/sales';
-import { Avatar } from '@/components/contacts/Avatar';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { groupLabel, groupVariant, TH } from '@/components/contacts/shared';
 import { ReceivePaymentModal } from '@/components/contacts/ReceivePaymentModal';
 import { formatBDT, cn } from '@/lib/utils';
 
 type Bucket = 'all' | '0-30' | '30-60' | '60-90' | '90+';
 
 export default function CustomerDues() {
+  const nav = useNavigate();
   /**
    * WHOLE-LIST AGGREGATE — this screen is an aging report: every customer with a
    * due, and the age of each one's OLDEST unpaid invoice. `useCustomers().items`
@@ -62,7 +64,6 @@ export default function CustomerDues() {
   const [q, setQ] = useState('');
   const [bucket, setBucket] = useState<Bucket>('all');
   const [payFor, setPayFor] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   // For each customer with due, find the OLDEST unpaid invoice and compute its age
   const rows = useMemo(() => {
@@ -103,30 +104,11 @@ export default function CustomerDues() {
     b4: rows.filter((r) => r.bucketTag === '90+').reduce((s, r) => s + r.c.due, 0),
   };
 
-  const allSelected = filtered.length > 0 && filtered.every((r) => selected.has(r.c.id));
-  const toggleAll = () =>
-    setSelected((sel) => {
-      const next = new Set(sel);
-      if (allSelected) filtered.forEach((r) => next.delete(r.c.id));
-      else filtered.forEach((r) => next.add(r.c.id));
-      return next;
-    });
-  const toggle = (id: string) =>
-    setSelected((sel) => {
-      const next = new Set(sel);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-
   return (
     <div>
       <PageHeader
         title="Customer Dues"
-        subtitle={
-          loading
-            ? 'Loading…'
-            : `${totals.customers} customers · ${formatBDT(totals.total)} outstanding`
-        }
+        subtitle={loading ? 'Loading…' : undefined}
         // The SMS reminder buttons are gone: there was no gateway behind them,
         // so they never sent anything. Collecting a due is done from the row.
       />
@@ -152,21 +134,21 @@ export default function CustomerDues() {
             value={formatBDT(totals.b2)}
             active={bucket === '30-60'}
             onClick={() => setBucket('30-60')}
-            tone="warning"
+            tone={totals.b2 > 0 ? 'warning' : undefined}
           />
           <Bucket
             label="60–90 days"
             value={formatBDT(totals.b3)}
             active={bucket === '60-90'}
             onClick={() => setBucket('60-90')}
-            tone="warning"
+            tone={totals.b3 > 0 ? 'warning' : undefined}
           />
           <Bucket
             label="90+ days"
             value={formatBDT(totals.b4)}
             active={bucket === '90+'}
             onClick={() => setBucket('90+')}
-            tone="destructive"
+            tone={totals.b4 > 0 ? 'destructive' : undefined}
           />
         </div>
 
@@ -178,89 +160,53 @@ export default function CustomerDues() {
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search name / phone…"
               className="pl-9"
+              aria-label="Search"
             />
           </div>
         </Card>
 
-        {selected.size > 0 && (
-          <div className="rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 flex items-center gap-2">
-            <Badge variant="info">{selected.size} selected</Badge>
-            <div className="flex-1" />
-            <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
-              Clear
-            </Button>
-          </div>
-        )}
-
         <Card className="overflow-hidden">
           <table className="w-full text-sm">
-            <thead className="text-xs text-muted-foreground bg-secondary/50">
+            <thead className="bg-secondary/50">
               <tr>
-                <th className="w-10 px-3 py-2.5">
-                  <input type="checkbox" checked={allSelected} onChange={toggleAll} />
+                <th className={cn(TH, 'text-left pl-4')}>Customer</th>
+                <th className={cn(TH, 'text-left')}>Phone</th>
+                <th className={cn(TH, 'text-left')}>Group</th>
+                <th className={cn(TH, 'text-right')}>Outstanding</th>
+                <th className={cn(TH, 'text-right')}>Limit</th>
+                <th className={cn(TH, 'text-right')}>Age</th>
+                <th className={cn(TH, 'w-32')}>
+                  <span className="sr-only">Actions</span>
                 </th>
-                <th className="text-left px-3 py-2.5 font-medium">Customer</th>
-                <th className="text-left px-2 py-2.5 font-medium">Phone</th>
-                <th className="text-left px-2 py-2.5 font-medium">Group</th>
-                <th className="text-right px-2 py-2.5 font-medium">Outstanding</th>
-                <th className="text-right px-2 py-2.5 font-medium">Limit</th>
-                <th className="text-left px-2 py-2.5 font-medium">Oldest invoice</th>
-                <th className="text-right px-2 py-2.5 font-medium">Age</th>
-                <th className="px-4 py-2.5 w-32"></th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((r) => {
-                const isSel = selected.has(r.c.id);
                 const overLimit = !!r.c.creditLimit && r.c.due >= r.c.creditLimit;
                 return (
                   <tr
                     key={r.c.id}
-                    className={cn(
-                      'border-t border-border hover:bg-secondary/40',
-                      isSel && 'bg-primary/5',
-                    )}
+                    onClick={() => nav(`/contacts/customers/${r.c.id}`)}
+                    className="border-t border-border hover:bg-secondary/40 cursor-pointer"
                   >
-                    <td className="px-3 py-2.5">
-                      <input type="checkbox" checked={isSel} onChange={() => toggle(r.c.id)} />
+                    <td className="px-4 py-3 font-semibold">{r.c.name}</td>
+                    <td className="px-3 py-3 whitespace-nowrap text-muted-foreground">{r.c.phone}</td>
+                    <td className="px-3 py-3">
+                      <Badge variant={groupVariant(r.c.group)}>{groupLabel(r.c.group)}</Badge>
                     </td>
-                    <td className="px-3 py-2.5">
-                      <Link
-                        to={`/contacts/customers/${r.c.id}`}
-                        className="flex items-center gap-2.5 hover:text-primary"
-                      >
-                        <Avatar name={r.c.name} size={32} />
-                        <div className="font-semibold">{r.c.name}</div>
-                      </Link>
-                    </td>
-                    <td className="px-2 py-2.5 font-mono text-xs text-muted-foreground">{r.c.phone}</td>
-                    <td className="px-2 py-2.5">
-                      <Badge
-                        variant={
-                          r.c.group === 'Wholesale'
-                            ? 'info'
-                            : r.c.group === 'Contractor'
-                              ? 'warning'
-                              : 'default'
-                        }
-                      >
-                        {r.c.group}
-                      </Badge>
-                    </td>
-                    <td className="px-2 py-2.5 text-right tabular font-semibold text-destructive">
+                    <td className="px-3 py-3 text-right tabular font-semibold text-destructive">
                       {formatBDT(r.c.due, { withSymbol: false })}
                     </td>
-                    <td className="px-2 py-2.5 text-right tabular text-muted-foreground">
+                    <td className="px-3 py-3 text-right tabular text-muted-foreground whitespace-nowrap">
                       {r.c.creditLimit ? formatBDT(r.c.creditLimit, { withSymbol: false }) : '—'}
-                      {overLimit && <AlertTriangle className="size-3 inline ml-1 text-destructive" />}
+                      {overLimit && (
+                        <AlertTriangle className="size-3.5 inline ml-1 text-destructive" aria-label="Over limit" />
+                      )}
                     </td>
-                    <td className="px-2 py-2.5 text-xs text-muted-foreground">
-                      {r.oldest ? r.oldest.invoiceNo : '—'}
-                    </td>
-                    <td className="px-2 py-2.5 text-right">
+                    <td className="px-3 py-3 text-right" title={r.oldest ? r.oldest.invoiceNo : undefined}>
                       <span
                         className={cn(
-                          'text-xs font-medium px-2 py-0.5 rounded-full',
+                          'text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap',
                           r.bucketTag === '90+'
                             ? 'bg-destructive/15 text-destructive'
                             : r.bucketTag === '60-90'
@@ -270,23 +216,25 @@ export default function CustomerDues() {
                                 : 'bg-secondary text-muted-foreground',
                         )}
                       >
-                        {r.age}d
+                        <span className="tabular">{r.age}</span> <span>days</span>
                       </span>
                     </td>
-                    <td className="px-4 py-2.5">
-                      <div className="flex items-center justify-end gap-1">
-                        <Button size="sm" onClick={() => setPayFor(r.c.id)}>
-                          <HandCoins className="size-3.5" /> Receive
-                        </Button>
-                      </div>
+                    <td className="px-4 py-2 text-right" onClick={(e) => e.stopPropagation()}>
+                      <Button variant="outline" onClick={() => setPayFor(r.c.id)}>
+                        <HandCoins className="size-4 text-success" /> Receive
+                      </Button>
                     </td>
                   </tr>
                 );
               })}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-12 text-center text-muted-foreground text-sm">
-                    {loading ? 'Loading customer dues…' : 'No customer dues match these filters.'}
+                  <td colSpan={7}>
+                    {loading ? (
+                      <div className="px-4 py-12 text-center text-muted-foreground">Loading customer dues…</div>
+                    ) : (
+                      <EmptyState compact title="No customer dues match these filters." />
+                    )}
                   </td>
                 </tr>
               )}
@@ -322,13 +270,15 @@ function Bucket({
 }) {
   return (
     <button
+      type="button"
+      aria-pressed={active}
       onClick={onClick}
       className={cn(
         'rounded-xl border p-4 text-left transition',
         active ? 'border-primary bg-primary/5 shadow-sm' : 'border-border hover:bg-secondary/40',
       )}
     >
-      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="text-xs text-muted-foreground font-medium">{label}</div>
       <div
         className={cn(
           'text-lg font-bold mt-0.5 tabular',
@@ -337,9 +287,6 @@ function Bucket({
         )}
       >
         {value}
-      </div>
-      <div className="text-xs mt-1 text-muted-foreground inline-flex items-center gap-1">
-        Filter <ArrowRight className="size-3" />
       </div>
     </button>
   );

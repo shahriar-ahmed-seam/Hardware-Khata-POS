@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
-import { Save, FolderPlus, Tag } from 'lucide-react';
+import { FormEvent, useEffect, useState } from 'react';
+import { Save, AlertTriangle } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { FormField } from '@/components/ui/FormField';
+import { EmojiPicker } from './MasterList';
 import { toast } from '@/stores/toast';
 import { useCategories, useBrands, useCreateCategory, useCreateBrand } from '@/hooks/useCatalog';
 
@@ -22,6 +24,8 @@ import { useCategories, useBrands, useCreateCategory, useCreateBrand } from '@/h
  * instead. The check is case-insensitive and trims, because that is how the
  * duplicates actually get typed.
  */
+
+const FORM_ID = 'quick-catalog-form';
 
 interface BaseProps {
   open: boolean;
@@ -51,20 +55,21 @@ export function NewCategoryModal({ open, onClose, onCreated, initialName }: Base
   const trimmed = name.trim();
   const duplicate = existing.find((c) => c.name.toLowerCase() === trimmed.toLowerCase());
 
-  const submit = async () => {
+  const submit = async (e?: FormEvent) => {
+    e?.preventDefault();
     if (!trimmed || busy) return;
     if (duplicate) {
-      toast.info(`"${duplicate.name}" already exists — selected it`);
+      toast.info('Already in the list. Selected it.', { description: duplicate.name });
       onCreated(duplicate.id);
       onClose();
       return;
     }
     setBusy(true);
     try {
-      const res = await create.mutateAsync({ name: trimmed, emoji: emoji.trim() || undefined });
+      const res = await create.mutateAsync({ name: trimmed, emoji: emoji || undefined });
       const id = (res as { id?: string })?.id;
       if (!id) throw new Error('The category was saved but returned no id');
-      toast.success(`Category "${trimmed}" added`);
+      toast.success('Category added', { description: trimmed });
       onCreated(id);
       onClose();
     } catch (e) {
@@ -79,50 +84,36 @@ export function NewCategoryModal({ open, onClose, onCreated, initialName }: Base
       open={open}
       onClose={onClose}
       width="max-w-md"
-      title="Add New Category"
+      title="Add new category"
       subtitle="Created and selected for this product"
       footer={
         <div className="flex items-center justify-end gap-2">
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={() => void submit()} disabled={!trimmed || busy}>
-            <Save className="size-4" /> {busy ? 'Saving…' : 'Save & Select'}
+          <Button type="submit" form={FORM_ID} disabled={!trimmed || busy}>
+            <Save className="size-4" /> {busy ? 'Saving…' : 'Save & select'}
           </Button>
         </div>
       }
     >
-      <div className="p-4 space-y-3">
-        <div className="flex items-center gap-3 rounded-lg border border-border p-3 bg-secondary/40">
-          <div className="size-10 rounded-full bg-muted text-muted-foreground grid place-items-center">
-            <FolderPlus className="size-4" />
-          </div>
-          <div className="text-xs text-muted-foreground">
-            This is the same category list as Catalogue → Categories. Adding it here saves it
-            for good.
-          </div>
-        </div>
-        <Labelled label="Category name" required>
-          <Input
-            autoFocus
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void submit();
-            }}
-            placeholder="e.g. Plumbing"
-          />
-        </Labelled>
-        <Labelled label="Icon" hint="Optional — one emoji, shown in lists">
-          <Input value={emoji} onChange={(e) => setEmoji(e.target.value)} placeholder="🔧" />
-        </Labelled>
-        {duplicate && (
-          <div className="rounded-md bg-warning/10 text-warning px-3 py-2 text-xs">
-            A category called "{duplicate.name}" already exists. Saving will select that one
-            instead of making a duplicate.
-          </div>
-        )}
-      </div>
+      <form id={FORM_ID} onSubmit={submit} className="p-5 space-y-4">
+        <FormField label="Category name" required>
+          {(f) => (
+            <Input
+              {...f}
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Plumbing"
+            />
+          )}
+        </FormField>
+        <FormField label="Icon">
+          <EmojiPicker value={emoji} onChange={setEmoji} />
+        </FormField>
+        {duplicate && <DuplicateNote />}
+      </form>
     </Modal>
   );
 }
@@ -140,10 +131,11 @@ export function NewBrandModal({ open, onClose, onCreated, initialName }: BasePro
   const trimmed = name.trim();
   const duplicate = existing.find((b) => b.name.toLowerCase() === trimmed.toLowerCase());
 
-  const submit = async () => {
+  const submit = async (e?: FormEvent) => {
+    e?.preventDefault();
     if (!trimmed || busy) return;
     if (duplicate) {
-      toast.info(`"${duplicate.name}" already exists — selected it`);
+      toast.info('Already in the list. Selected it.', { description: duplicate.name });
       onCreated(duplicate.id);
       onClose();
       return;
@@ -153,7 +145,7 @@ export function NewBrandModal({ open, onClose, onCreated, initialName }: BasePro
       const res = await create.mutateAsync({ name: trimmed });
       const id = (res as { id?: string })?.id;
       if (!id) throw new Error('The brand was saved but returned no id');
-      toast.success(`Brand "${trimmed}" added`);
+      toast.success('Brand added', { description: trimmed });
       onCreated(id);
       onClose();
     } catch (e) {
@@ -168,68 +160,43 @@ export function NewBrandModal({ open, onClose, onCreated, initialName }: BasePro
       open={open}
       onClose={onClose}
       width="max-w-md"
-      title="Add New Brand"
+      title="Add new brand"
       subtitle="Created and selected for this product"
       footer={
         <div className="flex items-center justify-end gap-2">
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={() => void submit()} disabled={!trimmed || busy}>
-            <Save className="size-4" /> {busy ? 'Saving…' : 'Save & Select'}
+          <Button type="submit" form={FORM_ID} disabled={!trimmed || busy}>
+            <Save className="size-4" /> {busy ? 'Saving…' : 'Save & select'}
           </Button>
         </div>
       }
     >
-      <div className="p-4 space-y-3">
-        <div className="flex items-center gap-3 rounded-lg border border-border p-3 bg-secondary/40">
-          <div className="size-10 rounded-full bg-muted text-muted-foreground grid place-items-center">
-            <Tag className="size-4" />
-          </div>
-          <div className="text-xs text-muted-foreground">
-            This is the same brand list as Catalogue → Brands. Adding it here saves it for good.
-          </div>
-        </div>
-        <Labelled label="Brand name" required>
-          <Input
-            autoFocus
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void submit();
-            }}
-            placeholder="e.g. RFL"
-          />
-        </Labelled>
-        {duplicate && (
-          <div className="rounded-md bg-warning/10 text-warning px-3 py-2 text-xs">
-            A brand called "{duplicate.name}" already exists. Saving will select that one instead
-            of making a duplicate.
-          </div>
-        )}
-      </div>
+      <form id={FORM_ID} onSubmit={submit} className="p-5 space-y-4">
+        <FormField label="Brand name" required>
+          {(f) => (
+            <Input
+              {...f}
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. RFL"
+            />
+          )}
+        </FormField>
+        {duplicate && <DuplicateNote />}
+      </form>
     </Modal>
   );
 }
 
-function Labelled({
-  label,
-  required,
-  hint,
-  children,
-}: {
-  label: string;
-  required?: boolean;
-  hint?: string;
-  children: React.ReactNode;
-}) {
+/** Static sentence (translatable); plain text colour with an icon for contrast. */
+function DuplicateNote() {
   return (
-    <div>
-      <label className="text-xs font-semibold text-muted-foreground">
-        {label} {required && <span className="text-destructive">*</span>}
-      </label>
-      {children}
-      {hint && <div className="text-xs text-muted-foreground mt-0.5">{hint}</div>}
+    <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-foreground">
+      <AlertTriangle className="size-4 mt-0.5 shrink-0 text-warning" />
+      <span>This name is already in the list. Saving selects that one instead of making a copy.</span>
     </div>
   );
 }

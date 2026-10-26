@@ -17,7 +17,6 @@ export const ALL_PRODUCT_COLUMNS = [
   'stock',
   'reorderLevel',
   'tax',
-  'warranty',
   'status',
   'updatedAt',
 ] as const;
@@ -35,17 +34,9 @@ interface ProductsUI {
   resetColumns: () => void;
 }
 
-const DEFAULT_COLUMNS: ProductColumn[] = [
-  'image',
-  'name',
-  'sku',
-  'category',
-  'cost',
-  'avgCost',
-  'price',
-  'stock',
-  'status',
-];
+// SKU shows under the name; Low/Out shows in the Stock cell; the average
+// buying price is in the Update popup (UI audit, Products 2/4/5).
+const DEFAULT_COLUMNS: ProductColumn[] = ['image', 'name', 'category', 'cost', 'price', 'stock'];
 
 function move<T>(arr: T[], item: T, dir: -1 | 1): T[] {
   const i = arr.indexOf(item);
@@ -73,7 +64,16 @@ export const useProductsUI = create<ProductsUI>()(
     // v1: the column set gained 'avgCost' and 'cost' joined the defaults.
     // Without a bump, an existing install keeps its stored column list and the
     // new Avg. Buying Price column would never appear.
-    { name: 'pos-products-ui', version: 1 },
+    // v2: slimmer defaults (above) and no 'warranty' column (products cannot
+    // carry one). Older stored lists are reset to the new defaults.
+    {
+      name: 'pos-products-ui',
+      version: 2,
+      migrate: (persisted, version) => {
+        const s = (persisted ?? {}) as Partial<ProductsUI>;
+        return version < 2 ? { ...s, columns: DEFAULT_COLUMNS } : (s as ProductsUI);
+      },
+    },
   ),
 );
 
@@ -85,16 +85,15 @@ export const COLUMN_META: Record<ProductColumn, { label: string; align?: 'right'
   category:        { label: 'Category' },
   brand:           { label: 'Brand' },
   unit:            { label: 'Unit' },
-  cost:            { label: 'Buying Price', align: 'right' },
+  cost:            { label: 'Buying price', align: 'right' },
   // The mean of every recorded buying price — see backend/services/costing.ts.
-  avgCost:         { label: 'Avg. Buying Price', align: 'right' },
-  price:           { label: 'Sell Price', align: 'right' },
-  wholesalePrice:  { label: 'Wholesale', align: 'right' },
-  contractorPrice: { label: 'Contractor', align: 'right' },
+  avgCost:         { label: 'Average buying price', align: 'right' },
+  price:           { label: 'Selling price', align: 'right' },
+  wholesalePrice:  { label: 'Wholesale price', align: 'right' },
+  contractorPrice: { label: 'Contractor price', align: 'right' },
   stock:           { label: 'Stock', align: 'right' },
-  reorderLevel:    { label: 'Reorder', align: 'right' },
+  reorderLevel:    { label: 'Low-stock alert at', align: 'right' },
   tax:             { label: 'Tax %', align: 'right' },
-  warranty:        { label: 'Warranty' },
   status:          { label: 'Status' },
   updatedAt:       { label: 'Updated' },
 };

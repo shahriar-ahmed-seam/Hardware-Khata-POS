@@ -1,5 +1,7 @@
-import { Check, RotateCcw, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { Drawer } from '@/components/ui/Drawer';
+import { IconButton } from '@/components/ui/IconButton';
 import { cn } from '@/lib/utils';
 import {
   ALL_PRODUCT_COLUMNS,
@@ -8,81 +10,76 @@ import {
   useProductsUI,
 } from '@/stores/products';
 
+/** Columns that are always on: a table without product names is useless. */
+const LOCKED: ProductColumn[] = ['name'];
+
+/** Choose which Products columns show, and their order. Shared Drawer = Esc + overlay rules. */
 export function ColumnsCustomize({ onClose }: { onClose: () => void }) {
   const { columns, toggleColumn, moveColumn, resetColumns } = useProductsUI();
+  // Active columns first (in order), then the rest.
+  const order = [...columns, ...ALL_PRODUCT_COLUMNS.filter((c) => !columns.includes(c))];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-stretch justify-end animate-fade-in">
-      <button className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative w-full max-w-md bg-card border-l border-border shadow-2xl flex flex-col">
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
-          <div className="flex-1">
-            <div className="font-semibold">Customize Columns</div>
-            <div className="text-xs text-muted-foreground">Show, hide, and reorder columns</div>
-          </div>
-          <button onClick={onClose} className="size-8 grid place-items-center rounded-md hover:bg-secondary">
-            <X className="size-4" />
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-auto p-3 space-y-1">
-          {/* Active columns first (in order), then inactive */}
-          {[...columns, ...ALL_PRODUCT_COLUMNS.filter((c) => !columns.includes(c))].map((id) => {
-            const on = columns.includes(id);
-            const meta = COLUMN_META[id as ProductColumn];
-            const idx = columns.indexOf(id);
-            return (
-              <div
-                key={id}
+    <Drawer open onClose={onClose} width="max-w-sm" title="Columns" subtitle="Show, hide and reorder">
+      <div className="flex-1 overflow-auto p-3 space-y-1">
+        {order.map((id) => {
+          const on = columns.includes(id);
+          const locked = LOCKED.includes(id);
+          const idx = columns.indexOf(id);
+          return (
+            <div
+              key={id}
+              className={cn(
+                'flex items-center gap-2 pr-1 rounded-lg border transition',
+                on ? 'border-primary/30 bg-primary/5' : 'border-border bg-card',
+              )}
+            >
+              {/* The whole row toggles, not just the box. */}
+              <label
                 className={cn(
-                  'flex items-center gap-2 p-2.5 rounded-lg border transition',
-                  on ? 'border-primary/30 bg-primary/5' : 'border-border bg-card',
+                  'flex-1 min-h-11 flex items-center gap-3 px-3 text-sm font-medium',
+                  locked ? 'cursor-default' : 'cursor-pointer',
                 )}
               >
-                <button
-                  onClick={() => toggleColumn(id as ProductColumn)}
-                  className={cn(
-                    'size-5 rounded grid place-items-center border-2 shrink-0',
-                    on ? 'border-primary bg-primary text-primary-foreground' : 'border-border',
-                  )}
-                >
-                  {on && <Check className="size-3" />}
-                </button>
-                <div className="flex-1 text-sm font-medium">{meta.label}</div>
-                {on && (
-                  <div className="flex items-center bg-secondary rounded-md text-xs">
-                    <button
-                      onClick={() => moveColumn(id as ProductColumn, -1)}
-                      disabled={idx === 0}
-                      className="size-7 grid place-items-center disabled:opacity-30 hover:bg-background rounded-l-md"
-                      title="Move left"
-                    >
-                      ↑
-                    </button>
-                    <button
-                      onClick={() => moveColumn(id as ProductColumn, 1)}
-                      disabled={idx === columns.length - 1}
-                      className="size-7 grid place-items-center disabled:opacity-30 hover:bg-background rounded-r-md"
-                      title="Move right"
-                    >
-                      ↓
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        <div className="px-5 py-3 border-t border-border flex items-center justify-between">
-          <Button variant="outline" size="sm" onClick={resetColumns}>
-            <RotateCcw className="size-3.5" /> Reset
-          </Button>
-          <Button size="sm" onClick={onClose}>
-            Done
-          </Button>
-        </div>
+                <input
+                  type="checkbox"
+                  className="size-5 accent-primary"
+                  checked={on}
+                  disabled={locked}
+                  onChange={() => toggleColumn(id)}
+                />
+                <span>{COLUMN_META[id].label}</span>
+              </label>
+              {on && (
+                <>
+                  <IconButton
+                    size="sm"
+                    label="Move up"
+                    onClick={() => moveColumn(id, -1)}
+                    disabled={idx === 0}
+                  >
+                    <ChevronUp className="size-4" />
+                  </IconButton>
+                  <IconButton
+                    size="sm"
+                    label="Move down"
+                    onClick={() => moveColumn(id, 1)}
+                    disabled={idx === columns.length - 1}
+                  >
+                    <ChevronDown className="size-4" />
+                  </IconButton>
+                </>
+              )}
+            </div>
+          );
+        })}
       </div>
-    </div>
+      <div className="px-5 py-3 border-t border-border flex items-center justify-between">
+        <Button variant="outline" onClick={resetColumns}>
+          <RotateCcw className="size-4" /> Reset
+        </Button>
+        <Button onClick={onClose}>Done</Button>
+      </div>
+    </Drawer>
   );
 }

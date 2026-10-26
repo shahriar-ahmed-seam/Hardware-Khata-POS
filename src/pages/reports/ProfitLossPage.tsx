@@ -1,45 +1,21 @@
 import { useState } from 'react';
-import {
-  TrendingUp,
-  TrendingDown,
-  ArrowUpRight,
-  ArrowDownRight,
-} from 'lucide-react';
-import {
-  ReportToolbar,
-  DEFAULT_RANGE,
-  type DateRange,
-} from '@/components/reports/ReportToolbar';
+import { Link } from 'react-router-dom';
+import { ReportToolbar, DEFAULT_RANGE, type DateRange } from '@/components/reports/ReportToolbar';
+import { ReportKpi, ReportKpis } from '@/components/reports/ReportKpi';
+import { ReportError } from '@/components/reports/ReportTable';
+import { useReportQuery } from '@/components/reports/useReportQuery';
 import { Card } from '@/components/ui/Card';
-import { useReport, useBranchId } from '@/hooks/useReport';
-import { hasBackend } from '@/lib/api';
-import { formatBDT } from '@/lib/utils';
-import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/Button';
+import { useBranchId } from '@/hooks/useReport';
+import { formatBDT, cn } from '@/lib/utils';
 import { round2, sum2 } from '@/lib/money';
 
-interface PnLRow {
-  label: string;
-  /** `null` = no backend source for this figure yet; renders '—' and is NOT summed. */
-  amount: number | null;
-  hint?: string;
-}
-
-interface PnLBlock {
-  title: string;
-  rows: PnLRow[];
-}
-
-/** Shape returned by the `reports.profitLoss` channel (see backend/services/reports.ts). */
+/** `reports.profitLoss` (backend/services/reports.ts). */
 interface BackendProfitLoss {
-  moneyIn: {
-    totalSalesExclTaxDisc: number;
-    sellShipping: number;
-    sellOther: number;
-    purchaseReturns: number;
-  };
+  moneyIn: { totalSalesExclTaxDisc: number; sellShipping: number; sellOther: number; purchaseReturns: number };
   moneyOut: {
     cogs: number;
-    /** Cost of goods customers brought back; comes OFF the cost of goods sold. */
+    /** Cost of goods customers brought back; comes off the cost of goods sold. */
     returnedCost?: number;
     sellReturns: number;
     expenses: number;
@@ -49,328 +25,165 @@ interface BackendProfitLoss {
   grossProfit: number;
   marginPct: number;
   netProfit: number;
-  totalPurchases: number;
 }
 
-const EMPTY_PNL = {
-  totalSalesExclTax: 0,
-  totalSellShipping: 0,
-  totalSellOther: 0,
-  totalSellTax: 0,
-  totalPurchaseReturn: 0,
-  totalCOGS: 0,
-  totalPurchases: 0,
-  totalPurchaseTax: 0,
-  totalSellReturn: 0,
-  totalExpense: 0,
-  stockAdjustment: 0,
-  grossProfit: 0,
-  marginPct: 0,
-  netProfit: 0,
-};
+interface Line {
+  label: string;
+  amount: number;
+}
 
 export default function ProfitLossPage() {
   const [range, setRange] = useState<DateRange>(DEFAULT_RANGE);
   const [branch, setBranch] = useState('');
+  const [allLines, setAllLines] = useState(false);
 
-  // Backend wiring: pass the DateRange straight through (preset names + shape
-  // match the backend RangeInput) and resolve the branch name → id.
   const branchId = useBranchId(branch);
-  const { data: be, loading, error } = useReport<BackendProfitLoss>(
+  const { data: be, loading, error, reload } = useReportQuery<BackendProfitLoss>(
     'reports.profitLoss',
-    hasBackend() ? { range, branchId } : null,
+    { range, branchId },
     [range, branchId],
   );
+  const waiting = loading && !be;
 
-  // Backend-only figures. Until the query resolves (or if it fails) every number
-  // is an explicit zero — never an invented or client-recomputed value.
-  const pnl = be
-    ? {
-        totalSalesExclTax: be.moneyIn.totalSalesExclTaxDisc,
-        totalSellShipping: be.moneyIn.sellShipping,
-        totalSellOther: be.moneyIn.sellOther,
-        totalSellTax: be.tax.salesTaxCollected,
-        totalPurchaseReturn: be.moneyIn.purchaseReturns,
-        // Net of goods returned to the shelf — the figure gross profit uses.
-        totalCOGS: round2(be.moneyOut.cogs - (be.moneyOut.returnedCost ?? 0)),
-        totalPurchases: be.totalPurchases,
-        totalPurchaseTax: be.tax.purchaseTaxPaid,
-        totalSellReturn: be.moneyOut.sellReturns,
-        totalExpense: be.moneyOut.expenses,
-        stockAdjustment: be.moneyOut.stockAdjustment,
-        grossProfit: be.grossProfit,
-        marginPct: be.marginPct,
-        netProfit: be.netProfit,
-      }
-    : EMPTY_PNL;
+  // Same split the backend's net profit uses: income − costs = net profit.
+  const income: Line[] = be
+    ? [
+        { label: 'Sales (after discounts, without VAT)', amount: be.moneyIn.totalSalesExclTaxDisc },
+        { label: 'Delivery charges', amount: be.moneyIn.sellShipping },
+        { label: 'Other charges', amount: be.moneyIn.sellOther },
+      ]
+    : [];
+  const costs: Line[] = be
+    ? [
+        { label: 'Cost of goods sold', amount: round2(be.moneyOut.cogs - (be.moneyOut.returnedCost ?? 0)) },
+        { label: 'Sell returns', amount: be.moneyOut.sellReturns },
+        { label: 'Expenses', amount: be.moneyOut.expenses },
+        // A stock loss is a negative adjustment; shown as a cost. Never "-0".
+        { label: 'Stock lost (damage, theft)', amount: be.moneyOut.stockAdjustment ? -be.moneyOut.stockAdjustment : 0 },
+      ]
+    : [];
+  const incomeTotal = sum2(income.map((l) => l.amount));
+  const costTotal = sum2(costs.map((l) => l.amount));
+  const hiddenCount = [...income, ...costs].filter((l) => l.amount === 0).length;
+  const shown = (ls: Line[]) => (allLines ? ls : ls.filter((l) => l.amount !== 0));
 
-  // Every displayed row comes from `reports.profitLoss`. The opening/closing
-  // stock-valuation snapshots have NO backend source (the nightly stock
-  // valuation job is deferred), so they render '—' and carry `amount: null` so
-  // they are excluded from the block totals rather than fabricated.
-  // BACKEND WORK NEEDED: a nightly stock-valuation snapshot table (value at
-  // purchase cost + at sell price, per branch per day) exposed on
-  // `reports.profitLoss`.
-  const moneyIn: PnLBlock = {
-    title: 'Money in',
-    rows: [
-      { label: 'Total sales (excl. tax & disc.)', amount: pnl.totalSalesExclTax },
-      { label: 'Sell shipping recovered', amount: pnl.totalSellShipping },
-      { label: 'Other charges', amount: pnl.totalSellOther },
-      // Cash back from suppliers is NOT profit: the goods went back at cost.
-      // Shown for information, kept out of the block total (amount: null).
-      {
-        label: 'Purchase returns (cash back, not profit)',
-        amount: null,
-        hint: formatBDT(pnl.totalPurchaseReturn),
-      },
-      {
-        label: 'Closing stock (by sell price)',
-        amount: null,
-        hint: 'No stock-valuation snapshot yet — excluded from the total',
-      },
-    ],
-  };
-  const moneyOut: PnLBlock = {
-    title: 'Money out',
-    rows: [
-      { label: 'Cost of goods sold (after returns)', amount: pnl.totalCOGS },
-      { label: 'Sell returns', amount: pnl.totalSellReturn },
-      { label: 'Expenses', amount: pnl.totalExpense },
-      // Signed: a stock loss (negative adjustment) increases money-out.
-      { label: 'Stock adjustments (loss)', amount: -pnl.stockAdjustment },
-      {
-        label: 'Opening stock (by purchase price)',
-        amount: null,
-        hint: 'No stock-valuation snapshot yet — excluded from the total',
-      },
-    ],
-  };
+  const exportDoc = () => ({
+    kpis: be
+      ? [
+          { label: 'Net profit', value: formatBDT(be.netProfit) },
+          { label: 'Gross profit', value: formatBDT(be.grossProfit) },
+          { label: 'Margin on sales', value: `${be.marginPct.toFixed(1)}%` },
+          { label: 'VAT collected', value: formatBDT(be.tax.salesTaxCollected) },
+          { label: 'VAT paid on purchases', value: formatBDT(be.tax.purchaseTaxPaid) },
+        ]
+      : [],
+    sections: [
+      { heading: 'Sales & income', ls: income, total: incomeTotal },
+      { heading: 'Costs', ls: costs, total: costTotal },
+    ].map((s) => ({
+      heading: s.heading,
+      columns: [{ header: 'Line' }, { header: 'Amount', align: 'right' as const }],
+      rows: s.ls.map((l) => [l.label, formatBDT(l.amount)]),
+      csvRows: s.ls.map((l) => [l.label, l.amount]),
+      wordColumns: [0],
+      footer: ['Total', formatBDT(s.total)],
+      csvFooter: ['Total', s.total],
+    })),
+  });
 
   return (
     <div>
       <ReportToolbar
         title="Profit / Loss"
-        subtitle="Net profit calculation across the selected period"
         range={range}
         onRangeChange={setRange}
         branch={branch}
         onBranchChange={setBranch}
+        exportDoc={be ? exportDoc : undefined}
       />
 
-      <div className="p-6 space-y-6 max-w-5xl">
-        {loading && !be && <div className="text-sm text-muted-foreground">Loading…</div>}
-        {error && (
-          <div className="text-sm text-muted-foreground">
-            Couldn’t load — backend error. Check connection and retry.
-          </div>
+      <div className="px-6 py-4 space-y-4">
+        {error ? (
+          <Card>
+            <ReportError onRetry={reload} />
+          </Card>
+        ) : (
+          <>
+            <ReportKpis className="lg:grid-cols-3">
+              <ReportKpi
+                hero
+                label="Net profit"
+                value={be ? formatBDT(be.netProfit) : ''}
+                tone={be && be.netProfit < 0 ? 'bad' : 'good'}
+                loading={waiting}
+                sub={
+                  be && (
+                    <span className="tabular">
+                      <span>Sales & income</span> {formatBDT(incomeTotal)} − <span>Costs</span> {formatBDT(costTotal)}
+                    </span>
+                  )
+                }
+              />
+              <ReportKpi label="Gross profit" value={be ? formatBDT(be.grossProfit) : ''} loading={waiting} />
+              <ReportKpi
+                // Gross profit over sales (not markup over cost).
+                label="Margin on sales"
+                value={be ? `${be.marginPct.toFixed(1)}%` : ''}
+                loading={waiting}
+              />
+            </ReportKpis>
+
+            {be && (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <Block title="Sales & income" lines={shown(income)} total={incomeTotal} />
+                  <Block title="Costs" lines={shown(costs)} total={costTotal} />
+                </div>
+                {hiddenCount > 0 && (
+                  <Button variant="ghost" onClick={() => setAllLines((v) => !v)}>
+                    {allLines ? 'Hide empty lines' : 'Show all lines'}
+                  </Button>
+                )}
+
+                <Card className="px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
+                  <div className="flex items-center gap-6 flex-wrap text-sm">
+                    <span>
+                      <span className="text-muted-foreground">VAT collected</span>{' '}
+                      <span className="tabular font-medium">{formatBDT(be.tax.salesTaxCollected)}</span>
+                    </span>
+                    <span>
+                      <span className="text-muted-foreground">VAT paid on purchases</span>{' '}
+                      <span className="tabular font-medium">{formatBDT(be.tax.purchaseTaxPaid)}</span>
+                    </span>
+                  </div>
+                  <Link to="/reports/tax" className="text-sm font-medium text-primary hover:underline focus-ring rounded">
+                    Open VAT report
+                  </Link>
+                </Card>
+              </>
+            )}
+          </>
         )}
-        {!loading && !error && !be && (
-          <div className="text-sm text-muted-foreground">No data in this range.</div>
-        )}
-        {/* Hero KPIs */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <KpiCard
-            label="Net profit"
-            value={pnl.netProfit}
-            tone={pnl.netProfit >= 0 ? 'success' : 'destructive'}
-            big
-          />
-          <KpiCard label="Gross profit" value={pnl.grossProfit} tone="primary" />
-          <KpiCard
-            // Gross profit over revenue. The Items report shows markup over COST,
-            // which is a bigger number for the same goods — hence the two labels.
-            label="Margin on sales"
-            value={pnl.marginPct}
-            suffix="%"
-            tone="info"
-            isPercent
-          />
-          <KpiCard label="Total expenses" value={pnl.totalExpense} tone="warning" />
-        </div>
-
-        {/* Two-column breakdown */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <BlockCard block={moneyIn} tone="success" />
-          <BlockCard block={moneyOut} tone="destructive" />
-        </div>
-
-        {/* Formula card */}
-        <Card className="p-5 bg-secondary/30">
-          <div className="text-xs font-semibold text-muted-foreground mb-2">
-            How net profit is calculated
-          </div>
-          <div className="font-mono text-sm leading-6 text-muted-foreground">
-            <span className="text-success">money in</span>{' '}
-            <span className="text-foreground">−</span>{' '}
-            <span className="text-destructive">money out</span>{' '}
-            <span className="text-foreground">=</span>{' '}
-            <span className="font-semibold text-foreground">
-              {formatBDT(pnl.netProfit)}
-            </span>
-          </div>
-          <div className="text-sm text-muted-foreground mt-2">
-            Cost of goods sold uses the unit cost recorded at sale time (not the current cost).
-            Opening/closing stock-valuation snapshots are not available yet (nightly job pending),
-            so those rows show '—' and are excluded from the totals above.
-          </div>
-        </Card>
-
-        <Card className="p-5">
-          <div className="flex items-center justify-between mb-3">
-            <div className="text-sm font-semibold">Tax breakdown</div>
-            <div className="text-xs text-muted-foreground">Net VAT position over the period</div>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-            <MiniRow label="Sales VAT collected" value={pnl.totalSellTax} positive />
-            <MiniRow label="Purchase VAT paid" value={pnl.totalPurchaseTax} />
-            <MiniRow
-              label="Net VAT payable"
-              value={pnl.totalSellTax - pnl.totalPurchaseTax}
-              positive
-            />
-          </div>
-        </Card>
       </div>
     </div>
   );
 }
 
-function KpiCard({
-  label,
-  value,
-  tone,
-  big,
-  isPercent,
-  suffix,
-}: {
-  label: string;
-  value: number;
-  tone: 'primary' | 'success' | 'warning' | 'info' | 'destructive';
-  big?: boolean;
-  isPercent?: boolean;
-  suffix?: string;
-}) {
-  const tones: Record<typeof tone, string> = {
-    primary: 'border-primary/30',
-    success: 'border-success/30',
-    warning: 'border-warning/30',
-    info: 'border-accent/30',
-    destructive: 'border-destructive/30',
-  };
-  const valueColor: Record<typeof tone, string> = {
-    primary: 'text-primary',
-    success: 'text-success',
-    warning: 'text-warning',
-    info: 'text-foreground',
-    destructive: 'text-destructive',
-  };
-  const Icon = value >= 0 ? TrendingUp : TrendingDown;
-  return (
-    <Card className={cn('p-4 border-l-4', tones[tone])}>
-      <div className="flex items-center justify-between">
-        <div className="text-xs font-semibold text-muted-foreground">
-          {label}
-        </div>
-        <Icon className={cn('size-3.5', valueColor[tone])} />
-      </div>
-      <div
-        className={cn(
-          'tabular font-bold mt-1.5',
-          big ? 'text-2xl' : 'text-lg',
-          valueColor[tone],
-        )}
-      >
-        {isPercent ? `${value.toFixed(1)}${suffix ?? ''}` : formatBDT(value)}
-      </div>
-    </Card>
-  );
-}
-
-function BlockCard({
-  block,
-  tone,
-}: {
-  block: PnLBlock;
-  tone: 'success' | 'destructive';
-}) {
-  // Rows without a backend source (amount === null) never contribute to the total.
-  const total = sum2(block.rows.map((r) => r.amount ?? 0));
-  const arrow = tone === 'success' ? ArrowUpRight : ArrowDownRight;
-  const Arrow = arrow;
+function Block({ title, lines, total }: { title: string; lines: Line[]; total: number }) {
   return (
     <Card className="overflow-hidden">
-      <div
-        className={cn(
-          'px-4 py-2.5 border-b border-border flex items-center justify-between',
-          tone === 'success' ? 'bg-success/5' : 'bg-destructive/5',
-        )}
-      >
-        <div className="flex items-center gap-2">
-          <Arrow
-            className={cn('size-4', tone === 'success' ? 'text-success' : 'text-destructive')}
-          />
-          <span className="font-semibold text-sm">{block.title}</span>
-        </div>
-        <div
-          className={cn(
-            'tabular font-bold text-sm',
-            tone === 'success' ? 'text-success' : 'text-destructive',
-          )}
-        >
-          {formatBDT(total)}
-        </div>
+      <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+        <h2 className="font-semibold text-sm">{title}</h2>
+        <span className="tabular font-semibold text-sm">{formatBDT(total)}</span>
       </div>
-      <div className="divide-y divide-border">
-        {block.rows.map((row) => (
-          // Presentational row. It used to be a <button> that popped an
-          // "wires up at backend stage" alert: nothing to drill into, and the
-          // native alert left the window without keyboard focus.
-          <div
-            key={row.label}
-            className="w-full flex items-center justify-between px-4 py-2.5 text-left"
-          >
-            <div>
-              <div className="text-sm">{row.label}</div>
-              {row.hint && <div className="text-xs text-muted-foreground">{row.hint}</div>}
-            </div>
-            <div
-              className={cn(
-                'tabular font-medium text-sm',
-                row.amount === null && 'text-muted-foreground',
-              )}
-            >
-              {row.amount === null ? '—' : formatBDT(row.amount)}
-            </div>
-          </div>
+      <ul className="divide-y divide-border">
+        {lines.map((l) => (
+          <li key={l.label} className="flex items-center justify-between gap-4 px-4 py-3 text-sm">
+            <span>{l.label}</span>
+            <span className={cn('tabular', l.amount < 0 && 'text-destructive')}>{formatBDT(l.amount)}</span>
+          </li>
         ))}
-      </div>
+      </ul>
     </Card>
-  );
-}
-
-function MiniRow({
-  label,
-  value,
-  positive,
-}: {
-  label: string;
-  value: number;
-  positive?: boolean;
-}) {
-  return (
-    <div className="rounded-md border border-border p-3">
-      <div className="text-xs font-semibold text-muted-foreground">
-        {label}
-      </div>
-      <div
-        className={cn(
-          'tabular font-bold mt-1',
-          positive && value >= 0 ? 'text-success' : value < 0 ? 'text-destructive' : '',
-        )}
-      >
-        {formatBDT(value)}
-      </div>
-    </div>
   );
 }

@@ -1,14 +1,15 @@
 import { useMemo, useState, useEffect } from 'react';
-import { Plus, Edit2, Trash2, Search, ShieldCheck } from 'lucide-react';
-import { PageHeader } from '@/components/ui/PageHeader';
-import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
-import { Button } from '@/components/ui/Button';
-import { Drawer } from '@/components/ui/Drawer';
+import { FormField } from '@/components/ui/FormField';
+import { NumberField } from '@/components/ui/NumberField';
 import { useWarranties, type Warranty } from '@/stores/masterData';
 import { confirm } from '@/stores/confirm';
-import { NumberField } from '@/components/ui/NumberField';
+import { MasterFormModal, MasterListPage, MasterRow } from '@/components/products/MasterList';
 
+/**
+ * Warranty terms. Products cannot carry a warranty yet (owner decision 4: keep
+ * it simple), so the page says so plainly instead of implying it does more.
+ */
 export default function Warranties() {
   const { items, add, update, remove } = useWarranties();
   const hydrate = useWarranties((s) => s.hydrate);
@@ -20,178 +21,122 @@ export default function Warranties() {
 
   const list = useMemo(() => {
     const t = q.trim().toLowerCase();
-    if (!t) return items;
-    return items.filter((w) => w.name.toLowerCase().includes(t));
+    return t ? items.filter((w) => w.name.toLowerCase().includes(t)) : items;
   }, [items, q]);
 
   return (
-    <div>
-      <PageHeader
+    <>
+      <MasterListPage
         title="Warranties"
-        subtitle={`${items.length} warranty templates`}
-        actions={
-          <Button onClick={() => setEditing('new')}>
-            <Plus className="size-4" /> Add Warranty
-          </Button>
-        }
-      />
-
-      <div className="p-6 max-w-3xl">
-        <Card className="p-3 mb-4">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-            <Input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search warranties…"
-              className="pl-9"
-            />
-          </div>
-        </Card>
-
-        <Card className="overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="text-xs text-muted-foreground bg-secondary/50">
-              <tr>
-                <th className="text-left font-medium px-4 py-2.5">Name</th>
-                <th className="text-right font-medium px-4 py-2.5">Duration</th>
-                <th className="text-left font-medium px-4 py-2.5">Description</th>
-                <th className="px-4 py-2.5 w-24"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {list.map((w) => (
-                <tr key={w.id} className="border-t border-border group hover:bg-secondary/30">
-                  <td className="px-4 py-2.5">
-                    <div className="flex items-center gap-2">
-                      <ShieldCheck className="size-4 text-success" />
-                      <span className="font-medium">{w.name}</span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-2.5 text-right tabular">
-                    {w.durationMonths} {w.durationMonths === 1 ? 'month' : 'months'}
-                  </td>
-                  <td className="px-4 py-2.5 text-muted-foreground text-xs truncate max-w-[300px]">
-                    {w.description ?? '—'}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <div className="flex items-center justify-end gap-0.5 opacity-60 group-hover:opacity-100">
-                      <button
-                        onClick={() => setEditing(w)}
-                        className="size-7 grid place-items-center rounded hover:bg-secondary text-muted-foreground hover:text-foreground"
-                        title="Edit"
-                      >
-                        <Edit2 className="size-3.5" />
-                      </button>
-                      <button
-                        onClick={async () => {
-                          if (
-                            await confirm({
-                              title: `Delete warranty "${w.name}"?`,
-                              variant: 'destructive',
-                            })
-                          )
-                            remove(w.id);
-                        }}
-                        className="size-7 grid place-items-center rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
-                        title="Delete"
-                      >
-                        <Trash2 className="size-3.5" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {list.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="px-4 py-8 text-center text-muted-foreground text-sm">
-                    No warranties.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </Card>
-      </div>
-
-      <Drawer
-        open={!!editing}
-        onClose={() => setEditing(null)}
-        width="max-w-md"
-        title={editing === 'new' ? 'Add Warranty' : 'Edit Warranty'}
+        addLabel="Add warranty"
+        onAdd={() => setEditing('new')}
+        total={items.length}
+        noun="warranties"
+        q={q}
+        onQ={setQ}
+        searchPlaceholder="Search warranties…"
+        emptyTitle="No warranties yet"
+        emptyMessage="Add one, e.g. 1 year."
+        shown={list.length}
+        note="A list of warranty terms for your reference. They are not attached to products or printed on receipts yet."
       >
-        {editing && (
-          <WarrantyForm
-            initial={editing === 'new' ? undefined : editing}
-            onSave={(data) => {
-              if (editing === 'new') add(data);
-              else update(editing.id, data);
-              setEditing(null);
+        {list.map((w) => (
+          <MasterRow
+            key={w.id}
+            name={w.name}
+            sub={w.description || undefined}
+            aside={
+              <>
+                {w.durationMonths} <span>{w.durationMonths === 1 ? 'month' : 'months'}</span>
+              </>
+            }
+            onEdit={() => setEditing(w)}
+            onDelete={async () => {
+              const ok = await confirm({
+                title: 'Delete this warranty?',
+                confirmLabel: 'Delete',
+                variant: 'destructive',
+              });
+              if (ok) remove(w.id);
             }}
-            onCancel={() => setEditing(null)}
+            deleteLabel="Delete warranty"
           />
-        )}
-      </Drawer>
-    </div>
+        ))}
+      </MasterListPage>
+
+      {editing && (
+        <WarrantyForm
+          initial={editing === 'new' ? undefined : editing}
+          onClose={() => setEditing(null)}
+          onSave={(data) => {
+            if (editing === 'new') add(data);
+            else update(editing.id, data);
+            setEditing(null);
+          }}
+        />
+      )}
+    </>
   );
 }
 
 function WarrantyForm({
   initial,
   onSave,
-  onCancel,
+  onClose,
 }: {
   initial?: Warranty;
   onSave: (data: Omit<Warranty, 'id'>) => void;
-  onCancel: () => void;
+  onClose: () => void;
 }) {
   const [name, setName] = useState(initial?.name ?? '');
   const [duration, setDuration] = useState<number>(initial?.durationMonths ?? 12);
   const [desc, setDesc] = useState(initial?.description ?? '');
 
   return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (!name.trim()) return;
-        onSave({ name: name.trim(), durationMonths: duration || 0, description: desc || undefined });
-      }}
-      className="flex flex-col flex-1 min-h-0"
+    <MasterFormModal
+      open
+      onClose={onClose}
+      title={initial ? 'Edit warranty' : 'Add warranty'}
+      saveLabel={initial ? 'Save changes' : 'Add warranty'}
+      canSave={!!name.trim()}
+      onSubmit={() =>
+        onSave({ name: name.trim(), durationMonths: duration || 0, description: desc || undefined })
+      }
     >
-      <div className="flex-1 overflow-auto p-4 space-y-3">
-        <div>
-          <label className="text-xs font-semibold text-muted-foreground">Name *</label>
-          <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="1 Year Manufacturer" />
-        </div>
-        <div>
-          <label className="text-xs font-semibold text-muted-foreground">
-            Duration (months)
-          </label>
-              <NumberField
-                value={duration}
-                onChangeNumber={setDuration}
-                placeholder="12"
-              />
-        </div>
-        <div>
-          <label className="text-xs font-semibold text-muted-foreground">Description</label>
+      <FormField label="Name" required>
+        {(f) => (
+          <Input
+            {...f}
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="1 year"
+          />
+        )}
+      </FormField>
+      <FormField label="How many months">
+        {(f) => (
+          <NumberField
+            {...f}
+            value={duration}
+            onChangeNumber={setDuration}
+            placeholder="12"
+            className="text-right tabular"
+          />
+        )}
+      </FormField>
+      <FormField label="Description">
+        {(f) => (
           <textarea
+            {...f}
             value={desc}
             onChange={(e) => setDesc(e.target.value)}
             rows={3}
-            placeholder="What's covered, exclusions, etc."
+            placeholder="What is covered"
             className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 resize-y"
           />
-        </div>
-      </div>
-      <div className="border-t border-border bg-card px-4 py-3 flex items-center justify-end gap-2">
-        <Button type="button" variant="outline" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button type="submit" disabled={!name.trim()}>
-          {initial ? 'Save Changes' : 'Add Warranty'}
-        </Button>
-      </div>
-    </form>
+        )}
+      </FormField>
+    </MasterFormModal>
   );
 }

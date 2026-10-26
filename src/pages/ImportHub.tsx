@@ -8,9 +8,9 @@ import {
   UserCog,
   Wallet,
   Info,
+  ChevronRight,
 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Badge } from '@/components/ui/Badge';
 
 /**
  * DATA & IMPORT HUB
@@ -85,50 +85,37 @@ const IMPORTS = [
 export default function ImportHub() {
   return (
     <div className="min-h-full">
-      <PageHeader
-        title="Data & Import"
-        subtitle="Bringing records in from a spreadsheet is not available yet."
-      />
-
-      <div className="px-6 pt-6">
+      <PageHeader title="Data & Import" />
+      <div className="p-6 max-w-2xl space-y-5">
         <div
           role="status"
           className="flex items-start gap-3 rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm"
         >
           <Info className="size-5 shrink-0 text-warning mt-0.5" aria-hidden="true" />
-          <div>
-            <div className="font-semibold">Spreadsheet import is not ready yet</div>
-            <p className="text-muted-foreground mt-1">
-              These importers are switched off so nothing can look imported when it was not saved.
-              Until they are ready, add records on their own screens. Exports work: use Export all on
-              Sales, Purchases, Customers, Suppliers and Expenses, or Settings → Backup.
-            </p>
-          </div>
+          <p>
+            Importing from Excel is coming later. For now, add records on their own screens. To take
+            data out, use Export all on each list or Settings → Backup.
+          </p>
         </div>
-      </div>
 
-      <div className="p-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {IMPORTS.map(({ to, icon: Icon, label, desc, instead }) => (
-          <div
-            key={to}
-            aria-disabled="true"
-            className="flex items-center gap-4 rounded-lg border border-dashed border-border bg-card p-4 opacity-80"
-          >
-            <div className="grid place-items-center size-11 shrink-0 rounded-md bg-muted text-muted-foreground">
-              <Icon className="size-5" aria-hidden="true" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <span className="font-semibold">{label}</span>
-                <Badge variant="outline">Not available yet</Badge>
-              </div>
-              <div className="text-xs text-muted-foreground mt-0.5">{desc}</div>
-              <Link to={instead.to} className="text-xs text-primary hover:underline mt-1 inline-block focus-ring rounded">
-                {instead.label}
-              </Link>
-            </div>
-          </div>
-        ))}
+        {/* One message, said once: a plain list of where to add each kind of record. */}
+        <section>
+          <h2 className="text-sm font-semibold mb-2">Add records by hand</h2>
+          <ul className="rounded-lg border border-border bg-card divide-y divide-border">
+            {IMPORTS.map(({ to, icon: Icon, instead }) => (
+              <li key={to}>
+                <Link
+                  to={instead.to}
+                  className="flex items-center gap-3 h-11 px-4 text-sm hover:bg-secondary/50 focus-ring"
+                >
+                  <Icon className="size-4 text-muted-foreground" aria-hidden="true" />
+                  <span className="flex-1">{instead.label}</span>
+                  <ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" />
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
       </div>
     </div>
   );

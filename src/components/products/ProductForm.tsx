@@ -1,43 +1,35 @@
-import { useMemo, useState } from 'react';
+import { FormEvent, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  ArrowLeft,
-  Save,
-  Trash2,
-  RotateCcw,
-  Image as ImageIcon,
-  Plus,
-  X,
-  Wand2,
-} from 'lucide-react';
+import { ArrowLeft, Save, Trash2, Image as ImageIcon, Plus, X, Wand2, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { FormField } from '@/components/ui/FormField';
+import { Select } from '@/components/ui/Select';
+import { ToggleRow } from '@/components/ui/ToggleRow';
+import { IconButton } from '@/components/ui/IconButton';
+import { NumberField } from '@/components/ui/NumberField';
 import { ProductImage } from './ProductImage';
 import type { Product } from '@/types/domain';
 import { useCategories, useBrands, useUnits } from '@/hooks/useCatalog';
 import { fileToStoredImage, usableImage } from '@/lib/imageFile';
+import { ean13CheckDigit } from '@/lib/barcode';
 import { toast } from '@/stores/toast';
 import { cn } from '@/lib/utils';
-import { NumberField } from '@/components/ui/NumberField';
 import { NewCategoryModal, NewBrandModal } from './QuickCatalogModal';
 
 interface Props {
   initial?: Product;
-  onSave: (p: Product) => void;
+  /** May return a promise; the page/drawer decides when to close. */
+  onSave: (p: Product) => void | Promise<void>;
   onDelete?: () => void;
-  /** When true, render in drawer mode (no top back button, slimmer headers). */
+  /** When true, render in drawer mode (no page header, footer with the buttons). */
   asDrawer?: boolean;
   onCancel?: () => void;
   /**
-   * Force opening stock to 0 and make it un-editable.
-   *
-   * Used when the form is opened FROM a purchase (Add Purchase → "Add new
-   * product"): the quantity is about to arrive on that very purchase, so typing
-   * an opening stock here as well would record the same goods twice — once as an
-   * opening balance and once as the goods received. The reorder level stays
-   * editable, because the low-stock warning is a property of the product, not of
-   * this purchase.
+   * Force opening stock to 0 and make it read-only. Used from a purchase: the
+   * quantity arrives on the purchase line, so an opening stock here would count
+   * the same goods twice.
    */
   lockStock?: boolean;
   /** Label for the primary button — the caller knows what happens next. */
@@ -67,6 +59,15 @@ const EMPTY: Product = {
   description: '',
 };
 
+/**
+ * THE PRODUCT FORM — one column, in the order the owner thinks:
+ * name · category · unit · buying / selling price · stock · low-stock alert,
+ * plus three everyday switches. Everything expert (brand, codes, extra price
+ * tiers, tax, alternate units, description, photo) sits under "More options".
+ *
+ * Save is never greyed out: pressing it shows what is missing next to the
+ * field. An empty SKU is generated on save.
+ */
 export function ProductForm({
   initial,
   onSave,
@@ -77,372 +78,172 @@ export function ProductForm({
   saveLabel,
 }: Props) {
   const nav = useNavigate();
-  const [p, setP] = useState<Product>(
-    initial ?? (lockStock ? { ...EMPTY, stock: 0 } : EMPTY),
-  );
-  // Inline creation of a missing category / brand, so a half-filled product form
-  // never has to be abandoned to go and add one.
+  const [p, setP] = useState<Product>(initial ?? (lockStock ? { ...EMPTY, stock: 0 } : EMPTY));
+  const [tried, setTried] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [newCategoryOpen, setNewCategoryOpen] = useState(false);
   const [newBrandOpen, setNewBrandOpen] = useState(false);
-  // `usableImage` drops the dead `blob:` values written by builds before the
-  // image fix, so an old product shows its category placeholder instead of a
-  // broken-image icon.
+  // `usableImage` drops dead `blob:` values from old builds.
   const [imgPreview, setImgPreview] = useState<string | undefined>(usableImage(initial?.image));
   const [imgBusy, setImgBusy] = useState(false);
 
-  // Dropdown options come from the backend so editing a product always writes
-  // REAL category/brand/unit ids.
-  const categoriesQuery = useCategories();
-  const brandsQuery = useBrands();
-  const unitsQuery = useUnits();
-  const categories = categoriesQuery.data ?? [];
-  const brands = brandsQuery.data ?? [];
-  const units = unitsQuery.data ?? [];
+  // Options from the backend, so the product always writes real ids.
+  const categories = useCategories().data ?? [];
+  const brands = useBrands().data ?? [];
+  const units = useUnits().data ?? [];
 
   const set = <K extends keyof Product>(k: K, v: Product[K]) => setP((x) => ({ ...x, [k]: v }));
 
   const margin = p.cost > 0 ? ((p.price - p.cost) / p.cost) * 100 : 0;
 
-  const generateSku = () => {
-    const cat = categories.find((c) => c.id === p.categoryId)?.name?.slice(0, 2).toUpperCase() ?? 'SK';
-    const br = brands.find((b) => b.id === p.brandId)?.name?.slice(0, 3).toUpperCase() ?? 'GEN';
-    const num = String(Math.floor(Math.random() * 900) + 100);
-    set('sku', `${cat}-${br}-${num}`);
+  const makeSku = (src: Product) => {
+    const cat = categories.find((c) => c.id === src.categoryId)?.name?.slice(0, 2).toUpperCase() ?? 'SK';
+    const br = brands.find((b) => b.id === src.brandId)?.name?.slice(0, 3).toUpperCase() ?? 'GEN';
+    return `${cat}-${br}-${Math.floor(Math.random() * 900) + 100}`;
   };
   const generateBarcode = () => {
-    // 13-digit pseudo EAN
-    const base = '880' + String(Math.floor(Math.random() * 1e9)).padStart(9, '0');
-    const digits = base.slice(0, 12);
-    // simple checksum (not strictly EAN-13 but plausible)
-    const sum = digits
-      .split('')
-      .map((d, i) => Number(d) * (i % 2 === 0 ? 1 : 3))
-      .reduce((s, x) => s + x, 0);
-    const check = (10 - (sum % 10)) % 10;
-    set('barcode', digits + check);
+    // A real EAN-13 in the in-store range (prefix 2), so it never clashes with
+    // a code printed on goods from the market.
+    const first12 = '2' + String(Math.floor(Math.random() * 1e11)).padStart(11, '0');
+    set('barcode', first12 + ean13CheckDigit(first12));
   };
 
-  /**
-   * Store the picture ITSELF, not a handle to it.
-   *
-   * This used to be `URL.createObjectURL(f)`, whose `blob:` URL is only valid
-   * for the current window — so the photo was dead on the next app start and the
-   * database filled up with unusable strings. `fileToStoredImage` shrinks the
-   * picture and returns the bytes as a data URL, which survives a restart, a
-   * reinstall and a move to another PC, and is carried by every backup because
-   * backups are snapshots of the database.
-   */
+  /** Store the picture itself (a small data URL), so it survives restarts and backups. */
   const handleImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
-    // Clear the input so picking the SAME file again still fires a change event
-    // (otherwise a failed attempt cannot be retried).
-    e.target.value = '';
+    e.target.value = ''; // picking the same file again still fires
     if (!f) return;
     setImgBusy(true);
     try {
-      // 256 px is deliberate, not stingy. The biggest a product photo is ever
-      // drawn is the POS grid tile (~170 px wide), and `products.list` returns
-      // EVERY column for EVERY product — so each stored byte is shipped over IPC
-      // on every catalogue read. A 256 px JPEG lands around 10–20 KB, which keeps
-      // both the database and that read cheap on the shop's slow PC.
+      // 256 px: the biggest a product photo is drawn is the POS tile (~170 px).
       const stored = await fileToStoredImage(f, { maxEdge: 256, quality: 0.78, maxBytes: 150_000 });
       setImgPreview(stored);
       set('image', stored);
     } catch (err) {
-      // The helper's messages are written for the shopkeeper — show them as-is.
       toast.error(err instanceof Error ? err.message : 'Could not use that picture');
     } finally {
       setImgBusy(false);
     }
   };
 
-  const submit = () => {
-    if (!p.name.trim() || !p.sku.trim() || p.price <= 0) return;
+  const nameError = tried && !p.name.trim() ? 'Enter the product name' : undefined;
+  const priceError = tried && !(p.price > 0) ? 'Enter a selling price' : undefined;
+
+  const submit = async (e?: FormEvent) => {
+    e?.preventDefault();
+    if (saving) return;
+    setTried(true);
+    if (!p.name.trim() || !(p.price > 0)) return;
     const finalProduct: Product = {
       ...p,
-      // Belt and braces: the field is read-only in lockStock mode, so this only
-      // matters if the value arrived some other way. Sending an opening stock
-      // from the purchase flow would double-count the goods.
+      name: p.name.trim(),
+      sku: p.sku.trim() || makeSku(p),
+      // Belt and braces: never send an opening stock from the purchase flow.
       stock: lockStock ? 0 : p.stock,
       id: p.id || `p_${Date.now()}`,
       createdAt: p.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    onSave(finalProduct);
+    setSaving(true);
+    try {
+      await onSave(finalProduct);
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const isValid = p.name.trim() && p.sku.trim() && p.price > 0;
+  // "Sell at the counter" = shown in the POS and not purchase-only.
+  const sellable = p.showInPOS !== false && !p.notForSale;
+
+  const primaryLabel = saveLabel ?? (initial ? 'Save changes' : 'Save product');
 
   return (
-    /**
-     * LAYOUT — two modes, one rule: exactly ONE scroll container.
-     *
-     * Drawer mode: `Drawer` gives its body `flex-1 min-h-0 flex flex-col`, so a
-     * child that wants to scroll must claim `flex-1 min-h-0` itself. This root
-     * previously had only `flex flex-col`, so it grew to its content height, the
-     * inner scroller never got a bounded height, and the form could not be
-     * scrolled at all — which also pushed the Save button off the bottom of the
-     * screen, making the drawer a dead end.
-     *
-     * Page mode: `AppShell`'s <main> is already the scroller, so this must NOT
-     * add a nested one. `min-h-full` lets short forms still fill the viewport.
-     */
+    // Exactly ONE scroll container: the drawer body in drawer mode, the page's
+    // <main> in page mode.
     <div className={cn('flex flex-col', asDrawer ? 'flex-1 min-h-0' : 'min-h-full')}>
-      {!asDrawer && (
-        // Sticky so Save stays reachable on a long form, and the shared
-        // PageHeader so this looks like every other page instead of a bespoke
-        // screen with its own title bar.
-        <div className="sticky top-0 z-20 bg-background">
-          <PageHeader
-            title={initial ? 'Edit Product' : 'Add Product'}
-            subtitle={initial ? p.name : 'Create a new product in your catalogue'}
-            actions={
-              <>
-                <Button variant="outline" onClick={() => nav(-1)}>
-                  <ArrowLeft className="size-4" /> Back
-                </Button>
-                {onDelete && initial && (
-                  <Button variant="outline" onClick={onDelete}>
-                    <Trash2 className="size-4" /> Delete
+      <form
+        onSubmit={submit}
+        noValidate
+        className={cn('flex flex-col', asDrawer ? 'flex-1 min-h-0' : 'min-h-full')}
+      >
+        {!asDrawer && (
+          // Sticky so Save stays reachable on a long form.
+          <div className="sticky top-0 z-20 bg-background">
+            <PageHeader
+              title={initial ? 'Edit product' : 'Add product'}
+              subtitle={initial ? p.name : undefined}
+              actions={
+                <>
+                  <Button type="button" variant="ghost" onClick={() => nav(-1)}>
+                    <ArrowLeft className="size-4" /> Back
                   </Button>
-                )}
-                <Button
-                  variant="outline"
-                  onClick={() => setP(initial ?? (lockStock ? { ...EMPTY, stock: 0 } : EMPTY))}
-                >
-                  <RotateCcw className="size-4" /> Reset
-                </Button>
-                <Button onClick={submit} disabled={!isValid}>
-                  <Save className="size-4" />{' '}
-                  {saveLabel ?? (initial ? 'Save Changes' : 'Save Product')}
-                </Button>
-              </>
-            }
-          />
-        </div>
-      )}
+                  <Button type="submit" disabled={saving}>
+                    <Save className="size-4" /> {primaryLabel}
+                  </Button>
+                </>
+              }
+            />
+          </div>
+        )}
 
-      <div className={cn(asDrawer && 'flex-1 min-h-0 overflow-auto')}>
-        <div className={cn('mx-auto max-w-5xl', asDrawer ? 'p-4' : 'p-6')}>
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* LEFT (image + basic) */}
-            <div className="lg:col-span-1 space-y-4">
-              <Section title="Image" subtitle="Optional · 1 photo">
-                <label className="block cursor-pointer">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => void handleImage(e)}
+        <div className={cn(asDrawer && 'flex-1 min-h-0 overflow-auto')}>
+          <div className={cn('mx-auto max-w-3xl space-y-4', asDrawer ? 'p-5' : 'p-6')}>
+            {/* ---------------- What the owner needs ---------------- */}
+            <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+              <FormField label="Product name" required error={nameError}>
+                {(f) => (
+                  <Input
+                    {...f}
+                    autoFocus={!initial}
+                    value={p.name}
+                    onChange={(e) => set('name', e.target.value)}
                   />
-                  <div className="aspect-square w-full rounded-xl border-2 border-dashed border-border hover:border-primary/60 grid place-items-center bg-secondary/30 transition relative overflow-hidden">
-                    {imgPreview ? (
-                      <img src={imgPreview} alt="" className="absolute inset-0 size-full object-cover" />
-                    ) : (
-                      <div className="text-center text-muted-foreground">
-                        <ImageIcon className="size-10 mx-auto mb-2 opacity-50" />
-                        <div className="text-sm">Click to upload</div>
-                        {/* The photo is shrunk and stored inside the shop
-                            database, so it is kept with every backup. */}
-                        <div className="text-xs mt-0.5">PNG or JPG · saved with your data</div>
-                      </div>
-                    )}
-                    {imgBusy && (
-                      <div className="absolute inset-0 grid place-items-center bg-background/70 text-xs font-medium">
-                        Saving picture…
-                      </div>
-                    )}
-                  </div>
-                </label>
-                {imgPreview && (
-                  <div className="flex items-center justify-between mt-2">
-                    <div className="text-xs text-muted-foreground">Preview</div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setImgPreview(undefined);
-                        set('image', undefined);
-                      }}
-                    >
-                      <X className="size-3.5" /> Remove
-                    </Button>
-                  </div>
                 )}
-                {!imgPreview && p.categoryId && (
-                  <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-                    <ProductImage categoryId={p.categoryId} size={28} />
-                    <span>This category placeholder will appear in lists when no image.</span>
-                  </div>
-                )}
-              </Section>
+              </FormField>
 
-              <Section title="Status" subtitle="Behaviour in catalogue & POS">
-                <div className="space-y-2">
-                  <Toggle
-                    label="Track stock"
-                    desc="Subtract from stock when sold"
-                    checked={!!p.manageStock}
-                    onChange={(v) => set('manageStock', v)}
-                  />
-                  <Toggle
-                    label="Allow negative sale"
-                    desc="Sell beyond available stock"
-                    checked={!!p.allowNegativeSale}
-                    onChange={(v) => set('allowNegativeSale', v)}
-                  />
-                  <Toggle
-                    label="Allow discount"
-                    desc="Cashier can discount this item"
-                    checked={!!p.allowDiscount}
-                    onChange={(v) => set('allowDiscount', v)}
-                  />
-                  <Toggle
-                    label="Show in POS"
-                    desc="Visible in product picker"
-                    checked={!!p.showInPOS}
-                    onChange={(v) => set('showInPOS', v)}
-                  />
-                  <Toggle
-                    label="Not for sale"
-                    desc="Purchase-only item (no POS sales)"
-                    checked={!!p.notForSale}
-                    onChange={(v) => set('notForSale', v)}
-                  />
-                </div>
-              </Section>
-            </div>
-
-            {/* RIGHT (most fields) */}
-            <div className="lg:col-span-2 space-y-4">
-              <Section title="Basic Information" subtitle="Required" required>
-                <Field label="Product name" required>
-                  <Input value={p.name} onChange={(e) => set('name', e.target.value)} placeholder="e.g. Claw Hammer 16oz" />
-                </Field>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <Field
-                    label="SKU"
-                    required
-                    rightAction={
-                      <button
-                        type="button"
-                        onClick={generateSku}
-                        className="text-xs inline-flex items-center gap-1 text-primary hover:underline"
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* The + saves a real category and selects it, without leaving the form. */}
+                <FormField label="Category">
+                  {(f) => (
+                    <div className="flex items-center gap-2">
+                      <Select
+                        {...f}
+                        value={p.categoryId}
+                        onChange={(e) => set('categoryId', e.target.value)}
                       >
-                        <Wand2 className="size-3" /> auto
-                      </button>
-                    }
-                  >
-                    <Input value={p.sku} onChange={(e) => set('sku', e.target.value)} placeholder="HT-STN-01" />
-                  </Field>
-                  <Field
-                    label="Barcode"
-                    rightAction={
-                      <button
-                        type="button"
-                        onClick={generateBarcode}
-                        className="text-xs inline-flex items-center gap-1 text-primary hover:underline"
-                      >
-                        <Wand2 className="size-3" /> auto
-                      </button>
-                    }
-                  >
-                    <Input value={p.barcode} onChange={(e) => set('barcode', e.target.value)} placeholder="8801XXXXXXXXX" />
-                  </Field>
-                  {/* The + opens a small dialog that saves a real category /
-                      brand through the same channel the Catalogue screens use,
-                      then selects it here. Without it, a product with a new
-                      brand meant abandoning this form mid-way. */}
-                  <Field label="Category">
-                    <div className="flex items-center gap-1.5">
-                      <div className="flex-1 min-w-0">
-                        <Select value={p.categoryId} onChange={(v) => set('categoryId', v)}>
-                          <option value="">Select category…</option>
-                          {categories.map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.name}
-                            </option>
-                          ))}
-                        </Select>
-                      </div>
-                      <AddInlineButton
-                        title="Add new category"
+                        <option value="">Select category…</option>
+                        {categories.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </Select>
+                      <IconButton
+                        variant="outline"
+                        label="Add new category"
                         onClick={() => setNewCategoryOpen(true)}
-                      />
+                      >
+                        <Plus className="size-4" />
+                      </IconButton>
                     </div>
-                  </Field>
-                  <Field label="Brand">
-                    <div className="flex items-center gap-1.5">
-                      <div className="flex-1 min-w-0">
-                        <Select value={p.brandId} onChange={(v) => set('brandId', v)}>
-                          <option value="">Select brand…</option>
-                          {brands.map((b) => (
-                            <option key={b.id} value={b.id}>
-                              {b.name}
-                            </option>
-                          ))}
-                        </Select>
-                      </div>
-                      <AddInlineButton title="Add new brand" onClick={() => setNewBrandOpen(true)} />
-                    </div>
-                  </Field>
-                </div>
-              </Section>
-
-              <Section title="Pricing" subtitle="All values in BDT">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <Field label="Cost price">
-                    <NumberInput
-                      value={p.cost}
-                      onChange={(v) => set('cost', v)}
-                      placeholder="0.00"
-                    />
-                  </Field>
-                  <Field label="Sell price (SPR)" required hint="Base selling price reference">
-                    <NumberInput value={p.price} onChange={(v) => set('price', v)} placeholder="0.00" />
-                  </Field>
-                  <Field label="Wholesale price" hint="Optional — used when cart price group is Wholesale">
-                    <NumberInput
-                      value={p.wholesalePrice ?? 0}
-                      onChange={(v) => set('wholesalePrice', v || undefined)}
-                      placeholder="0.00"
-                    />
-                  </Field>
-                  <Field label="Contractor price" hint="Optional — used when cart price group is Contractor">
-                    <NumberInput
-                      value={p.contractorPrice ?? 0}
-                      onChange={(v) => set('contractorPrice', v || undefined)}
-                      placeholder="0.00"
-                    />
-                  </Field>
-                </div>
-                {p.cost > 0 && p.price > 0 && (
-                  <div className="mt-3 px-3 py-2 rounded-md bg-secondary/50 border border-border text-sm flex items-center justify-between">
-                    <span className="text-muted-foreground">Profit margin</span>
-                    <span
-                      className={cn(
-                        'tabular font-semibold',
-                        margin > 0 ? 'text-success' : margin < 0 ? 'text-destructive' : '',
-                      )}
-                    >
-                      {margin.toFixed(1)}% · ৳ {(p.price - p.cost).toFixed(2)} per unit
-                    </span>
-                  </div>
-                )}
-              </Section>
-
-              <Section title="Units" subtitle="Base unit + alternates with conversions">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <Field label="Base unit" required>
+                  )}
+                </FormField>
+                <FormField label="Unit" required>
+                  {(f) => (
                     <Select
+                      {...f}
                       value={p.unit}
-                      onChange={(v) => {
-                        set('unit', v);
-                        // make sure base unit is in availableUnits
-                        if (!p.availableUnits?.includes(v)) {
-                          set('availableUnits', [v, ...(p.availableUnits ?? [])]);
-                        }
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setP((x) => ({
+                          ...x,
+                          unit: v,
+                          // the main unit is always one of the available units
+                          availableUnits: x.availableUnits?.includes(v)
+                            ? x.availableUnits
+                            : [v, ...(x.availableUnits ?? [])],
+                        }));
                       }}
                     >
                       {units.map((u) => (
@@ -451,119 +252,365 @@ export function ProductForm({
                         </option>
                       ))}
                     </Select>
-                  </Field>
-                  <Field label="Tax %" hint="Default 0; VAT applied at order level">
-                    <NumberInput value={p.tax ?? 0} onChange={(v) => set('tax', v)} placeholder="0" />
-                  </Field>
-                </div>
-
-                <div className="mt-3">
-                  <div className="text-xs font-semibold text-muted-foreground mb-1.5">
-                    Alternate units & conversions
-                  </div>
-                  <UnitsEditor
-                    base={p.unit}
-                    available={p.availableUnits ?? [p.unit]}
-                    conversions={p.unitConversions ?? []}
-                    units={units}
-                    onChange={(available, conversions) => {
-                      setP((x) => ({ ...x, availableUnits: available, unitConversions: conversions }));
-                    }}
-                  />
-                </div>
-              </Section>
-
-              {/*
-                Opening stock is writable only while CREATING. On an existing
-                product it used to be an editable box that did nothing: on-hand is
-                SUM(stock_movements.qty), so `products.update` has no stock column
-                to write — the form reported "Product saved" and the quantity never
-                moved. Now the current figure is shown read-only, with a pointer to
-                the operation that actually records a change.
-              */}
-              <Section
-                title="Stock"
-                subtitle={
-                  lockStock
-                    ? 'Comes in on this purchase — not typed here'
-                    : initial
-                      ? 'Counted from stock movements — not typed here'
-                      : 'Opening quantity for this product'
-                }
-              >
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {lockStock ? (
-                    <Field
-                      label="Opening stock"
-                      hint="Locked to 0 on purpose. The quantity you are buying is entered on the purchase line, which is what puts it into stock. Typing it here too would count the same goods twice."
-                    >
-                      <div className="h-10 flex items-center px-3 rounded-md border border-input bg-muted/40 tabular text-sm text-muted-foreground">
-                        0 {p.unit}
-                      </div>
-                    </Field>
-                  ) : initial ? (
-                    <Field
-                      label="In stock now"
-                      hint="To change it, use Update Price & Stock on the Products or Stock screen. That records a stock correction, so your history stays right."
-                    >
-                      <div className="h-10 flex items-center px-3 rounded-md border border-input bg-muted/40 tabular text-sm">
-                        {p.stock} {p.unit}
-                      </div>
-                    </Field>
-                  ) : (
-                    <Field label="Opening stock" hint="How many you have right now">
-                      <NumberInput value={p.stock} onChange={(v) => set('stock', v)} placeholder="0" />
-                    </Field>
                   )}
-                  <Field label="Reorder level" hint="Trigger Low Stock alert when stock ≤ this">
-                    <NumberInput
-                      value={p.reorderLevel}
-                      onChange={(v) => set('reorderLevel', v)}
-                      placeholder="0"
-                    />
-                  </Field>
-                </div>
-              </Section>
+                </FormField>
 
-              <Section title="Description" subtitle="Optional · printed on detail view">
-                <textarea
-                  value={p.description ?? ''}
-                  onChange={(e) => set('description', e.target.value)}
-                  placeholder="Notes about this product (specs, source, anything useful)…"
-                  rows={3}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 resize-y"
+                <FormField label="Buying price">
+                  {(f) => (
+                    <NumberField
+                      {...f}
+                      value={p.cost}
+                      onChangeNumber={(v) => set('cost', v)}
+                      placeholder="0.00"
+                      className="text-right tabular"
+                    />
+                  )}
+                </FormField>
+                <FormField label="Selling price" required error={priceError}>
+                  {(f) => (
+                    <NumberField
+                      {...f}
+                      value={p.price}
+                      onChangeNumber={(v) => set('price', v)}
+                      placeholder="0.00"
+                      className="text-right tabular"
+                    />
+                  )}
+                </FormField>
+              </div>
+
+              {p.cost > 0 && p.price > 0 && (
+                <div className="px-3 py-2 rounded-md bg-secondary/50 border border-border text-sm flex items-center justify-between">
+                  <span className="text-muted-foreground">Profit margin</span>
+                  <span
+                    className={cn(
+                      'tabular font-semibold',
+                      margin > 0 ? 'text-success' : margin < 0 ? 'text-destructive' : '',
+                    )}
+                  >
+                    {margin.toFixed(1)}% · ৳ {(p.price - p.cost).toFixed(2)}
+                  </span>
+                </div>
+              )}
+
+              {/* Opening stock is writable only while creating: on-hand is a sum of
+                  stock movements, so an existing product shows it read-only. */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {lockStock ? (
+                  <FormField label="Opening stock" hint="Comes in on the purchase line.">
+                    <div className="h-10 flex items-center px-3 rounded-md border border-input bg-muted/40 tabular text-sm text-muted-foreground">
+                      0 {p.unit}
+                    </div>
+                  </FormField>
+                ) : initial ? (
+                  <FormField
+                    label="In stock now"
+                    hint="To change it, use Update price & stock on the Products or Stock screen."
+                  >
+                    <div className="h-10 flex items-center px-3 rounded-md border border-input bg-muted/40 tabular text-sm">
+                      {p.stock} {p.unit}
+                    </div>
+                  </FormField>
+                ) : (
+                  <FormField label="Opening stock" hint="How many you have right now">
+                    {(f) => (
+                      <NumberField
+                        {...f}
+                        value={p.stock}
+                        onChangeNumber={(v) => set('stock', v)}
+                        className="text-right tabular"
+                      />
+                    )}
+                  </FormField>
+                )}
+                <FormField label="Low-stock alert at" hint="Warn me when stock falls to this">
+                  {(f) => (
+                    <NumberField
+                      {...f}
+                      value={p.reorderLevel}
+                      onChangeNumber={(v) => set('reorderLevel', v)}
+                      className="text-right tabular"
+                    />
+                  )}
+                </FormField>
+              </div>
+
+              <div className="-mx-3 divide-y divide-border">
+                <ToggleRow
+                  label="Sell at the counter"
+                  desc="Off for items you only buy or use in the shop"
+                  checked={sellable}
+                  onChange={(v) => setP((x) => ({ ...x, showInPOS: v, notForSale: !v }))}
                 />
-              </Section>
+                <ToggleRow
+                  label="Track stock"
+                  desc="Take it off the stock when sold"
+                  checked={p.manageStock !== false}
+                  onChange={(v) => set('manageStock', v)}
+                />
+                <ToggleRow
+                  label="Allow discount"
+                  desc="The cashier can give a discount on this item"
+                  checked={p.allowDiscount !== false}
+                  onChange={(v) => set('allowDiscount', v)}
+                />
+              </div>
+            </div>
+
+            {/* ---------------- More options (expert) ---------------- */}
+            <div className="rounded-xl border border-border bg-card">
+              <button
+                type="button"
+                onClick={() => setMoreOpen((o) => !o)}
+                aria-expanded={moreOpen}
+                className="w-full flex items-center justify-between gap-3 px-5 py-4 text-left rounded-xl hover:bg-secondary/40 focus-ring"
+              >
+                <span>
+                  <span className="block text-sm font-semibold">More options</span>
+                  <span className="block text-xs text-muted-foreground mt-0.5">
+                    Brand, SKU, barcode, other prices, tax, units, photo
+                  </span>
+                </span>
+                <ChevronDown
+                  className={cn('size-5 text-muted-foreground transition', moreOpen && 'rotate-180')}
+                />
+              </button>
+
+              {moreOpen && (
+                <div className="px-5 pb-5 space-y-4 border-t border-border pt-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <FormField label="Brand">
+                      {(f) => (
+                        <div className="flex items-center gap-2">
+                          <Select
+                            {...f}
+                            value={p.brandId}
+                            onChange={(e) => set('brandId', e.target.value)}
+                          >
+                            <option value="">Select brand…</option>
+                            {brands.map((b) => (
+                              <option key={b.id} value={b.id}>
+                                {b.name}
+                              </option>
+                            ))}
+                          </Select>
+                          <IconButton
+                            variant="outline"
+                            label="Add new brand"
+                            onClick={() => setNewBrandOpen(true)}
+                          >
+                            <Plus className="size-4" />
+                          </IconButton>
+                        </div>
+                      )}
+                    </FormField>
+                    <FormField label="Tax %">
+                      {(f) => (
+                        <NumberField
+                          {...f}
+                          value={p.tax ?? 0}
+                          onChangeNumber={(v) => set('tax', v)}
+                          className="text-right tabular"
+                        />
+                      )}
+                    </FormField>
+
+                    <FormField
+                      label="SKU"
+                      action={
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => set('sku', makeSku(p))}
+                        >
+                          <Wand2 className="size-4" /> Generate
+                        </Button>
+                      }
+                    >
+                      {(f) => (
+                        <Input
+                          {...f}
+                          value={p.sku}
+                          onChange={(e) => set('sku', e.target.value)}
+                          placeholder="Leave empty to create one"
+                          className="font-mono"
+                        />
+                      )}
+                    </FormField>
+                    <FormField
+                      label="Barcode"
+                      action={
+                        <Button type="button" variant="ghost" size="sm" onClick={generateBarcode}>
+                          <Wand2 className="size-4" /> Generate
+                        </Button>
+                      }
+                    >
+                      {(f) => (
+                        <Input
+                          {...f}
+                          value={p.barcode}
+                          onChange={(e) => set('barcode', e.target.value)}
+                          placeholder="Scan or type the code on the pack"
+                          className="font-mono"
+                        />
+                      )}
+                    </FormField>
+
+                    <FormField label="Wholesale price" hint="For wholesale customers">
+                      {(f) => (
+                        <NumberField
+                          {...f}
+                          value={p.wholesalePrice ?? 0}
+                          onChangeNumber={(v) => set('wholesalePrice', v || undefined)}
+                          placeholder="0.00"
+                          className="text-right tabular"
+                        />
+                      )}
+                    </FormField>
+                    <FormField label="Contractor price" hint="For contractor customers">
+                      {(f) => (
+                        <NumberField
+                          {...f}
+                          value={p.contractorPrice ?? 0}
+                          onChangeNumber={(v) => set('contractorPrice', v || undefined)}
+                          placeholder="0.00"
+                          className="text-right tabular"
+                        />
+                      )}
+                    </FormField>
+                  </div>
+
+                  <div className="-mx-3">
+                    <ToggleRow
+                      label="Allow negative sale"
+                      desc="Sell more than the stock shows"
+                      checked={!!p.allowNegativeSale}
+                      onChange={(v) => set('allowNegativeSale', v)}
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="text-sm font-medium">Other units</div>
+                    <UnitsEditor
+                      base={p.unit}
+                      available={p.availableUnits ?? [p.unit]}
+                      conversions={p.unitConversions ?? []}
+                      units={units}
+                      onChange={(available, conversions) =>
+                        setP((x) => ({ ...x, availableUnits: available, unitConversions: conversions }))
+                      }
+                    />
+                  </div>
+
+                  <FormField label="Description">
+                    {(f) => (
+                      <textarea
+                        {...f}
+                        value={p.description ?? ''}
+                        onChange={(e) => set('description', e.target.value)}
+                        rows={3}
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/50 resize-y"
+                      />
+                    )}
+                  </FormField>
+
+                  {/* Photo: a small thumbnail picker, stored with the shop data. */}
+                  <div className="space-y-1.5">
+                    <div className="text-sm font-medium">Photo</div>
+                    <div className="flex items-center gap-4">
+                      <label className="relative size-24 shrink-0 cursor-pointer rounded-lg border-2 border-dashed border-border hover:border-primary/60 bg-secondary/30 grid place-items-center overflow-hidden focus-within:ring-2 focus-within:ring-ring/50">
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="sr-only"
+                          onChange={(e) => void handleImage(e)}
+                        />
+                        {imgPreview ? (
+                          <img src={imgPreview} alt="" className="absolute inset-0 size-full object-cover" />
+                        ) : p.categoryId ? (
+                          <ProductImage categoryId={p.categoryId} size={48} />
+                        ) : (
+                          <ImageIcon className="size-8 text-muted-foreground opacity-60" />
+                        )}
+                        {imgBusy && (
+                          <span className="absolute inset-0 grid place-items-center bg-background/70 text-xs font-medium">
+                            Saving…
+                          </span>
+                        )}
+                      </label>
+                      <div className="space-y-1">
+                        <div className="text-xs text-muted-foreground">
+                          Click the box to choose a PNG or JPG.
+                        </div>
+                        {imgPreview && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setImgPreview(undefined);
+                              set('image', undefined);
+                            }}
+                          >
+                            <X className="size-4" /> Remove photo
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Page mode: Delete lives at the end, apart from Save. */}
+            {!asDrawer && onDelete && initial && (
+              <div className="rounded-xl border border-destructive/30 p-4 flex flex-wrap items-center justify-between gap-3">
+                <div className="text-sm text-muted-foreground">
+                  Remove this product from the catalogue.
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="border-destructive/50 text-destructive hover:bg-destructive/10"
+                  onClick={onDelete}
+                >
+                  <Trash2 className="size-4" /> Delete product
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {asDrawer && (
+          <div className="border-t border-border bg-card px-5 py-3 flex items-center justify-between gap-2">
+            {onDelete && initial ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="border-destructive/50 text-destructive hover:bg-destructive/10"
+                onClick={onDelete}
+              >
+                <Trash2 className="size-4" /> Delete
+              </Button>
+            ) : (
+              <span />
+            )}
+            <div className="flex items-center gap-2">
+              {onCancel && (
+                <Button type="button" variant="outline" onClick={onCancel}>
+                  Cancel
+                </Button>
+              )}
+              <Button type="submit" disabled={saving}>
+                <Save className="size-4" /> {saving ? 'Saving…' : saveLabel ?? 'Save'}
+              </Button>
             </div>
           </div>
-        </div>
-      </div>
+        )}
+      </form>
 
-      {/* Drawer mode footer */}
-      {asDrawer && (
-        <div className="border-t border-border bg-card px-4 py-3 flex items-center justify-between">
-          {onDelete && initial ? (
-            <Button variant="outline" onClick={onDelete}>
-              <Trash2 className="size-4" /> Delete
-            </Button>
-          ) : (
-            <span />
-          )}
-          <div className="flex items-center gap-2">
-            {onCancel && (
-              <Button variant="outline" onClick={onCancel}>
-                Cancel
-              </Button>
-            )}
-            <Button onClick={submit} disabled={!isValid}>
-              <Save className="size-4" /> {saveLabel ?? 'Save'}
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* Inline category / brand creation. Mounted here so both the page and the
-          drawer version of this form get them. */}
+      {/* Outside the <form>: these popups have forms of their own. */}
       <NewCategoryModal
         open={newCategoryOpen}
         onClose={() => setNewCategoryOpen(false)}
@@ -575,153 +622,6 @@ export function ProductForm({
         onCreated={(id) => set('brandId', id)}
       />
     </div>
-  );
-}
-
-/** The small "+" beside a dropdown that can be added to on the spot. */
-function AddInlineButton({ title, onClick }: { title: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      aria-label={title}
-      className="size-10 shrink-0 grid place-items-center rounded-md border border-border text-muted-foreground hover:border-primary hover:bg-primary/10 hover:text-primary transition"
-    >
-      <Plus className="size-4" />
-    </button>
-  );
-}
-
-/* ---------- Reusable bits ---------- */
-
-function Section({
-  title,
-  subtitle,
-  required,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  required?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-xl border border-border bg-card edge-top p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="text-sm font-semibold tracking-tight">
-            {title} {required && <span className="text-destructive">*</span>}
-          </div>
-          {subtitle && <div className="text-xs text-muted-foreground">{subtitle}</div>}
-        </div>
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function Field({
-  label,
-  required,
-  hint,
-  rightAction,
-  children,
-}: {
-  label: string;
-  required?: boolean;
-  hint?: string;
-  rightAction?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-1">
-        <label className="text-xs font-semibold text-muted-foreground">
-          {label} {required && <span className="text-destructive">*</span>}
-        </label>
-        {rightAction}
-      </div>
-      {children}
-      {hint && <div className="text-xs text-muted-foreground mt-1">{hint}</div>}
-    </div>
-  );
-}
-
-function Select({
-  value,
-  onChange,
-  children,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
-    >
-      {children}
-    </select>
-  );
-}
-
-function NumberInput({
-  value,
-  onChange,
-  placeholder,
-}: {
-  value: number;
-  onChange: (v: number) => void;
-  placeholder?: string;
-}) {
-  return (
-    <NumberField
-      value={value}
-      onChangeNumber={onChange}
-      placeholder={placeholder}
-      className="text-right"
-    />
-  );
-}
-
-function Toggle({
-  label,
-  desc,
-  checked,
-  onChange,
-}: {
-  label: string;
-  desc?: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={() => onChange(!checked)}
-      className="w-full flex items-center justify-between p-2.5 rounded-md hover:bg-secondary/40 text-left transition"
-    >
-      <div className="min-w-0">
-        <div className="text-sm font-medium">{label}</div>
-        {desc && <div className="text-xs text-muted-foreground">{desc}</div>}
-      </div>
-      <span
-        className={cn(
-          'relative inline-block w-9 h-5 rounded-full transition shrink-0',
-          checked ? 'bg-primary' : 'bg-muted',
-        )}
-      >
-        <span
-          className={cn(
-            'absolute top-0.5 size-4 rounded-full bg-white transition',
-            checked ? 'left-[18px]' : 'left-0.5',
-          )}
-        />
-      </span>
-    </button>
   );
 }
 
@@ -763,32 +663,30 @@ function UnitsEditor({
         {available.map((u) => {
           const isBase = u === base;
           return (
-            <div key={u} className="flex items-center gap-2 px-3 py-2">
-              <div className="text-sm font-medium w-20">{u}</div>
-              <div className="flex-1 text-xs text-muted-foreground">
-                {isBase ? 'Base unit' : `Conversion to ${base}`}
+            <div key={u} className="flex items-center gap-2 px-3 py-2 min-h-12">
+              <div className="text-sm font-medium w-16" data-no-i18n>
+                {u}
               </div>
-              {!isBase ? (
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs text-muted-foreground">1 {u} =</span>
+              {isBase ? (
+                <span className="flex-1 text-xs text-muted-foreground">Main unit</span>
+              ) : (
+                <div className="flex-1 flex items-center justify-end gap-2">
+                  <span className="text-sm text-muted-foreground">
+                    1 <span data-no-i18n>{u}</span> =
+                  </span>
                   <NumberField
                     value={factor(u)}
                     onChangeNumber={(v) => setFactor(u, v)}
-                    placeholder="0"
-                    className="h-7 w-20 px-2 text-xs"
+                    aria-label="Conversion factor"
+                    className="h-9 w-24 px-2 text-right tabular"
                   />
-                  <span className="text-xs text-muted-foreground">{base}</span>
-                  <button
-                    type="button"
-                    onClick={() => remove(u)}
-                    className="ml-1 size-7 grid place-items-center rounded-md hover:bg-destructive/10 hover:text-destructive"
-                    title="Remove"
-                  >
-                    <X className="size-3.5" />
-                  </button>
+                  <span className="text-sm text-muted-foreground" data-no-i18n>
+                    {base}
+                  </span>
+                  <IconButton size="sm" tone="danger" label="Remove unit" onClick={() => remove(u)}>
+                    <X className="size-4" />
+                  </IconButton>
                 </div>
-              ) : (
-                <span className="text-xs text-muted-foreground italic">factor 1</span>
               )}
             </div>
           );
@@ -796,26 +694,24 @@ function UnitsEditor({
       </div>
 
       {candidates.length > 0 && (
-        <div className="flex items-center gap-2">
-          <select
-            id="add-unit"
-            className="h-8 px-2 rounded-md border border-input bg-background text-xs outline-none focus:ring-2 focus:ring-ring/50"
-            defaultValue=""
-            onChange={(e) => {
-              if (e.target.value) {
-                add(e.target.value);
-                e.currentTarget.value = '';
-              }
-            }}
-          >
-            <option value="">+ Add unit…</option>
-            {candidates.map((u) => (
-              <option key={u.short} value={u.short}>
-                {u.name} ({u.short})
-              </option>
-            ))}
-          </select>
-        </div>
+        <Select
+          className="w-auto"
+          aria-label="Add a unit"
+          defaultValue=""
+          onChange={(e) => {
+            if (e.target.value) {
+              add(e.target.value);
+              e.currentTarget.value = '';
+            }
+          }}
+        >
+          <option value="">+ Add unit…</option>
+          {candidates.map((u) => (
+            <option key={u.short} value={u.short}>
+              {u.name} ({u.short})
+            </option>
+          ))}
+        </Select>
       )}
     </div>
   );

@@ -1,16 +1,26 @@
-import { useMemo, useState } from 'react';
-import { Plus, Minus, Printer, Search, Trash2, Barcode as BarcodeIcon } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { Plus, Minus, Printer, Search, Trash2 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
-import { Badge } from '@/components/ui/Badge';
+import { Select } from '@/components/ui/Select';
+import { FormField } from '@/components/ui/FormField';
+import { ToggleRow } from '@/components/ui/ToggleRow';
+import { IconButton } from '@/components/ui/IconButton';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { PrintSheet } from '@/components/ui/PrintSheet';
 import { useProducts } from '@/hooks/useProducts';
-import { formatBDT, cn } from '@/lib/utils';
+import { useBrands } from '@/hooks/useCatalog';
+import { useSettings, type BarcodeSettings } from '@/stores/settings';
+import { printSheet, printerProfiles } from '@/lib/printing';
+import { formatBDT } from '@/lib/utils';
 import { ProductImage } from '@/components/products/ProductImage';
+import { BarcodeSvg } from '@/components/products/BarcodeSvg';
 import type { Product } from '@/types/domain';
 
-type LabelSize = '50x30' | 'A4-grid';
+type LabelSize = BarcodeSettings['defaultLabel'];
 
 interface QueueItem {
   productId: string;
@@ -22,38 +32,67 @@ const LABEL_PRESETS: { id: LabelSize; label: string; cols: number; w: string; h:
   { id: 'A4-grid', label: 'A4 sheet (3 cols × 10 rows)', cols: 3, w: '63mm', h: '29.7mm' },
 ];
 
+/** The product list shows this many until the owner searches. */
+const LIST_LIMIT = 50;
+/** Labels drawn in the on-screen preview. */
+const PREVIEW_COUNT = 3;
+
+interface Fields {
+  showName: boolean;
+  showBrand: boolean;
+  showBarcode: boolean;
+  showSKU: boolean;
+  showPrice: boolean;
+}
+
+/**
+ * BARCODE LABELS. Defaults come from Settings → Barcode (size, fields, copies,
+ * code type); changes here apply to this print only. The bars are real
+ * EAN-13 / Code 128 (src/lib/barcode.ts).
+ */
 export default function BarcodePrint() {
+  const settings = useSettings((s) => s.barcode);
+  const [params] = useSearchParams();
   const [q, setQ] = useState('');
   const [queue, setQueue] = useState<QueueItem[]>([]);
-  const [size, setSize] = useState<LabelSize>('50x30');
-  const [showName, setShowName] = useState(true);
-  const [showPrice, setShowPrice] = useState(true);
-  const [showSKU, setShowSKU] = useState(true);
+  const [size, setSize] = useState<LabelSize>(settings.defaultLabel);
+  const [fields, setFields] = useState<Fields>({
+    showName: settings.showName,
+    showBrand: settings.showBrand,
+    showBarcode: settings.showBarcode,
+    showSKU: settings.showSKU,
+    showPrice: settings.showPrice,
+  });
+  const setField = (k: keyof Fields) => (v: boolean) => setFields((f) => ({ ...f, [k]: v }));
+  const copiesDefault = Math.max(1, Math.round(settings.defaultCopies || 1));
+  const sheetRef = useRef<HTMLDivElement>(null);
 
   // Product source: the real catalogue (display/print only).
-  const productsQuery = useProducts();
-  const products = productsQuery.data ?? [];
+  const products = useProducts().data ?? [];
+  const brands = useBrands().data ?? [];
+  const brandName = (id: string) => brands.find((b) => b.id === id)?.name ?? '';
+
+  // Rows picked on the Products screen arrive as ?ids=a,b,c — queue them once.
+  const seeded = useRef(false);
+  useEffect(() => {
+    if (seeded.current || products.length === 0) return;
+    seeded.current = true;
+    const ids = (params.get('ids') ?? '').split(',').filter(Boolean);
+    const known = ids.filter((id) => products.some((p) => p.id === id));
+    if (known.length) setQueue(known.map((productId) => ({ productId, copies: copiesDefault })));
+  }, [params, products, copiesDefault]);
 
   const list = useMemo(() => {
     const t = q.trim().toLowerCase();
-    if (!t) return products.slice(0, 50);
-    return products.filter((p) =>
-      `${p.name} ${p.sku} ${p.barcode}`.toLowerCase().includes(t),
-    );
+    if (!t) return products.slice(0, LIST_LIMIT);
+    return products.filter((p) => `${p.name} ${p.sku} ${p.barcode}`.toLowerCase().includes(t));
   }, [q, products]);
+  const truncated = !q.trim() && products.length > LIST_LIMIT;
 
-  const addToQueue = (id: string) => {
-    setQueue((qq) => {
-      const idx = qq.findIndex((x) => x.productId === id);
-      if (idx >= 0) {
-        const next = [...qq];
-        next[idx] = { ...next[idx], copies: next[idx].copies + 1 };
-        return next;
-      }
-      return [...qq, { productId: id, copies: 1 }];
-    });
-  };
-
+  const addToQueue = (id: string) =>
+    setQueue((qq) =>
+      qq.some((x) => x.productId === id) ? qq : [...qq, { productId: id, copies: copiesDefault }],
+    );
   const updateCopies = (id: string, copies: number) => {
     if (copies <= 0) return setQueue((qq) => qq.filter((x) => x.productId !== id));
     setQueue((qq) => qq.map((x) => (x.productId === id ? { ...x, copies } : x)));
@@ -63,283 +102,299 @@ export default function BarcodePrint() {
   const preset = LABEL_PRESETS.find((p) => p.id === size)!;
 
   const expanded = useMemo(() => {
-    const rows: { p: Product; n: number }[] = [];
-    queue.forEach((q) => {
-      const p = products.find((x) => x.id === q.productId);
-      if (!p) return;
-      for (let i = 0; i < q.copies; i++) rows.push({ p, n: i });
+    const rows: Product[] = [];
+    queue.forEach((it) => {
+      const p = products.find((x) => x.id === it.productId);
+      if (p) for (let i = 0; i < it.copies; i++) rows.push(p);
     });
     return rows;
   }, [queue, products]);
 
+  /**
+   * A4 sheets go to the A4 printer from Settings → Printers when there is one.
+   * Roll labels (and A4 with no A4 printer) open the print dialog, so the
+   * owner picks the label printer: no printer profile is a label printer, and
+   * the default one is the receipt roll.
+   */
+  const print = async () => {
+    const a4 =
+      size === 'A4-grid'
+        ? printerProfiles().find((p) => p.paperWidth === 210 && p.connection !== 'network')
+        : undefined;
+    if (a4) await printSheet(sheetRef.current, { kind: 'document', profile: a4 });
+    else window.print();
+  };
+
+  const labelProps = {
+    w: preset.w,
+    h: preset.h,
+    fields,
+    codeType: settings.codeType,
+    brandName,
+  };
+
   return (
     <div>
       <PageHeader
-        title="Barcode Print"
-        subtitle="Pick products → set copies → print labels"
+        title="Barcode labels"
         actions={
-          <>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setQueue([])}
-              disabled={queue.length === 0}
-            >
-              <Trash2 className="size-4" /> Clear
-            </Button>
-            <Button onClick={() => window.print()} disabled={totalLabels === 0}>
-              <Printer className="size-4" /> Print {totalLabels} label{totalLabels === 1 ? '' : 's'}
-            </Button>
-          </>
+          <Button onClick={() => void print()} disabled={totalLabels === 0}>
+            <Printer className="size-4" /> Print labels
+            {totalLabels > 0 && <span className="tabular">({totalLabels})</span>}
+          </Button>
         }
       />
 
-      <div className="p-6 grid grid-cols-1 xl:grid-cols-3 gap-4 print:hidden">
+      <div className="p-6 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_400px] gap-4 items-start">
         {/* LEFT — product search */}
-        <div className="xl:col-span-2 space-y-3">
-          <Card className="p-3">
+        <Card className="overflow-hidden flex flex-col">
+          <div className="p-3 border-b border-border">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
               <Input
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 placeholder="Search product…"
+                aria-label="Search product"
                 className="pl-9"
+                data-no-dirty
               />
             </div>
-          </Card>
-          <Card className="overflow-hidden">
-            <div className="max-h-[60vh] overflow-auto scroll-hide">
-              {list.map((p) => {
-                const inQueue = queue.find((x) => x.productId === p.id);
-                return (
-                  <div
-                    key={p.id}
-                    className="flex items-center gap-3 px-3 py-2 border-b border-border last:border-b-0 hover:bg-secondary/30"
-                  >
-                    <ProductImage url={p.image} categoryId={p.categoryId} size={32} />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium truncate">{p.name}</div>
-                      <div className="text-xs text-muted-foreground font-mono">
-                        {p.sku} · {p.barcode}
-                      </div>
+            {truncated && (
+              <div className="text-xs text-muted-foreground mt-2">
+                Showing the first 50 products. Search to find more.
+              </div>
+            )}
+          </div>
+          <div className="max-h-[calc(100vh-15rem)] overflow-auto">
+            {list.map((p) => {
+              const inQueue = queue.find((x) => x.productId === p.id);
+              return (
+                <div
+                  key={p.id}
+                  className="flex items-center gap-3 px-3 py-2 min-h-14 border-b border-border last:border-b-0 hover:bg-secondary/30"
+                >
+                  <ProductImage url={p.image} categoryId={p.categoryId} size={36} />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">{p.name}</div>
+                    <div className="text-xs text-muted-foreground truncate" data-no-i18n>
+                      {p.sku}
+                      {p.barcode ? ` · ${p.barcode}` : ''}
                     </div>
-                    {inQueue ? (
-                      <div className="flex items-center bg-secondary rounded-md">
-                        <button
-                          onClick={() => updateCopies(p.id, inQueue.copies - 1)}
-                          className="size-7 grid place-items-center hover:bg-background rounded-l-md"
-                        >
-                          <Minus className="size-3" />
-                        </button>
-                        <input
-                          value={inQueue.copies}
-                          onChange={(e) => updateCopies(p.id, Number(e.target.value) || 0)}
-                          className="w-10 bg-transparent text-center text-xs tabular outline-none"
-                        />
-                        <button
-                          onClick={() => updateCopies(p.id, inQueue.copies + 1)}
-                          className="size-7 grid place-items-center hover:bg-background rounded-r-md"
-                        >
-                          <Plus className="size-3" />
-                        </button>
-                      </div>
-                    ) : (
-                      <Button size="sm" variant="outline" onClick={() => addToQueue(p.id)}>
-                        <Plus className="size-3.5" /> Add
-                      </Button>
-                    )}
                   </div>
-                );
-              })}
-              {list.length === 0 && (
-                <div className="px-4 py-8 text-center text-muted-foreground text-sm">No products.</div>
+                  {inQueue ? (
+                    <Stepper
+                      value={inQueue.copies}
+                      onChange={(n) => updateCopies(p.id, n)}
+                    />
+                  ) : (
+                    <Button variant="outline" onClick={() => addToQueue(p.id)}>
+                      <Plus className="size-4" /> Add
+                    </Button>
+                  )}
+                </div>
+              );
+            })}
+            {list.length === 0 && (
+              <EmptyState
+                compact
+                icon={Search}
+                title="No products found"
+                message="Try another name, SKU or barcode."
+              />
+            )}
+          </div>
+        </Card>
+
+        {/* RIGHT — settings, then preview & queue, kept in view */}
+        <div className="space-y-4 lg:sticky lg:top-4">
+          <Card className="p-4 space-y-3">
+            <FormField label="Label size">
+              {(f) => (
+                <Select {...f} value={size} onChange={(e) => setSize(e.target.value as LabelSize)}>
+                  {LABEL_PRESETS.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </FormField>
+            <div className="-mx-3 grid grid-cols-2">
+              <ToggleRow label="Name" checked={fields.showName} onChange={setField('showName')} />
+              <ToggleRow label="Price" checked={fields.showPrice} onChange={setField('showPrice')} />
+              <ToggleRow label="Barcode" checked={fields.showBarcode} onChange={setField('showBarcode')} />
+              <ToggleRow label="SKU" checked={fields.showSKU} onChange={setField('showSKU')} />
+              <ToggleRow label="Brand" checked={fields.showBrand} onChange={setField('showBrand')} />
+            </div>
+          </Card>
+
+          <Card className="p-4 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-sm font-semibold">Preview & queue</div>
+              {queue.length > 0 && (
+                <Button variant="ghost" onClick={() => setQueue([])}>
+                  <Trash2 className="size-4" /> Clear all
+                </Button>
               )}
             </div>
-          </Card>
-        </div>
-
-        {/* RIGHT — settings + queue */}
-        <div className="space-y-4">
-          <Card className="p-4 space-y-3">
-            <div className="text-sm font-semibold">Label settings</div>
-            <div>
-              <label className="text-xs font-semibold text-muted-foreground">Size</label>
-              <select
-                value={size}
-                onChange={(e) => setSize(e.target.value as LabelSize)}
-                className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
-              >
-                {LABEL_PRESETS.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-1.5 text-sm">
-              <Toggle label="Show name" checked={showName} onChange={setShowName} />
-              <Toggle label="Show SKU" checked={showSKU} onChange={setShowSKU} />
-              <Toggle label="Show price" checked={showPrice} onChange={setShowPrice} />
-            </div>
-          </Card>
-
-          <Card className="p-4">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-sm font-semibold">Queue</div>
-              <Badge variant="info">{totalLabels} labels</Badge>
-            </div>
             {queue.length === 0 ? (
-              <div className="text-xs text-muted-foreground py-4 text-center">
-                No products selected.
+              <div className="text-sm text-muted-foreground py-4 text-center">
+                Add products on the left to print their labels.
               </div>
             ) : (
-              <div className="space-y-1.5 max-h-72 overflow-auto scroll-hide">
-                {queue.map((q) => {
-                  const p = products.find((x) => x.id === q.productId);
-                  if (!p) return null;
-                  return (
-                    <div key={q.productId} className="flex items-center gap-2 text-xs">
-                      <div className="flex-1 truncate font-medium">{p.name}</div>
-                      <span className="tabular">×{q.copies}</span>
-                      <button
-                        onClick={() => updateCopies(q.productId, 0)}
-                        className="size-6 grid place-items-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                      >
-                        <Trash2 className="size-3" />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
+              <>
+                {/* Real size, first few labels only. */}
+                <div className="rounded-md bg-white p-2 flex flex-wrap gap-2 justify-center overflow-hidden">
+                  {expanded.slice(0, PREVIEW_COUNT).map((p, i) => (
+                    <Label key={i} p={p} {...labelProps} />
+                  ))}
+                </div>
+                <div className="divide-y divide-border max-h-48 overflow-auto">
+                  {queue.map((it) => {
+                    const p = products.find((x) => x.id === it.productId);
+                    if (!p) return null;
+                    return (
+                      <div key={it.productId} className="flex items-center gap-2 py-1.5 text-sm">
+                        <div className="flex-1 min-w-0 truncate font-medium">{p.name}</div>
+                        <Stepper value={it.copies} onChange={(n) => updateCopies(it.productId, n)} />
+                        <IconButton
+                          size="sm"
+                          tone="danger"
+                          label="Remove from queue"
+                          onClick={() => updateCopies(it.productId, 0)}
+                        >
+                          <Trash2 className="size-4" />
+                        </IconButton>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  <span>Labels to print</span>{' '}
+                  <span className="font-semibold tabular text-foreground">{totalLabels}</span>
+                </div>
+              </>
             )}
           </Card>
         </div>
       </div>
 
-      {/* Preview */}
-      <div className="p-6 print:p-0">
-        <div className="text-xs text-muted-foreground font-semibold mb-2 print:hidden">
-          Preview
-        </div>
-        <div
-          className="print-doc bg-white text-black rounded-md p-4 print:p-0"
-          style={{
-            display: 'grid',
-            gridTemplateColumns: `repeat(${preset.cols}, 1fr)`,
-            gap: '4mm',
-          }}
-        >
-          {expanded.map((row, i) => (
-            <Label
-              key={i}
-              p={row.p}
-              w={preset.w}
-              h={preset.h}
-              showName={showName}
-              showPrice={showPrice}
-              showSKU={showSKU}
-            />
-          ))}
-          {expanded.length === 0 && (
-            <div className="col-span-full text-center text-muted-foreground text-sm py-12 print:hidden">
-              Preview shows here once you add items.
-            </div>
-          )}
-        </div>
-      </div>
+      {/* What reaches the printer: a white sheet outside the app. */}
+      {expanded.length > 0 && (
+        <PrintSheet paper={size === 'A4-grid' ? 'A4' : '50mm'} sheetRef={sheetRef}>
+          <div
+            className="print-doc"
+            style={{
+              display: 'grid',
+              gridTemplateColumns: `repeat(${preset.cols}, ${preset.w})`,
+              gap: 0,
+            }}
+          >
+            {expanded.map((p, i) => (
+              <Label key={i} p={p} {...labelProps} pageBreak={size === '50x30'} />
+            ))}
+          </div>
+        </PrintSheet>
+      )}
 
-      {/* Print stylesheet */}
-      <style>{`
-        @media print {
-          body, html, #root, .app-shell { background: white !important; }
-          .scroll-hide, header, aside, nav, .titlebar-drag { display: none !important; }
-          @page { margin: 8mm; }
-        }
-      `}</style>
+      {/* Roll labels: one 50 × 30 mm page per label in the print dialog. */}
+      {size === '50x30' && (
+        <style>{`@media print { @page { size: 50mm 30mm; margin: 0; } }`}</style>
+      )}
     </div>
   );
 }
 
+function Stepper({ value, onChange }: { value: number; onChange: (n: number) => void }) {
+  return (
+    <div className="flex items-center rounded-md border border-border bg-secondary/40 shrink-0">
+      <IconButton size="sm" label="One less" onClick={() => onChange(value - 1)}>
+        <Minus className="size-4" />
+      </IconButton>
+      <input
+        value={value}
+        inputMode="numeric"
+        aria-label="Copies"
+        onFocus={(e) => e.currentTarget.select()}
+        onChange={(e) => onChange(Math.min(999, Number(e.target.value.replace(/\D/g, '')) || 0))}
+        className="w-14 h-9 bg-transparent text-center text-sm tabular outline-none"
+      />
+      <IconButton size="sm" label="One more" onClick={() => onChange(value + 1)}>
+        <Plus className="size-4" />
+      </IconButton>
+    </div>
+  );
+}
+
+/** One label. pt / mm sizes on purpose: this is the printed object. */
 function Label({
   p,
   w,
   h,
-  showName,
-  showPrice,
-  showSKU,
+  fields,
+  codeType,
+  brandName,
+  pageBreak,
 }: {
   p: Product;
   w: string;
   h: string;
-  showName: boolean;
-  showPrice: boolean;
-  showSKU: boolean;
+  fields: Fields;
+  codeType: BarcodeSettings['codeType'];
+  brandName: (id: string) => string;
+  pageBreak?: boolean;
 }) {
+  const code = p.barcode || p.sku;
+  const brand = fields.showBrand ? brandName(p.brandId) : '';
   return (
     <div
-      style={{ width: w, height: h }}
-      className="bg-white text-black border border-black/30 rounded-sm p-1 text-center flex flex-col items-center justify-center overflow-hidden"
+      style={{
+        width: w,
+        height: h,
+        padding: '1.5mm 2mm',
+        boxSizing: 'border-box',
+        breakAfter: pageBreak ? 'page' : undefined,
+        breakInside: 'avoid',
+      }}
+      className="bg-white text-black text-center flex flex-col items-center justify-center overflow-hidden border border-black/20 print:border-0"
+      data-no-i18n
     >
-      {showName && (
-        <div className="text-[8pt] font-semibold leading-tight line-clamp-1">
+      {fields.showName && (
+        <div style={{ fontSize: '8pt' }} className="font-semibold leading-tight line-clamp-1 w-full">
           {p.name}
         </div>
       )}
-      <div
-        className="my-0.5 w-full h-3"
-        style={{
-          backgroundImage:
-            'repeating-linear-gradient(90deg,#000 0,#000 1px,#fff 1px,#fff 2px,#000 2px,#000 3px,#fff 3px,#fff 5px,#000 5px,#000 6px,#fff 6px,#fff 8px,#000 8px,#000 10px,#fff 10px,#fff 11px)',
-        }}
-      />
-      {showSKU && (
-        <div className="text-[7pt] font-mono leading-none">{p.barcode || p.sku}</div>
+      {brand && (
+        <div style={{ fontSize: '6.5pt' }} className="leading-tight truncate w-full">
+          {brand}
+        </div>
       )}
-      <div className="flex items-center justify-between w-full mt-0.5">
-        {showSKU && <div className="text-[6pt] font-mono opacity-70 truncate">{p.sku}</div>}
-        {showPrice && (
-          <div className="text-[8pt] font-bold tabular ml-auto">
-            ৳ {formatBDT(p.price, { withSymbol: false })}
+      {fields.showBarcode && code && (
+        <div className="w-full my-[0.5mm]">
+          <BarcodeSvg code={code} prefer={codeType} height="10mm" />
+          {/* The number is always under the bars, so a person can type it in. */}
+          <div style={{ fontSize: '7pt', letterSpacing: '0.05em' }} className="leading-none mt-[0.5mm]">
+            {code}
           </div>
-        )}
-      </div>
+        </div>
+      )}
+      {(fields.showSKU || fields.showPrice) && (
+        <div className="flex items-baseline justify-between gap-1 w-full mt-[0.5mm]">
+          {fields.showSKU && p.sku && p.sku !== code ? (
+            <div style={{ fontSize: '7pt' }} className="truncate">
+              {p.sku}
+            </div>
+          ) : (
+            <span />
+          )}
+          {fields.showPrice && (
+            <div style={{ fontSize: '9pt' }} className="font-bold tabular">
+              ৳ {formatBDT(p.price, { withSymbol: false })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
-
-function Toggle({
-  label,
-  checked,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={() => onChange(!checked)}
-      className="w-full flex items-center justify-between p-2 rounded-md hover:bg-secondary/40 text-left transition"
-    >
-      <span className="text-sm">{label}</span>
-      <span
-        className={cn(
-          'relative inline-block w-9 h-5 rounded-full transition',
-          checked ? 'bg-primary' : 'bg-muted',
-        )}
-      >
-        <span
-          className={cn(
-            'absolute top-0.5 size-4 rounded-full bg-white transition',
-            checked ? 'left-[18px]' : 'left-0.5',
-          )}
-        />
-      </span>
-    </button>
-  );
-}
-
-// Suppress unused
-void BarcodeIcon;

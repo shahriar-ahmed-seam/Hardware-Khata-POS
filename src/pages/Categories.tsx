@@ -1,10 +1,8 @@
 import { useMemo, useState } from 'react';
-import { Plus, Edit2, Trash2, Search, ListTree, ChevronRight } from 'lucide-react';
-import { PageHeader } from '@/components/ui/PageHeader';
-import { Card } from '@/components/ui/Card';
+import { ListTree, ChevronRight } from 'lucide-react';
 import { Input } from '@/components/ui/Input';
-import { Button } from '@/components/ui/Button';
-import { Drawer } from '@/components/ui/Drawer';
+import { Select } from '@/components/ui/Select';
+import { FormField } from '@/components/ui/FormField';
 import { type CategoryNode } from '@/stores/masterData';
 import {
   useCategories as useCategoriesQuery,
@@ -15,9 +13,12 @@ import {
 import { useProducts } from '@/hooks/useProducts';
 import { confirm } from '@/stores/confirm';
 import { toast } from '@/stores/toast';
-import { cn } from '@/lib/utils';
-
-const EMOJIS = ['🔨', '🪚', '🚰', '💡', '🎨', '🔩', '🧱', '⛑️', '🛠️', '⚙️', '🪛', '📦', '🔥', '🪜', '🚪', '🛁'];
+import {
+  EmojiPicker,
+  MasterFormModal,
+  MasterListPage,
+  MasterRow,
+} from '@/components/products/MasterList';
 
 export default function Categories() {
   // ----- Data source: the SQLite backend -----
@@ -36,46 +37,34 @@ export default function Categories() {
   const tree = useMemo(() => {
     const t = q.trim().toLowerCase();
     const filtered = t ? items.filter((c) => c.name.toLowerCase().includes(t)) : items;
-    const roots = filtered.filter((c) => !c.parentId);
+    // A matching subcategory still shows when its parent does not match.
+    const roots = filtered.filter((c) => !c.parentId || !filtered.some((p) => p.id === c.parentId));
     return roots.map((root) => ({
       ...root,
       children: filtered.filter((c) => c.parentId === root.id),
     }));
   }, [items, q]);
+  const shown = tree.reduce((n, r) => n + 1 + r.children.length, 0);
 
   const productCount = (id: string) => productList.filter((p) => p.categoryId === id).length;
 
-  const save = async (data: Omit<CategoryNode, 'id'>, current: CategoryNode | 'new') => {
-    try {
-      if (current === 'new') {
-        await createCategory.mutateAsync({
-          name: data.name,
-          emoji: data.emoji,
-          parentId: data.parentId,
-        });
-      } else {
-        await updateCategory.mutateAsync({
-          id: current.id,
-          patch: { name: data.name, emoji: data.emoji, parentId: data.parentId ?? null },
-        });
-      }
-      toast.success(current === 'new' ? 'Category added' : 'Category updated');
-      setEditing(null);
-    } catch (e) {
-      toast.error('Save failed', { description: e instanceof Error ? e.message : undefined });
-    }
-  };
-
   const onDelete = async (c: CategoryNode) => {
-    const used = productCount(c.id);
-    const childCount = items.filter((i) => i.parentId === c.id).length;
-    const notes: string[] = [];
-    if (used > 0) notes.push(`${used} product(s) use this category.`);
-    if (childCount > 0)
-      notes.push(`${childCount} subcategor${childCount === 1 ? 'y' : 'ies'} will be detached.`);
+    const used = productCount(c.id) > 0;
+    const hasChildren = items.some((i) => i.parentId === c.id);
+    // Static sentences so the Bangla layer can translate them.
+    const usedNote = 'Products in it will be left without a category.';
+    const childNote = 'Its subcategories will become top-level categories.';
     const ok = await confirm({
-      title: `Delete "${c.name}"?`,
-      message: notes.length > 0 ? notes.join(' ') : undefined,
+      title: 'Delete this category?',
+      message:
+        used && hasChildren
+          ? `${usedNote} ${childNote}`
+          : used
+            ? usedNote
+            : hasChildren
+              ? childNote
+              : undefined,
+      confirmLabel: 'Delete',
       variant: 'destructive',
     });
     if (!ok) return;
@@ -87,227 +76,134 @@ export default function Categories() {
     }
   };
 
-  return (
-    <div>
-      <PageHeader
-        title="Categories"
-        subtitle={`${items.length} categories · subcategories optional`}
-        actions={
-          <Button onClick={() => setEditing('new')}>
-            <Plus className="size-4" /> Add Category
-          </Button>
-        }
-      />
-
-      <div className="p-6 max-w-3xl">
-        <Card className="p-3 mb-4">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-            <Input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search categories…"
-              className="pl-9"
-            />
+  const row = (cat: CategoryNode, indent?: boolean) => (
+    <MasterRow
+      key={cat.id}
+      indent={indent}
+      leading={
+        <>
+          {indent && <ChevronRight className="size-4 text-muted-foreground -ml-6" />}
+          <div className="size-9 rounded-md bg-secondary grid place-items-center text-lg shrink-0">
+            {cat.emoji ?? <ListTree className="size-4 text-muted-foreground" />}
           </div>
-        </Card>
-
-        <Card className="overflow-hidden divide-y divide-border">
-          {tree.map((cat) => (
-            <div key={cat.id}>
-              <Row
-                cat={cat}
-                count={productCount(cat.id)}
-                onEdit={() => setEditing(cat)}
-                onDelete={() => onDelete(cat)}
-              />
-              {cat.children.map((child) => (
-                <Row
-                  key={child.id}
-                  cat={child}
-                  indent
-                  count={productCount(child.id)}
-                  onEdit={() => setEditing(child)}
-                  onDelete={() => onDelete(child)}
-                />
-              ))}
-            </div>
-          ))}
-          {tree.length === 0 && (
-            <div className="px-4 py-8 text-center text-muted-foreground text-sm">
-              No categories.{' '}
-              <button className="text-primary underline" onClick={() => setEditing('new')}>
-                Add new
-              </button>
-            </div>
-          )}
-        </Card>
-      </div>
-
-      <Drawer
-        open={!!editing}
-        onClose={() => setEditing(null)}
-        width="max-w-md"
-        title={editing === 'new' ? 'Add Category' : 'Edit Category'}
-        subtitle="Optional parent for subcategories"
-      >
-        {editing && (
-          <Form
-            initial={editing === 'new' ? undefined : editing}
-            allCategories={items}
-            onSave={(data) => {
-              void save(data, editing);
-            }}
-            onCancel={() => setEditing(null)}
-          />
-        )}
-      </Drawer>
-    </div>
+        </>
+      }
+      name={cat.name}
+      aside={
+        <>
+          {productCount(cat.id)} <span>products</span>
+        </>
+      }
+      onEdit={() => setEditing(cat)}
+      onDelete={() => void onDelete(cat)}
+      deleteLabel="Delete category"
+    />
   );
-}
 
-function Row({
-  cat,
-  count,
-  indent,
-  onEdit,
-  onDelete,
-}: {
-  cat: CategoryNode;
-  count: number;
-  indent?: boolean;
-  onEdit: () => void;
-  onDelete: () => void;
-}) {
   return (
-    <div
-      className={cn(
-        'group flex items-center gap-3 px-4 py-2.5 hover:bg-secondary/30',
-        indent && 'pl-12 bg-muted/20',
+    <>
+      <MasterListPage
+        title="Categories"
+        addLabel="Add category"
+        onAdd={() => setEditing('new')}
+        total={items.length}
+        noun="categories"
+        q={q}
+        onQ={setQ}
+        searchPlaceholder="Search categories…"
+        emptyTitle="No categories yet"
+        emptyMessage="Add one, e.g. Plumbing or Paint."
+        shown={shown}
+      >
+        {tree.map((cat) => (
+          <div key={cat.id} className="divide-y divide-border">
+            {row(cat)}
+            {cat.children.map((child) => row(child, true))}
+          </div>
+        ))}
+      </MasterListPage>
+
+      {editing && (
+        <CategoryForm
+          initial={editing === 'new' ? undefined : editing}
+          allCategories={items}
+          busy={createCategory.isPending || updateCategory.isPending}
+          onClose={() => setEditing(null)}
+          onSave={async (data) => {
+            try {
+              if (editing === 'new') {
+                await createCategory.mutateAsync(data);
+              } else {
+                await updateCategory.mutateAsync({
+                  id: editing.id,
+                  patch: { ...data, parentId: data.parentId ?? null },
+                });
+              }
+              toast.success(editing === 'new' ? 'Category added' : 'Category updated');
+              setEditing(null);
+            } catch (e) {
+              toast.error('Save failed', { description: e instanceof Error ? e.message : undefined });
+            }
+          }}
+        />
       )}
-    >
-      {indent && <ChevronRight className="size-3.5 text-muted-foreground -ml-6" />}
-      <div className="size-8 rounded-md bg-secondary grid place-items-center text-base">
-        {cat.emoji ?? <ListTree className="size-4 text-muted-foreground" />}
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium">{cat.name}</div>
-        {indent && <div className="text-xs text-muted-foreground">subcategory</div>}
-      </div>
-      <div className="text-xs text-muted-foreground tabular">{count} products</div>
-      <div className="flex items-center gap-0.5 opacity-60 group-hover:opacity-100">
-        <button
-          onClick={onEdit}
-          className="size-7 grid place-items-center rounded hover:bg-secondary text-muted-foreground hover:text-foreground"
-          title="Edit"
-        >
-          <Edit2 className="size-3.5" />
-        </button>
-        <button
-          onClick={onDelete}
-          className="size-7 grid place-items-center rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
-          title="Delete"
-        >
-          <Trash2 className="size-3.5" />
-        </button>
-      </div>
-    </div>
+    </>
   );
 }
 
-function Form({
+function CategoryForm({
   initial,
   allCategories,
+  busy,
   onSave,
-  onCancel,
+  onClose,
 }: {
   initial?: CategoryNode;
   allCategories: CategoryNode[];
-  onSave: (data: Omit<CategoryNode, 'id'>) => void;
-  onCancel: () => void;
+  busy: boolean;
+  onSave: (data: { name: string; emoji?: string; parentId?: string }) => void;
+  onClose: () => void;
 }) {
   const [name, setName] = useState(initial?.name ?? '');
   const [emoji, setEmoji] = useState(initial?.emoji ?? '');
   const [parentId, setParentId] = useState<string | undefined>(initial?.parentId);
 
-  // Parents are top-level only (no nested subcategories)
+  // Parents are top-level only (no nested subcategories).
   const parentChoices = allCategories.filter((c) => !c.parentId && c.id !== initial?.id);
 
   return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (!name.trim()) return;
-        onSave({ name: name.trim(), emoji: emoji || undefined, parentId });
-      }}
-      className="flex flex-col flex-1 min-h-0"
+    <MasterFormModal
+      open
+      onClose={onClose}
+      title={initial ? 'Edit category' : 'Add category'}
+      saveLabel={initial ? 'Save changes' : 'Add category'}
+      canSave={!!name.trim()}
+      busy={busy}
+      onSubmit={() => onSave({ name: name.trim(), emoji: emoji || undefined, parentId })}
     >
-      <div className="flex-1 overflow-auto p-4 space-y-3">
-        <div>
-          <label className="text-xs font-semibold text-muted-foreground">Name *</label>
-          <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} />
-        </div>
-        <div>
-          <label className="text-xs font-semibold text-muted-foreground">Icon (emoji)</label>
-          <div className="flex flex-wrap gap-1 mt-1">
-            {EMOJIS.map((e) => (
-              <button
-                type="button"
-                key={e}
-                onClick={() => setEmoji(e)}
-                className={cn(
-                  'size-9 rounded-md border text-lg transition',
-                  emoji === e
-                    ? 'border-primary bg-primary/10'
-                    : 'border-border hover:bg-secondary',
-                )}
-              >
-                {e}
-              </button>
-            ))}
-            <button
-              type="button"
-              onClick={() => setEmoji('')}
-              className={cn(
-                'size-9 rounded-md border text-xs transition',
-                !emoji ? 'border-primary bg-primary/10' : 'border-border hover:bg-secondary',
-              )}
-              title="No icon"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
-        <div>
-          <label className="text-xs font-semibold text-muted-foreground">
-            Parent category
-          </label>
-          <select
+      <FormField label="Name" required>
+        {(f) => <Input {...f} autoFocus value={name} onChange={(e) => setName(e.target.value)} />}
+      </FormField>
+      <FormField label="Icon">
+        <EmojiPicker value={emoji} onChange={setEmoji} />
+      </FormField>
+      <FormField label="Inside another category" hint="Leave empty for a main category.">
+        {(f) => (
+          <Select
+            {...f}
             value={parentId ?? ''}
             onChange={(e) => setParentId(e.target.value || undefined)}
-            className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50"
           >
-            <option value="">— Top level —</option>
+            <option value="">— None —</option>
             {parentChoices.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.emoji ? c.emoji + ' ' : ''}
                 {c.name}
               </option>
             ))}
-          </select>
-          <div className="text-xs text-muted-foreground mt-1">
-            Optional. Leave empty for a top-level category.
-          </div>
-        </div>
-      </div>
-      <div className="border-t border-border bg-card px-4 py-3 flex items-center justify-end gap-2">
-        <Button type="button" variant="outline" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button type="submit" disabled={!name.trim()}>
-          {initial ? 'Save Changes' : 'Add Category'}
-        </Button>
-      </div>
-    </form>
+          </Select>
+        )}
+      </FormField>
+    </MasterFormModal>
   );
 }

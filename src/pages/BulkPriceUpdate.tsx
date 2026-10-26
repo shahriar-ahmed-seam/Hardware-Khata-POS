@@ -1,11 +1,14 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { Filter, Save, RotateCcw, Search } from 'lucide-react';
+import { Save, RotateCcw, Search } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Badge } from '@/components/ui/Badge';
+import { Select } from '@/components/ui/Select';
+import { FormField } from '@/components/ui/FormField';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { useProducts } from '@/hooks/useProducts';
 import { useCategories, useBrands } from '@/hooks/useCatalog';
 import { api } from '@/lib/api';
@@ -16,13 +19,22 @@ import { ProductImage } from '@/components/products/ProductImage';
 import { NumberField } from '@/components/ui/NumberField';
 
 type Field = 'price' | 'cost' | 'wholesalePrice' | 'contractorPrice';
-type Mode = 'flat' | 'percent' | 'set';
+/** One choice in words instead of a mode plus a direction. */
+type Change = 'up-pct' | 'up-flat' | 'down-pct' | 'down-flat' | 'set';
 
 const FIELD_LABEL: Record<Field, string> = {
-  price: 'Sell Price (SPR)',
-  cost: 'Cost',
-  wholesalePrice: 'Wholesale',
-  contractorPrice: 'Contractor',
+  price: 'Selling price',
+  cost: 'Buying price',
+  wholesalePrice: 'Wholesale price',
+  contractorPrice: 'Contractor price',
+};
+
+const CHANGE_LABEL: Record<Change, string> = {
+  'up-pct': 'Increase by %',
+  'up-flat': 'Increase by ৳',
+  'down-pct': 'Decrease by %',
+  'down-flat': 'Decrease by ৳',
+  set: 'Set to ৳',
 };
 
 export default function BulkPriceUpdate() {
