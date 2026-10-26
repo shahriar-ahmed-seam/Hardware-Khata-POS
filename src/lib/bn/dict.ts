@@ -3631,4 +3631,12 @@ Object.assign(BN, {
   'Write every sale to a CSV file in your backup folder': 'সব বিক্রয় ব্যাকআপ ফোল্ডারে একটি CSV ফাইলে লিখুন',
   'You can still save it. The sale will record that the limit was passed.': 'তবুও সংরক্ষণ করা যাবে। বিক্রয়ে লেখা থাকবে যে সীমা ছাড়ানো হয়েছে।',
   'Retail, Wholesale and Contractor — each uses its own price column on the product': 'খুচরা, পাইকারি ও কন্ট্রাক্টর — প্রতিটি পণ্যের নিজস্ব দামের কলাম ব্যবহার করে',
+  // @@bn-pos-dashboard-shell (new strings for this redesign group go above this line)
+  // @@bn-sales (new strings for this redesign group go above this line)
+  // @@bn-contacts-cash-expenses (new strings for this redesign group go above this line)
+  // @@bn-products-master-auth (new strings for this redesign group go above this line)
+  // @@bn-purchases-stock (new strings for this redesign group go above this line)
+  // @@bn-reports (new strings for this redesign group go above this line)
+  // @@bn-settings (new strings for this redesign group go above this line)
+  // @@bn-printing (new strings for this redesign group go above this line)
 });
