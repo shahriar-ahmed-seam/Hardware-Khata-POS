@@ -1,7 +1,7 @@
 # Hardware Khata POS — Releasing & Updating
 
-**Current version: 0.9.1** · Windows x64 · NSIS installer, per-user (no admin needed)
-Installer: `release/HardwareKhataPOS-Setup-0.9.1.exe` (~82 MB)
+**Current version: 0.10.0** · Windows x64 · NSIS installer, per-user (no admin needed)
+Installer: `release/HardwareKhataPOS-Setup-0.10.0.exe` (~82 MB)
 
 > **Releases are built by GitHub now, not on your PC.** Bump the version, commit,
 > then push a tag — `.github/workflows/release.yml` runs the checks, builds the

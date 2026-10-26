@@ -341,6 +341,7 @@ if (probe) {
 }
 
 let n = 0;
+const crashes = [];
 for (const route of wanted) {
   n += 1;
   await evaluate(`(location.hash = ${JSON.stringify('#' + route)}, true)`);
@@ -350,6 +351,14 @@ for (const route of wanted) {
   const file = path.join(outDir, `${String(n).padStart(2, '0')}-${slug(route)}.png`);
   fs.writeFileSync(file, Buffer.from(shot.data, 'base64'));
   console.log(`saved ${file}`);
+  // A screen that threw shows the app's error boundary instead of the page.
+  const crashed = await evaluate(`document.body.innerText.includes('Something went wrong')`).catch(() => true);
+  if (crashed) {
+    crashes.push(route);
+    console.log(`CRASH on ${route}`);
+    await evaluate(`location.reload(), true`).catch(() => {});
+    await sleep(3000);
+  }
   if (probe) {
     const f = await evaluate(PROBE).catch((e) => ({ error: String(e) }));
     findings.push({ route, ...f });
@@ -362,6 +371,7 @@ if (probe) {
   console.log(`probe: ${bad.length} of ${findings.length} routes with findings → ${path.join(outDir, 'probe.json')}`);
 }
 
+console.log(crashes.length ? `CRASHES: ${crashes.join(', ')}` : 'CRASHES: none');
 ws.close();
 stop();
 console.log(`\n${n} screens in ${outDir} (${width}x${height}, ${theme}, ${lang})`);
