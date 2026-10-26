@@ -318,7 +318,8 @@ interface State {
   loading: boolean;
   hydrate: () => Promise<void>;
 
-  setBusiness: (patch: Partial<BusinessInfo>) => void;
+  /** Resolves true once the backend has saved it (B12). */
+  setBusiness: (patch: Partial<BusinessInfo>) => Promise<boolean>;
   // Tax
   addTaxRate: (data: Omit<TaxRate, 'id'>) => TaxRate;
   updateTaxRate: (id: string, patch: Partial<TaxRate>) => void;
@@ -441,7 +442,7 @@ export const useSettings = create<State>()(
             ? branches.find((b) => b.name === patch.defaultBranch)?.id ?? null
             : undefined;
           const merged = get().business;
-          void api('business.update', {
+          return api('business.update', {
             name: merged.name,
             tagline: merged.tagline,
             logoUrl: merged.logoUrl,
@@ -467,11 +468,13 @@ export const useSettings = create<State>()(
             .then(() => {
               // The backend moves the branch list's default flag with it.
               if (defaultBranchId) void useBranches.getState().hydrate();
-              return get().hydrate();
+              void get().hydrate();
+              return true;
             })
             .catch((e: unknown) => {
               toast.error(e instanceof Error ? e.message : 'Failed to save business info');
               void get().hydrate();
+              return false;
             });
         },
 

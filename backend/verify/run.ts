@@ -290,9 +290,22 @@ function main() {
         "SELECT COALESCE(SUM(p.amount),0) AS s FROM sale_payments p JOIN sales sa ON sa.id=p.sale_id WHERE sa.customer_id=? AND sa.status='final'",
         c.id,
       ).s;
-      const cr = row<{ s: number }>(db, "SELECT COALESCE(SUM(total),0) AS s FROM sell_returns WHERE customer_id=? AND refund_method='CreditAdjust'", c.id).s;
+      // Credit notes (CreditAdjust and, since task 3, StoreCredit) on sales that
+      // were not voided, plus non-cash money still held for voided sales.
+      const cr = row<{ s: number }>(
+        db,
+        `SELECT COALESCE(SUM(r.total),0) AS s FROM sell_returns r LEFT JOIN sales x ON x.id=r.sale_id
+          WHERE r.customer_id=? AND r.refund_method IN ('CreditAdjust','StoreCredit')
+            AND (r.sale_id IS NULL OR x.status='final')`,
+        c.id,
+      ).s;
+      const held = row<{ s: number }>(
+        db,
+        "SELECT COALESCE(SUM(p.amount),0) AS s FROM sale_payments p JOIN sales sa ON sa.id=p.sale_id WHERE sa.customer_id=? AND sa.status='void' AND p.method!='Cash'",
+        c.id,
+      ).s;
       const acct = row<{ s: number }>(db, "SELECT COALESCE(SUM(amount),0) AS s FROM account_payments WHERE party_type='customer' AND party_id=?", c.id).s;
-      const expected = round2(open + sales - pays - cr - acct);
+      const expected = round2(open + sales - pays - cr - held - acct);
       if (Math.abs(expected - due) > EPSILON) ledgerMismatch++;
     }
     s.ok('customer due formula consistent', ledgerMismatch === 0, `${ledgerMismatch} bad`);

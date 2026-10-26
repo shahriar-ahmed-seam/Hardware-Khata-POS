@@ -37,21 +37,21 @@ before any restyling. Three were re-checked in the code while writing this (mark
 
 | # | Where | What happens |
 |---|---|---|
-| B1 ✔ | Add Sale (`AddSale.tsx:597`, `:673`) | Choosing **Quotation** in the Status select still saves a real **final** sale (stock leaves). In edit mode the same select can turn a final invoice back into a draft. |
-| B2 ✔ | Edit product (`ProductEdit.tsx` → `ProductForm.tsx:80`) | `/products/:id` renders the form before the product loads, and the form reads `initial` once → the owner sees a **blank** product. |
-| B3 ✔ | POS (`PaymentModal.tsx:116`) | **Multi-Pay** opens the same screen as Pay (`startMode` is never read). |
-| B4 | POS (`POS.tsx:737`) | **Re-print Last** does nothing; the "Auto-print receipt" setting is never read. |
-| B5 | POS | Resuming a held cart silently **overwrites** the current cart; closing a cart tab / Clear cart delete with no confirm or undo. |
-| B6 | POS cart line | A decimal quantity (2.5 kg) cannot be typed. |
-| B7 | Barcode print | The printed "barcode" is a decorative stripe — **no scanner can read it**; the page ignores Settings → Barcode. |
-| B8 | Bulk price update | Changing **Cost** in bulk skips the buying-price history (same class of bug as the backend R25 fix). |
-| B9 | Roles | The **Admin** role can be edited down to nothing ("Revoke all") — the owner can lock himself out. |
-| B10 | Users | PINs are typed in **plain visible text**, length not checked (a 1-digit PIN saves). First-run wizard: PIN visible, never confirmed. |
-| B11 | Dead buttons | Products: Import/Export/Barcode + bulk Print/Export/Update; Customer & Supplier detail: **Print statement**; Shipments: Print/View; All Sales: date **Custom**; SaleDetail Return/Ship when opened from a khata; Printers **Test** (fake success); Settings "Saved" buttons (only a toast). |
-| B12 | Settings → Business info | Leaving the page drops unsaved edits silently; the success toast fires before the save resolves. |
-| B13 | Customer groups / forms | New groups can be created but never chosen (form + filter + POS hard-code Retail/Wholesale/Contractor). Price groups and Customer groups are two screens for one list. |
-| B14 | Expenses | "Attach receipt" stores nothing; "Recurring" creates nothing. |
-| B15 | Bangla | "Credit" is translated **বাকি** (= due) — the khata's *payments* column and the Sell-payment "Credit" card read the opposite in Bangla. |
+| B1 ✅ | Add Sale (`AddSale.tsx:597`, `:673`) | Choosing **Quotation** in the Status select still saves a real **final** sale (stock leaves). In edit mode the same select can turn a final invoice back into a draft. *Fixed (task 1).* |
+| B2 ✅ | Edit product (`ProductEdit.tsx` → `ProductForm.tsx:80`) | `/products/:id` renders the form before the product loads, and the form reads `initial` once → the owner sees a **blank** product. *Fixed.* |
+| B3 ✅ | POS (`PaymentModal.tsx:116`) | **Multi-Pay** opens the same screen as Pay (`startMode` is never read). *Fixed.* |
+| B4 ✅ | POS (`POS.tsx:737`) | **Re-print Last** does nothing; the "Auto-print receipt" setting is never read. *Fixed.* |
+| B5 ✅ | POS | Resuming a held cart silently **overwrites** the current cart; closing a cart tab / Clear cart delete with no confirm or undo. *Fixed.* |
+| B6 ✅ | POS cart line | A decimal quantity (2.5 kg) cannot be typed. *Fixed (step 1).* |
+| B7 ✅ | Barcode print | The printed "barcode" is a decorative stripe — **no scanner can read it**; the page ignores Settings → Barcode. *Fixed (real Code128/EAN-13).* |
+| B8 ✅ | Bulk price update | Changing **Cost** in bulk skips the buying-price history (same class of bug as the backend R25 fix). *Fixed in the backend: `products.update` routes cost through `setProductCost` (R25).* |
+| B9 ✅ | Roles | The **Admin** role can be edited down to nothing ("Revoke all") — the owner can lock himself out. *Fixed: Admin role is frozen.* |
+| B10 ✅ | Users | PINs are typed in **plain visible text**, length not checked (a 1-digit PIN saves). First-run wizard: PIN visible, never confirmed. *Fixed: PIN masked, 4–6 digits.* |
+| B11 ✅ | Dead buttons | Products: Import/Export/Barcode + bulk Print/Export/Update; Customer & Supplier detail: **Print statement**; Shipments: Print/View; All Sales: date **Custom**; SaleDetail Return/Ship when opened from a khata; Printers **Test** (fake success); Settings "Saved" buttons (only a toast). *Fixed: Products Export all/Barcode/Bulk Update wired, Import hidden; Print statement, Shipments Print/View, Printer Test hidden; Sales Custom range has From/To; SaleDetail hides Return/Ship where not wired; fake "Saved" buttons replaced by "Changes save automatically".* |
+| B12 ✅ | Settings → Business info | Leaving the page drops unsaved edits silently; the success toast fires before the save resolves. *Fixed: toast after the save resolves; unsaved edits are kept and restored with a "Go back" toast.* |
+| B13 ✅ | Customer groups / forms | New groups can be created but never chosen (form + filter + POS hard-code Retail/Wholesale/Contractor). Price groups and Customer groups are two screens for one list. *Fixed for now: one read-only Customer Groups screen (Price Groups redirects there) until groups link by id (R50).* |
+| B14 ✅ | Expenses | "Attach receipt" stores nothing; "Recurring" creates nothing. *Fixed: both hidden until built (R108).* |
+| B15 ✅ | Bangla | "Credit" is translated **বাকি** (= due) — the khata's *payments* column and the Sell-payment "Credit" card read the opposite in Bangla. *Fixed: khata columns read Owes (+) / Paid (−) (supplier: Bill (+) / Paid (−)); report shows "On khata".* |
 | B16 ✅ | Popups everywhere | A stray click outside a Modal/Drawer closes it and **throws away what was typed** (close-shift count, payment split, forms). *Fixed in step 0.* |
 | B17 ✅ | Popups everywhere (`globals.css`) | A "safety net" rule (`.animate-scale-in, .animate-slide-in-right { max-width: 100vw }`) sat after the utilities and beat every popup's own `max-w-*`, so **every Modal and Drawer was stretched to the full window** — a five-field form spread over 1366px, with no backdrop left to click. *Found and fixed in step 0 (rule moved into `@layer base`).* |
 

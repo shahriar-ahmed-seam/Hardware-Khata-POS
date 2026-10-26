@@ -27,7 +27,6 @@ import Categories from './pages/Categories';
 import Brands from './pages/Brands';
 import Units from './pages/Units';
 import Warranties from './pages/Warranties';
-import PriceGroups from './pages/PriceGroups';
 import BulkPriceUpdate from './pages/BulkPriceUpdate';
 import BarcodePrint from './pages/BarcodePrint';
 import Customers from './pages/Customers';
@@ -194,7 +193,7 @@ export default function App() {
         <Route path="/products/variations" element={<Placeholder title="Variations (skipped — use separate SKUs)" />} />
         <Route path="/products/barcodes" element={<BarcodePrint />} />
         <Route path="/products/price-update" element={<BulkPriceUpdate />} />
-        <Route path="/products/price-groups" element={<PriceGroups />} />
+        <Route path="/products/price-groups" element={<Navigate to="/contacts/customer-groups" replace />} />
         <Route path="/products/warranties" element={<Warranties />} />
         <Route path="/products/import" element={<Navigate to="/import" replace />} />
         <Route path="/products/import-stock" element={<Navigate to="/import" replace />} />

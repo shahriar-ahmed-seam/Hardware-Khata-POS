@@ -115,9 +115,7 @@ export default function ShortcutsPage() {
             >
               <RotateCcw className="size-4" /> Reset to defaults
             </Button>
-            <Button onClick={() => toast.success('Shortcuts saved')}>
-              <Save className="size-4" /> Saved
-            </Button>
+            <span className="text-xs text-muted-foreground">Changes save automatically</span>
           </>
         }
       />

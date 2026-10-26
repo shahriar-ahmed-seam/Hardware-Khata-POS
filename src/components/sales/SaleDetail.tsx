@@ -367,13 +367,14 @@ export function SaleDetail({ open, onClose, saleId, onCreateReturn, onCreateShip
               <Banknote className="size-3.5" /> Add Payment
             </Button>
           )}
-          {sale.status === 'final' && (
-            <Button variant="outline" size="sm" onClick={() => onCreateReturn?.(sale.id)}>
+          {/* B11: only offered where the page that opened the drawer handles them. */}
+          {sale.status === 'final' && onCreateReturn && (
+            <Button variant="outline" size="sm" onClick={() => onCreateReturn(sale.id)}>
               <Undo2 className="size-3.5" /> Create Return
             </Button>
           )}
-          {sale.status === 'final' && !saleShipment && (
-            <Button variant="outline" size="sm" onClick={() => onCreateShipment?.(sale.id)}>
+          {sale.status === 'final' && !saleShipment && onCreateShipment && (
+            <Button variant="outline" size="sm" onClick={() => onCreateShipment(sale.id)}>
               <Truck className="size-3.5" /> Create Shipment
             </Button>
           )}

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Search, Truck, Printer, Eye } from 'lucide-react';
+import { Search, Truck } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
@@ -145,18 +145,7 @@ export default function Shipments() {
                   </td>
                   <td className="px-4 py-2.5">
                     <div className="flex items-center justify-end gap-0.5 opacity-60 group-hover:opacity-100">
-                      <button
-                        className="size-7 grid place-items-center rounded hover:bg-secondary"
-                        title="Print delivery slip"
-                      >
-                        <Printer className="size-3.5" />
-                      </button>
-                      <button
-                        className="size-7 grid place-items-center rounded hover:bg-secondary"
-                        title="View"
-                      >
-                        <Eye className="size-3.5" />
-                      </button>
+                      {/* Print delivery slip / View hidden until a slip template exists (R82). */}
                     </div>
                   </td>
                 </tr>

@@ -18,9 +18,7 @@ export default function BarcodeSettingsPage() {
         title="Barcode Settings"
         subtitle="Defaults for the Barcode Print page"
         actions={
-          <Button onClick={() => toast.success('Barcode settings saved')}>
-            <Save className="size-4" /> Saved
-          </Button>
+          <span className="text-xs text-muted-foreground">Changes save automatically</span>
         }
       />
 

@@ -1,15 +1,21 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Save, Image as ImageIcon, X } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Card } from '@/components/ui/Card';
 import { NumberField } from '@/components/ui/NumberField';
 import { SettingsHeader } from '@/components/settings/SettingsHeader';
-import { useSettings } from '@/stores/settings';
+import { useSettings, type BusinessInfo } from '@/stores/settings';
 import { useBranches } from '@/stores/branches';
 import { toast } from '@/stores/toast';
 import { fileToStoredImage, usableImage } from '@/lib/imageFile';
 import { cn } from '@/lib/utils';
+
+/**
+ * B12: edits typed here and not saved survive leaving the page. They are kept
+ * in memory (not persisted) and restored on return, with a toast to go back.
+ */
+let unsavedDraft: BusinessInfo | null = null;
 
 const TIMEZONES = [
   'Asia/Dhaka',
@@ -30,9 +36,30 @@ export default function BusinessInfoPage() {
   const branches = useBranches((s) => s.items);
   const hydrateBranches = useBranches((s) => s.hydrate);
 
-  const [draft, setDraft] = useState(business);
-  const [logoPreview, setLogoPreview] = useState(usableImage(business.logoUrl));
+  const [draft, setDraft] = useState<BusinessInfo>(() => unsavedDraft ?? business);
+  const [logoPreview, setLogoPreview] = useState(usableImage((unsavedDraft ?? business).logoUrl));
   const [logoBusy, setLogoBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  // True while the draft came back from an earlier visit: hydrate must not wipe it.
+  const restored = useRef(unsavedDraft !== null);
+  const dirty = JSON.stringify(draft) !== JSON.stringify(business);
+  const leaveState = useRef({ dirty, draft });
+  leaveState.current = { dirty, draft };
+  useEffect(() => {
+    unsavedDraft = null; // consumed by this visit
+    return () => {
+      if (!leaveState.current.dirty) return;
+      unsavedDraft = leaveState.current.draft;
+      toast.warning('Business info is not saved yet', {
+        action: {
+          label: 'Go back',
+          onClick: () => {
+            window.location.hash = '#/settings/business';
+          },
+        },
+      });
+    };
+  }, []);
 
   // Hydrate from backend on mount (branches first so the default-branch picker
   // and the id<->name bridge in the store have data to resolve against).
@@ -42,6 +69,7 @@ export default function BusinessInfoPage() {
 
   // Keep the local draft in sync once the async hydrate replaces `business`.
   useEffect(() => {
+    if (restored.current) return;
     setDraft(business);
     setLogoPreview(usableImage(business.logoUrl));
   }, [business]);
@@ -79,8 +107,12 @@ export default function BusinessInfoPage() {
     set('logoUrl', undefined);
   };
 
-  const save = () => {
-    setBusiness(draft);
+  const save = async () => {
+    setSaving(true);
+    const ok = await setBusiness(draft);
+    setSaving(false);
+    if (!ok) return; // the store already showed the reason
+    restored.current = false;
     toast.success('Business info saved');
   };
 
@@ -90,9 +122,12 @@ export default function BusinessInfoPage() {
         title="Business Info"
         subtitle="Shop identity, currency, locale"
         actions={
-          <Button onClick={save}>
-            <Save className="size-4" /> Save Changes
-          </Button>
+          <>
+            {dirty && <span className="text-xs text-warning font-medium">Unsaved changes</span>}
+            <Button onClick={() => void save()} disabled={saving || !dirty}>
+              <Save className="size-4" /> {saving ? 'Saving…' : 'Save Changes'}
+            </Button>
+          </>
         }
       />
 

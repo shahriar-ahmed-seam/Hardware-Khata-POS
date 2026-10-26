@@ -17,9 +17,7 @@ export default function CashRegisterPrefsPage() {
         title="Cash Register"
         subtitle="Variance handling and shift defaults"
         actions={
-          <Button onClick={() => toast.success('Cash register settings saved')}>
-            <Save className="size-4" /> Saved
-          </Button>
+          <span className="text-xs text-muted-foreground">Changes save automatically</span>
         }
       />
 

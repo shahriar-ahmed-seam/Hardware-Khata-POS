@@ -80,9 +80,7 @@ export default function AppearancePage() {
             <Button variant="outline" onClick={() => { reset(); toast.info('Appearance reset to defaults'); }}>
               <RotateCcw className="size-4" /> Reset
             </Button>
-            <Button onClick={() => toast.success('Appearance saved')}>
-              <Save className="size-4" /> Saved
-            </Button>
+            <span className="text-xs text-muted-foreground">Changes save automatically</span>
           </>
         }
       />

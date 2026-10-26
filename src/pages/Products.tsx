@@ -5,7 +5,6 @@ import {
   Plus,
   Filter,
   Download,
-  Upload,
   Barcode,
   Edit2,
   Trash2,
@@ -35,6 +34,7 @@ import {
   useProductsUI,
   type ProductColumn,
 } from '@/stores/products';
+import { useBackup } from '@/stores/backup';
 import { ProductImage } from '@/components/products/ProductImage';
 import { ColumnsCustomize } from '@/components/products/ColumnsCustomize';
 import { ProductForm } from '@/components/products/ProductForm';
@@ -57,6 +57,8 @@ import { SkeletonTable } from '@/components/ui/Skeleton';
 
 export default function Products() {
   const nav = useNavigate();
+  const exportCsv = useBackup((s) => s.exportCsv);
+  const exportBusy = useBackup((s) => s.busy);
   const { view, setView, columns } = useProductsUI();
 
   const categoriesQuery = useCategories();
@@ -403,13 +405,17 @@ export default function Products() {
               <Settings2 className="size-4" />
             </IconBtn>
             <ViewToggle />
-            <Button variant="outline" size="sm">
-              <Upload className="size-4" /> Import
+            {/* Import is switched off until real importers exist (see /import). */}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={exportBusy}
+              onClick={() => void exportCsv('products')}
+              title="Write every product to a CSV file in your backup folder"
+            >
+              <Download className="size-4" /> Export all
             </Button>
-            <Button variant="outline" size="sm">
-              <Download className="size-4" /> Export
-            </Button>
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" onClick={() => nav('/products/barcodes')}>
               <Barcode className="size-4" /> Barcode
             </Button>
             {/* Entering new stock is a stock-keeper's job, so this stays visible
@@ -586,13 +592,10 @@ export default function Products() {
           <div className="rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 flex items-center gap-2">
             <Badge variant="info">{selected.size} selected</Badge>
             <div className="flex-1" />
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" onClick={() => nav('/products/barcodes')}>
               <Barcode className="size-3.5" /> Print Barcode
             </Button>
-            <Button variant="outline" size="sm">
-              <Download className="size-3.5" /> Export
-            </Button>
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" onClick={() => nav('/products/price-update')}>
               Bulk Update
             </Button>
             {/* In the archive the only sensible bulk action is putting them back.

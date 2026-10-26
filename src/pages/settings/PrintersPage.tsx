@@ -74,12 +74,7 @@ export default function PrintersPage() {
                     Set default
                   </button>
                 )}
-                <button
-                  onClick={() => toast.success(`Test print sent to "${p.name}"`)}
-                  className="text-xs px-2 h-7 rounded border border-border hover:bg-secondary inline-flex items-center gap-1"
-                >
-                  <Send className="size-3" /> Test
-                </button>
+                {/* "Test" hidden: no ESC/POS connection yet, it only faked success (R81). */}
                 <button
                   onClick={() => setEditing(p)}
                   className="size-8 grid place-items-center rounded hover:bg-secondary"

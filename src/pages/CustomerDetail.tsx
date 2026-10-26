@@ -5,7 +5,6 @@ import {
   Edit2,
   HandCoins,
   ScanBarcode,
-  Printer,
   Trash2,
   Phone,
   Mail,
@@ -209,9 +208,7 @@ export default function CustomerDetail() {
               <ArrowLeft className="size-4" /> Back
             </Button>
             {/* "Send SMS" removed with the SMS feature — it had no handler. */}
-            <Button variant="outline" size="sm">
-              <Printer className="size-4" /> Print Statement
-            </Button>
+            {/* "Print Statement" is hidden until a statement template exists (R105). */}
             <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
               <Edit2 className="size-4" /> Edit
             </Button>
@@ -388,8 +385,8 @@ export default function CustomerDetail() {
                   <th className="text-left px-4 py-2.5 font-medium">Date</th>
                   <th className="text-left px-2 py-2.5 font-medium">Type</th>
                   <th className="text-left px-2 py-2.5 font-medium">Reference</th>
-                  <th className="text-right px-2 py-2.5 font-medium">Debit</th>
-                  <th className="text-right px-2 py-2.5 font-medium">Credit</th>
+                  <th className="text-right px-2 py-2.5 font-medium">Owes (+)</th>
+                  <th className="text-right px-2 py-2.5 font-medium">Paid (−)</th>
                   <th className="text-right px-4 py-2.5 font-medium">Balance</th>
                 </tr>
               </thead>

@@ -22,6 +22,7 @@ import {
   type SettlementKey,
 } from '@/components/ui/SettlementBadge';
 import { Card } from '@/components/ui/Card';
+import { DateField } from '@/components/ui/DateTimeField';
 import { Popover } from '@/components/ui/Popover';
 import { ColumnsPanel } from '@/components/ui/ColumnsPanel';
 import { Pagination } from '@/components/ui/Pagination';
@@ -73,8 +74,22 @@ function presetToRange(preset: DateFilter): { from?: string; to?: string } {
   return { from: start.toISOString(), to: endOfLocalDay(now).toISOString() };
 }
 
+/** B11: inclusive local-day bounds for a Custom range (YYYY-MM-DD inputs). */
+function customToRange(from: string, to: string): { from?: string; to?: string } {
+  const day = (v: string) => {
+    const [y, m, d] = v.split('-').map(Number);
+    return new Date(y, (m || 1) - 1, d || 1);
+  };
+  return {
+    from: from ? startOfLocalDay(day(from)).toISOString() : undefined,
+    to: to ? endOfLocalDay(day(to)).toISOString() : undefined,
+  };
+}
+
 export default function Sales() {
   const nav = useNavigate();
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
   const [searchParams] = useSearchParams();
   const sales = useSales((s) => s.sales);
   const loading = useSales((s) => s.loading);
@@ -293,6 +308,26 @@ export default function Sales() {
             <option value="month">This month</option>
             <option value="custom">Custom</option>
           </select>
+          {date === 'custom' && (
+            <>
+              <DateField
+                value={customFrom}
+                onChange={(v: string) => {
+                  setCustomFrom(v);
+                  void loadPage(customToRange(v, customTo));
+                }}
+                title="From date"
+              />
+              <DateField
+                value={customTo}
+                onChange={(v: string) => {
+                  setCustomTo(v);
+                  void loadPage(customToRange(customFrom, v));
+                }}
+                title="To date"
+              />
+            </>
+          )}
           <select
             value={customerId}
             onChange={(e) => {

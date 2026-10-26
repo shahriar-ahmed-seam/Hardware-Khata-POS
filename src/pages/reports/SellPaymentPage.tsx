@@ -175,7 +175,7 @@ export default function SellPaymentPage() {
             <option value="">All methods</option>
             {allMethods.map((m) => (
               <option key={m} value={m}>
-                {m}
+                {m === 'Credit' ? 'On khata' : m}
               </option>
             ))}
           </select>
@@ -195,7 +195,7 @@ export default function SellPaymentPage() {
                   <div className={cn('size-7 rounded-md grid place-items-center', METHOD_TONE[m])}>
                     <Icon className="size-3.5" />
                   </div>
-                  <span className="text-sm font-medium">{m}</span>
+                  <span className="text-sm font-medium">{m === 'Credit' ? 'On khata' : m}</span>
                 </div>
                 <div className="tabular font-bold text-base">{formatBDT(data.amount)}</div>
                 <div className="flex items-center gap-2 mt-1.5 text-xs text-muted-foreground">

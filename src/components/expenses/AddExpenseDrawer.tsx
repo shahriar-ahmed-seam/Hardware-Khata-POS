@@ -28,6 +28,12 @@ const METHODS: { id: ExpensePaymentMethod; icon: any; label: string; needsRef?: 
   { id: 'Cheque', icon: FileText, label: 'Cheque', needsRef: true },
 ];
 
+/**
+ * B14 / owner decision 6: "Attach receipt" stores nothing and "Recurring"
+ * creates nothing yet, so both stay hidden until they are built (R108).
+ */
+const SHOW_UNBUILT = false as boolean;
+
 const FREQS: { id: RecurringFrequency; label: string }[] = [
   { id: 'daily', label: 'Daily' },
   { id: 'weekly', label: 'Weekly' },
@@ -268,6 +274,7 @@ export function AddExpenseDrawer({ open, onClose, initial }: Props) {
                 ))}
               </select>
             </Field>
+            {SHOW_UNBUILT && (
             <Field label="Attach receipt">
               <label className="cursor-pointer flex items-center gap-2 px-3 h-10 rounded-md border border-input bg-background hover:bg-secondary/50 transition text-xs">
                 <Paperclip className="size-3.5" />
@@ -275,9 +282,11 @@ export function AddExpenseDrawer({ open, onClose, initial }: Props) {
                 <input type="file" className="hidden" onChange={handleFile} />
               </label>
             </Field>
+            )}
           </div>
 
-          {/* Recurring */}
+          {/* Recurring — hidden until a job creates the copies (B14) */}
+          {SHOW_UNBUILT && (
           <div className="rounded-lg border border-border p-3 bg-card">
             <div className="flex items-center justify-between">
               <div>
@@ -334,6 +343,7 @@ export function AddExpenseDrawer({ open, onClose, initial }: Props) {
               </div>
             )}
           </div>
+          )}
         </div>
 
         <div className="border-t border-border bg-card px-4 py-3 flex items-center justify-between">

@@ -15,6 +15,14 @@ import { toCustomer, type BackendCustomer } from '@/hooks/contactAdapter';
 import type { Customer } from '@/types/domain';
 import { formatBDT } from '@/lib/utils';
 
+/**
+ * B13: pricing knows exactly three lists (the product's price / wholesale /
+ * contractor columns) and customers link to a group by NAME, so a new group
+ * could never be picked and a rename would orphan its customers. Until groups
+ * link by id and carry their own prices (R50) the list is shown read-only.
+ */
+const GROUPS_EDITABLE = false as boolean;
+
 export default function CustomerGroups() {
   const { items, add, update, remove } = usePriceGroups();
   const hydrate = usePriceGroups((s) => s.hydrate);
@@ -59,11 +67,13 @@ export default function CustomerGroups() {
     <div>
       <PageHeader
         title="Customer Groups"
-        subtitle="Same as Selling Price Groups · used for default pricing, credit, discount"
+        subtitle="Retail, Wholesale and Contractor — each uses its own price column on the product"
         actions={
-          <Button onClick={() => setEditing('new')}>
-            <Plus className="size-4" /> Add Group
-          </Button>
+          GROUPS_EDITABLE ? (
+            <Button onClick={() => setEditing('new')}>
+              <Plus className="size-4" /> Add Group
+            </Button>
+          ) : undefined
         }
       />
 
@@ -104,6 +114,7 @@ export default function CustomerGroups() {
                   {g.taxExempt && <Badge variant="warning">Tax exempt</Badge>}
                 </div>
               </div>
+              {GROUPS_EDITABLE && (
               <div className="flex items-center gap-1">
                 <button
                   onClick={() => setEditing(g)}
@@ -128,6 +139,7 @@ export default function CustomerGroups() {
                   <Trash2 className="size-3.5" />
                 </button>
               </div>
+              )}
             </div>
           </Card>
         ))}

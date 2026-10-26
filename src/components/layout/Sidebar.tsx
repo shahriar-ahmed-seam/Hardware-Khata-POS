@@ -96,7 +96,6 @@ const nav: Entry[] = [
         { label: 'Brands', to: '/products/brands', icon: Award },
         { label: 'Units', to: '/products/units', icon: Ruler },
         { label: 'Bulk Price Update', to: '/products/price-update', icon: Tag },
-        { label: 'Price Groups', to: '/products/price-groups', icon: Tag },
         { label: 'Barcode Print', to: '/products/barcodes', icon: Barcode },
         { label: 'Warranties', to: '/products/warranties', icon: Award },
       ],

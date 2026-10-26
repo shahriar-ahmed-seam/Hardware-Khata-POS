@@ -36,9 +36,7 @@ export default function POSPrefsPage() {
         title="POS Preferences"
         subtitle="Defaults applied at the checkout screen"
         actions={
-          <Button onClick={() => toast.success('POS preferences saved')}>
-            <Save className="size-4" /> Saved
-          </Button>
+          <span className="text-xs text-muted-foreground">Changes save automatically</span>
         }
       />
 
